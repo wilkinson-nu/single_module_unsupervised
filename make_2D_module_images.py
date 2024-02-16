@@ -17,7 +17,10 @@ def get_pixel_numy(y_pos):
     return y_pixel
 
 
-filename = "/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v1/packet_2022_02_11_11_39_26_CET_0cd913fb_20220211_113926.data.module1_flow.h5"
+#filename = "/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v1/packet_2022_02_11_11_39_26_CET_0cd913fb_20220211_113926.data.module1_flow.h5"
+filename = "inputs/packet_2022_02_08_07_36_25_CET_0cd913fb_20220208_073625.data.module1_flow.h5"
+
+show_plots = False
 
 with h5py.File(filename, "r") as f:
 
@@ -34,10 +37,17 @@ with h5py.File(filename, "r") as f:
     hits = f['charge/calib_prompt_hits/data']
     hits_ref = f['charge/events/ref/charge/calib_prompt_hits/ref']
     hits_region = f['charge/events/ref/charge/calib_prompt_hits/ref_region']
+
+    ## This is what we'll eventually save
+    list_of_images = []
     
     ntotal = 0
     nnan = 0
-    
+
+    if show_plots:
+        plt.ion()
+        plt.figure(figsize=(4.5, 7))
+
     ## Loop over events
     for evt in range(nevts):
     
@@ -48,8 +58,8 @@ with h5py.File(filename, "r") as f:
         hit_ref = np.sort(hit_ref[hit_ref[:,0] == ev_id, 1])
         these_hits = hits[hit_ref]
 
-        ## Set up an "image" with 140x280 pixels (what format?)
-        this_image = np.zeros((140,280))
+        ## Set up an "image" with 140x280 pixels
+        this_image = np.zeros((280,140))
 
         ntotal += len(these_hits)
 
@@ -73,25 +83,26 @@ with h5py.File(filename, "r") as f:
             this_q = hit['Q']
             
             ## Add to image LarPix(z,y) = image(x,y)
-            this_image[this_z, this_y] += this_q
-            
-        ## Show image temporarily
-        plt.imshow(this_image.squeeze(), origin='lower')
-        plt.show()
-        input("Continue...")
-        #print(this_image)
-    #print(charge_evt['ref/charge/calib_prompt_hits'][0])
+            this_image[this_y, this_z] += this_q
+
+        if show_plots:
+            ## Show image temporarily
+            plt.imshow(this_image, origin='lower')
+            # plt.savefig("image"+str(evt)+".png")
+            plt.show(block=False)
+            input("Continue...")
+
+        list_of_images.append(this_image)
+
+    ## Now report back and save output array
+    batch_data  = np.asarray(list_of_images)
+    batch_index = np.array(range(len(list_of_images)))
     
-    ## Can loop over calib hits like this
-    #print(calib_hits['x'][0])
-    #ds_arr = calib_hits[()]
+    output_file = h5py.File('output_file.h5','w')
+    output_file.create_dataset('data',data=batch_data, chunks=tuple([1]+list(batch_data[0].shape)), compression='gzip')
+    output_file.create_dataset('index',data=batch_index, chunks=batch_index.shape, compression='gzip')
+    output_file.close()
 
-    #print(ds_arr[0]['x'])
-
+    
     print("Found", nnan, "/", ntotal, "nans")
     
-    #print(data)
-    
-    # preferred methods to get dataset values:
-    # ds_obj = calib_hits      # returns as a h5py dataset object
-    # ds_arr = calib_hits[()]  # returns as a numpy array
