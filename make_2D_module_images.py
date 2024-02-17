@@ -2,6 +2,7 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
+from numba import njit
 
 ## This is a pretty ugly function, but... it works
 def get_pixel_numz(z_pos):
@@ -21,6 +22,36 @@ def get_pixel_numy(y_pos):
 filename = "inputs/packet_2022_02_08_07_36_25_CET_0cd913fb_20220208_073625.data.module1_flow.h5"
 
 show_plots = False
+
+@njit
+def make_image(these_hits):
+    ## Set up an "image" with 140x280 pixels
+    this_image = np.zeros((280,140))
+    nnan = 0
+    for hit in these_hits:
+        
+        ## Check for NaNs
+        if np.isnan(hit['Q']) or \
+           np.isnan(hit['y']) or \
+           np.isnan(hit['z']):
+            nnan += 1
+            continue
+        
+        ## Get pixel numbers and charge values
+        z_min = -30.816299438476562   
+        pixel_pitch = 0.4434
+        this_z = int((hit['z'] - z_min)/0.4424 + pixel_pitch/10.)
+
+        y_min = -83.67790222167969
+        pixel_pitch = 0.4434
+        this_y = int((hit['y'] - y_min)/0.4424 + pixel_pitch/10.)
+        
+        this_q = hit['Q']
+        
+        ## Add to image LarPix(z,y) = image(x,y)
+        this_image[this_y, this_z] += this_q
+        
+    return this_image, nnan
 
 with h5py.File(filename, "r") as f:
 
@@ -68,6 +99,7 @@ with h5py.File(filename, "r") as f:
             continue
         
         ## Naively think I have to loop over hits
+        ## I *think* I can probably use hit_ref to filter these_hits to get a list of all Q that correspond to 
         for hit in these_hits:
         
             ## Check for NaNs
@@ -76,7 +108,7 @@ with h5py.File(filename, "r") as f:
                np.isnan(hit['z']):
                 nnan += 1
                 continue
-
+        
             ## Get pixel numbers and charge values
             this_y = get_pixel_numy(hit['y'])
             this_z = get_pixel_numz(hit['z'])
@@ -85,6 +117,9 @@ with h5py.File(filename, "r") as f:
             ## Add to image LarPix(z,y) = image(x,y)
             this_image[this_y, this_z] += this_q
 
+        # this_image, this_nnan = make_image(these_hits)
+        # nnan += this_nnan
+        
         if show_plots:
             ## Show image temporarily
             plt.imshow(this_image, origin='lower')
