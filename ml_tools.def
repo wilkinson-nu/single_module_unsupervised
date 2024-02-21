@@ -1,0 +1,29 @@
+Bootstrap: docker
+From:  nvcr.io/nvidia/pytorch:24.01-py3
+
+%files
+    
+%post
+
+    ## Install emacs to save my sanity
+    apt-get update
+    apt-get install -y emacs
+
+    ## Need h5py for HDF5
+    python -m pip install --upgrade pip
+    pip install h5py
+
+    ## A GUI for matplotlib
+    pip install pyqt5
+
+    ## Necessary for the GUI
+    apt-get install -y libgl1 
+    apt-get install -y libxcb-xinerama0 ## NECESSARY!
+    apt-get install -y '^libxcb.*-dev' libx11-xcb-dev libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev
+    apt-get install -y ffmpeg
+
+%environment
+
+    export SINGULARITY_SHELL=/bin/bash	
+    export XDG_RUNTIME_DIR=${PWD}
+    export NO_AT_BRIDGE=1
