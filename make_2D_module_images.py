@@ -57,16 +57,24 @@ def make_images(input_file_name, output_file_name):
 
     print("With total:", len(hits), "hits")
     
-    ## This is what we'll eventually save
-    list_of_images = []
-    
     if show_plots:
         plt.ion()
         plt.figure(figsize=(4.5, 7))
 
+    ## Make output file
+    ## Because we already know the number of events at this point, faster to make an empty dataset of the correct size, and just fill it
+    output_file = h5py.File(output_file_name,'w')
+    blank_image = np.zeros((280,140))
+    output_file.create_dataset('data', shape=tuple([nevts]+list(blank_image.shape)), chunks=tuple([1]+list(blank_image.shape)), compression='gzip')
+    output_file.create_dataset('index',data=np.array(range(nevts)), chunks=(1,), compression='gzip')
+    output_file.close()
+
     ## Loop over events
     for evt in range(nevts):
-    
+
+        ## Check on the progress
+        if evt % int(nevts/10) == 0 and evt != 0: print("Processed evt", evt, "/", nevts)
+        
         ## Now grab all the hits associated with the event
         ev_id = events[evt]['id']
         
@@ -83,17 +91,14 @@ def make_images(input_file_name, output_file_name):
             plt.show(block=False)
             input("Continue...")
 
-        list_of_images.append(this_image)
+        ## Append to dataset
+        output_file = h5py.File(output_file_name,'a')
+        output_file['data'][evt] = this_image        
+        output_file.close()
 
-    ## Now report back and save output array
-    batch_data  = np.asarray(list_of_images)
-    batch_index = np.array(range(len(list_of_images)))
-    
-    output_file = h5py.File(output_file_name,'w')
-    output_file.create_dataset('data',data=batch_data, chunks=tuple([1]+list(batch_data[0].shape)), compression='gzip')
-    output_file.create_dataset('index',data=batch_index, chunks=batch_index.shape, compression='gzip')
-    output_file.close()
-
+        
+    ## End of loop
+    print("Finished loop (", Process().memory_info().rss, ")")
     f.close()
 
 if __name__ == '__main__':
