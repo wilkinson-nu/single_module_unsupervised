@@ -95,10 +95,9 @@ def make_images(input_file_name, output_file_name):
         output_file = h5py.File(output_file_name,'a')
         output_file['data'][evt] = this_image        
         output_file.close()
-
         
     ## End of loop
-    print("Finished loop (", Process().memory_info().rss, ")")
+    print("Finished loop")
     f.close()
 
 if __name__ == '__main__':
