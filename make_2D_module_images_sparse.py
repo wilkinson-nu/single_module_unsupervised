@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 from numba import njit
-from scipy.sparse import csr_matrix
+from scipy.sparse import coo_matrix
 import joblib
 
 show_plots = False
@@ -13,10 +13,7 @@ show_plots = False
 # @njit
 def make_image(these_hits):
 
-    ## Set up an "image" with 140x280 pixels
-    # this_image = np.zeros((280,140))
-
-    ## csr_matrix sums any duplicated values, so don't sum them
+    ## coo_matrix sums any duplicated values, so don't sum them
     ## These could be extracted from the hits without a loop... I think
     y_list = []
     z_list = []
@@ -46,14 +43,11 @@ def make_image(these_hits):
         z_list.append(this_z)
         q_list.append(this_q)
         
-        ## Add to image LarPix(z,y) = image(x,y)
-        # this_image[this_y, this_z] += this_q
-
     y_arr = np.array(y_list)
     z_arr = np.array(z_list)
     q_arr = np.array(q_list)
 
-    this_sparse = csr_matrix((q_arr, (y_arr, z_arr)), dtype=np.float32, shape=(280, 140))
+    this_sparse = coo_matrix((q_arr, (y_arr, z_arr)), dtype=np.float32, shape=(280, 140))
     
     return this_sparse
 
@@ -107,8 +101,6 @@ def make_images(input_file_name, output_file_name):
         ## Get an image with 140x280 pixels
         this_sparse = make_image(these_hits)
 
-        # print("Maximum value =", this_sparse.max(), "(", this_sparse.nnz, ")")
-        
         sparse_image_list .append(this_sparse)
         
         if show_plots:
