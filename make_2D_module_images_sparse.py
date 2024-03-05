@@ -3,14 +3,11 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from numba import njit
 from scipy.sparse import coo_matrix
 import joblib
 
 show_plots = False
 
-## Can't numba with scipy sparse csr_matrix
-# @njit
 def make_image(these_hits):
 
     ## coo_matrix sums any duplicated values, so don't sum them
@@ -48,6 +45,9 @@ def make_image(these_hits):
     q_arr = np.array(q_list)
 
     this_sparse = coo_matrix((q_arr, (y_arr, z_arr)), dtype=np.float32, shape=(280, 140))
+
+    ## Slightly confusing as this isn't necessary for csr or csc matrices
+    this_sparse.sum_duplicates()
     
     return this_sparse
 
@@ -74,14 +74,6 @@ def make_images(input_file_name, output_file_name):
     if show_plots:
         plt.ion()
         plt.figure(figsize=(4.5, 7))
-
-    ## Make output file
-    ## Because we already know the number of events at this point, faster to make an empty dataset of the correct size, and just fill it
-    #output_file = h5py.File(output_file_name,'w')
-    #blank_image = np.zeros((280,140))
-    #output_file.create_dataset('data', shape=tuple([nevts]+list(blank_image.shape)), chunks=tuple([1]+list(blank_image.shape)), compression='gzip')
-    #output_file.create_dataset('index',data=np.array(range(nevts)), chunks=(1,), compression='gzip')
-    #output_file.close()
 
     sparse_image_list = []
 
@@ -110,12 +102,7 @@ def make_images(input_file_name, output_file_name):
             plt.show(block=False)
             input("Continue...")
 
-        ## Append to dataset
-        #output_file = h5py.File(output_file_name,'a')
-        #output_file['data'][evt] = this_image        
-        #output_file.close()
-
-    
+    ## Joblib is a fast option, but has to load everything into memory... not ideal
     joblib.dump(sparse_image_list, output_file_name)
         
     f.close()
