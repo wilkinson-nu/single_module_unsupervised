@@ -93,6 +93,10 @@ def make_images(input_file_name, output_file_name):
         ## Get an image with 140x280 pixels
         this_sparse = make_image(these_hits)
 
+        ## Check whether this is a "good image"
+        if np.count_nonzero(this_sparse.data) > 4000: continue
+        if np.count_nonzero(this_sparse.data) < 200: continue
+        
         sparse_image_list .append(this_sparse)
         
         if show_plots:
