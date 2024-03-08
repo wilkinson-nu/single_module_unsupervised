@@ -118,7 +118,7 @@ if __name__ == '__main__':
     parser.add_argument('--scheduler', type=str, default=None, nargs='?')
     parser.add_argument('--loss_type', type=str, default="L2", nargs='?')
     parser.add_argument('--arch_type', type=str, default="None", nargs='?')
-    parser.add_argument('--norm_data', action='store_true')
+    parser.add_argument('--norm_data', type=int, default=0, nargs='?')
 
     # Parse arguments from command line
     args = parser.parse_args()
