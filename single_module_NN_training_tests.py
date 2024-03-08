@@ -1,8 +1,8 @@
-import sys
 import numpy as np
 import joblib
 import argparse
 from torch import nn
+
 ## Get the autoencoder options I included from elsewhere
 from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderComplex, DecoderComplex
 
@@ -10,17 +10,15 @@ from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderCompl
 from torch.utils.tensorboard import SummaryWriter
 
 import torch
+from torch.utils.data import Dataset
+import time
+
+## Device and seeding
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.device(device)
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
-
-## Make the single module dataset
-from torch.utils.data import Dataset
-import os
-import time
-import scipy
 
 class SingleModuleImage2D_sparse_joblib(Dataset):
 
@@ -102,6 +100,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
         print("Processed", iteration, "/", num_iterations, "; loss =", av_loss)
         print("Time taken:", time.process_time() - start)
 
+        
 ## Do the business
 if __name__ == '__main__':
 
