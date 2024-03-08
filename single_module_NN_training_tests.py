@@ -15,6 +15,7 @@ import time
 
 ## Device and seeding
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print("Running with device:", device)
 torch.device(device)
 SEED=12345
 _=np.random.seed(SEED)
