@@ -4,7 +4,7 @@ import argparse
 from torch import nn
 
 ## Get the autoencoder options I included from elsewhere
-from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderComplex, DecoderComplex
+from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -50,7 +50,7 @@ def collate(batch):
 
 
 ## Wrap the training in a nicer function...
-def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn, optimizer, scheduler=None):
+def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn, optimizer, scheduler=None, state_file=None):
 
     print("Training with", num_iterations, "iterations")
     tstart = time.time()
@@ -101,6 +101,24 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
         print("Processed", iteration, "/", num_iterations, "; loss =", av_loss)
         print("Time taken:", time.process_time() - start)
 
+        ## For checkpointing
+        if iteration%50 == 0 and iteration != 0:
+            torch.save({
+                'epoch': iteration,
+                'encoder_state_dict': encoder.state_dict(),
+                'decoder_state_dict': decoder.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': loss
+            }, state_file+".check"+str(iteration))
+        
+    ## Final version of the model
+    torch.save({
+        'epoch': iteration,
+        'encoder_state_dict': encoder.state_dict(),
+        'decoder_state_dict': decoder.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss
+    }, state_file)    
         
 ## Do the business
 if __name__ == '__main__':
@@ -119,7 +137,8 @@ if __name__ == '__main__':
     parser.add_argument('--loss_type', type=str, default="L2", nargs='?')
     parser.add_argument('--arch_type', type=str, default="None", nargs='?')
     parser.add_argument('--norm_data', type=int, default=0, nargs='?')
-
+    parser.add_argument('--state_file', type=str, default=None, nargs='?')
+    
     # Parse arguments from command line
     args = parser.parse_args()
 
@@ -150,13 +169,16 @@ if __name__ == '__main__':
     if args.arch_type == "simple":
         enc = EncoderSimple
         dec = DecoderSimple
-    if args.arch_type == "complex":
-        enc = EncoderComplex
-        dec = DecoderComplex       
+    if args.arch_type == "deep":
+        enc = EncoderDeep
+        dec = DecoderDeep       
     
     ## Get the encoders etc
     encoder=enc(args.nchan, args.latent, act_fn)
     decoder=dec(args.nchan, args.latent, act_fn)
+
+    print(encoder)
+    print(decoder)    
     
     encoder.to(device)
     decoder.to(device)
@@ -167,6 +189,8 @@ if __name__ == '__main__':
     ]
     
     optimizer = torch.optim.Adam(params_to_optimize, lr=args.lr, weight_decay=weight_decay)
-    #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
+    scheduler = None
+
+    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
     
-    run_training(args.nstep, args.log, encoder, decoder, train_loader, loss_fn, optimizer)#, scheduler)
+    run_training(args.nstep, args.log, encoder, decoder, train_loader, loss_fn, optimizer, scheduler, args.state_file)
