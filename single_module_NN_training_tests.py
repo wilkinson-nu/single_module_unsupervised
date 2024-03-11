@@ -129,7 +129,10 @@ if __name__ == '__main__':
     # Add arguments
     parser.add_argument('--infile', type=str)
     parser.add_argument('--log', type=str)    
-    parser.add_argument('--lr', type=float)    
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--state_file', type=str)
+
+    ## Optional
     parser.add_argument('--latent', type=int, default=8, nargs='?')
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
@@ -137,7 +140,6 @@ if __name__ == '__main__':
     parser.add_argument('--loss_type', type=str, default="L2", nargs='?')
     parser.add_argument('--arch_type', type=str, default="None", nargs='?')
     parser.add_argument('--norm_data', type=int, default=0, nargs='?')
-    parser.add_argument('--state_file', type=str, default=None, nargs='?')
     
     # Parse arguments from command line
     args = parser.parse_args()
