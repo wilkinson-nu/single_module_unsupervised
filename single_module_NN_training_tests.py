@@ -4,7 +4,7 @@ import argparse
 from torch import nn
 
 ## Get the autoencoder options I included from elsewhere
-from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep
+from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep, EncoderDeeper, DecoderDeeper
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -174,7 +174,11 @@ if __name__ == '__main__':
     if args.arch_type == "deep":
         enc = EncoderDeep
         dec = DecoderDeep       
-    
+    if args.arch_type == "deeper":
+        enc = EncoderDeeper
+        dec = DecoderDeeper      
+
+        
     ## Get the encoders etc
     encoder=enc(args.nchan, args.latent, act_fn)
     decoder=dec(args.nchan, args.latent, act_fn)
