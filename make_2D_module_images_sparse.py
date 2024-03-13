@@ -23,6 +23,9 @@ def make_image(these_hits):
            np.isnan(hit['y']) or \
            np.isnan(hit['z']):
             continue
+
+        ## Remove negative charges
+        if hit['Q'] < 0: continue
         
         ## Get pixel numbers and charge values
         ## (Ugly but it's compiled!)
@@ -48,7 +51,7 @@ def make_image(these_hits):
 
     ## Slightly confusing as this isn't necessary for csr or csc matrices
     this_sparse.sum_duplicates()
-    
+
     return this_sparse
 
 def make_images(input_file_name, output_file_name):
@@ -98,13 +101,13 @@ def make_images(input_file_name, output_file_name):
         if np.count_nonzero(this_sparse.data) < 200: continue
         
         sparse_image_list .append(this_sparse)
-        
+
         if show_plots:
             ## Show image temporarily
             this_image = this_sparse.toarray()
-            plt.imshow(this_image, origin='lower')
-            plt.show(block=False)
-            input("Continue...")
+            gr = plt.imshow(this_image, origin='lower')
+            plt.colorbar(gr)
+            plt.show()
 
     ## Joblib is a fast option, but has to load everything into memory... not ideal
     joblib.dump(sparse_image_list, output_file_name)
