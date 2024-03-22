@@ -2,6 +2,7 @@ import numpy as np
 import joblib
 import argparse
 from torch import nn
+from torchvision import transforms
 
 ## Get the autoencoder options I included from elsewhere
 from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep, EncoderDeeper, DecoderDeeper
@@ -23,7 +24,7 @@ _=torch.manual_seed(SEED)
 
 class SingleModuleImage2D_sparse_joblib(Dataset):
 
-    def __init__(self, infilename, normalize=None):
+    def __init__(self, infilename, normalize=None, transform=None):
         
         self._data = joblib.load(infilename)
         self._length = len(self._data)
