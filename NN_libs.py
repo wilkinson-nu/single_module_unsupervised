@@ -158,9 +158,9 @@ class EncoderSimple(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(4*n_chan*35*17, n_chan*35*17),
+            nn.Linear(4*n_chan*35*17, 1000),
             act_fn(),      
-            nn.Linear(n_chan*35*17, latent_dim),
+            nn.Linear(1000, latent_dim),
         )
         
     def forward(self, x):
@@ -185,9 +185,9 @@ class DecoderSimple(nn.Module):
         n_chan = base_channel_size
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, n_chan*35*17),
+            nn.Linear(latent_dim, 1000),
             act_fn(),
-            nn.Linear(n_chan*35*17, 4*n_chan*35*17),
+            nn.Linear(1000, 4*n_chan*35*17),
             act_fn()
         )
 
@@ -302,9 +302,9 @@ class EncoderDeep(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(4*n_chan*35*17, n_chan*35*17),
+            nn.Linear(4*n_chan*35*17, 1000),
             act_fn(),      
-            nn.Linear(n_chan*35*17, latent_dim),
+            nn.Linear(1000, latent_dim),
         )
         
     def forward(self, x):
@@ -329,9 +329,9 @@ class DecoderDeep(nn.Module):
         n_chan = base_channel_size
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, n_chan*35*17),
+            nn.Linear(latent_dim, 1000),
             act_fn(),
-            nn.Linear(n_chan*35*17, 4*n_chan*35*17),
+            nn.Linear(1000, 4*n_chan*35*17),
             act_fn()
         )
 
@@ -504,9 +504,9 @@ class EncoderDeeper(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(16*n_chan*8*4, 512),
+            nn.Linear(16*n_chan*8*4, 1000),
             act_fn(),   
-            nn.Linear(512, latent_dim),
+            nn.Linear(1000, latent_dim),
         )
         
     def forward(self, x):
@@ -531,9 +531,9 @@ class DecoderDeeper(nn.Module):
         n_chan = base_channel_size
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, 512),
+            nn.Linear(latent_dim, 1000),
             act_fn(),
-            nn.Linear(512, 16*n_chan*8*4),
+            nn.Linear(1000, 16*n_chan*8*4),
             act_fn()
         )
 
