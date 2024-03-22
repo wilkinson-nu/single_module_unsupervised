@@ -28,6 +28,7 @@ class SingleModuleImage2D_sparse_joblib(Dataset):
         self._data = joblib.load(infilename)
         self._length = len(self._data)
         self._normalize = normalize
+        self._transform = transform
 
     def __len__(self):
         return self._length
@@ -35,11 +36,19 @@ class SingleModuleImage2D_sparse_joblib(Dataset):
     def __getitem__(self,idx):
 
         ## Convert to a dense pytorch tensor...
-        data = torch.Tensor(self._data[idx].toarray())
+        data = self._data[idx].toarray()
+
+        ## To simplify my life, apply the transform to the numpy array
+        if self._transform:
+            data = self._transform(data)
+        
+        data = torch.Tensor(data)
         
         ## Normalize entries if necessary
+        ## Various possibilities here. Should the sum be equal to 1, or should the maximum value in the image be 1?
         if self._normalize:
-            data = data/np.amax(data.numpy())
+            # data = data/np.amax(data.numpy())
+            data = data/np.sum(data.numpy())
 
         ## By default, this is assumed to be in "Tensor, label" format. The collate function is necessary because this is different...
         return data
@@ -48,6 +57,11 @@ def collate(batch):
     batched_data = torch.cat([sample[None][None] for sample in batch],0)
     return batched_data
 
+## Options for transforming
+def sqrt_transform(x):
+    return np.sqrt(x)
+def cbrt_transform(x):
+    return np.cbrt(x)
 
 ## Wrap the training in a nicer function...
 def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn, optimizer, scheduler=None, state_file=None):
@@ -148,10 +162,13 @@ if __name__ == '__main__':
     batch_size=1024
     weight_decay=0
     act_fn=nn.LeakyReLU
+
+    ## Hard code the transform for now...
+    transform = transforms.Compose([transforms.Lambda(cbrt_transform)])
     
     ## Get a concrete dataset and data loader
     start = time.process_time() 
-    train_dataset = SingleModuleImage2D_sparse_joblib(args.infile, args.norm_data)
+    train_dataset = SingleModuleImage2D_sparse_joblib(args.infile, args.norm_data, transform=transform)
     print("Time taken to load", train_dataset.__len__(),"images:", time.process_time() - start)
     
     ## Randomly chosen batching
