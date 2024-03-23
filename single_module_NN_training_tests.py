@@ -107,7 +107,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
             nbatches += 1
         
         ## See if we have an LR scheduler...
-        if scheduler: scheduler.step()
+        if scheduler: scheduler.step(total_loss)
         
         av_loss = total_loss/nbatches
         if log_dir: 
@@ -216,5 +216,6 @@ if __name__ == '__main__':
     scheduler = None
 
     # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
-    
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
+
     run_training(args.nstep, args.log, encoder, decoder, train_loader, loss_fn, optimizer, scheduler, args.state_file)
