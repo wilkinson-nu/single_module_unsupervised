@@ -5,7 +5,7 @@ from torch import nn
 from torchvision import transforms
 
 ## Get the autoencoder options I included from elsewhere
-from NN_libs import Encoder, Decoder, EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep, EncoderDeeper, DecoderDeeper
+from NN_libs import EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep, EncoderDeeper, DecoderDeeper
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
