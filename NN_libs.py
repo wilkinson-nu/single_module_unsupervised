@@ -147,49 +147,25 @@ class EncoderDeep(nn.Module):
         ### Convolutional section
         self.encoder_cnn = nn.Sequential(
             ## Note the assumption that the input image has a single channel
-            nn.Conv2d(in_channels=1, 
-                      out_channels=n_chan, 
-                      kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
+            nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 70x35 ==> 35x17
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, stride=2, padding=(1,0)), ## 35x17
+            nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
             act_fn()
         )
         
@@ -199,7 +175,7 @@ class EncoderDeep(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(4*n_chan*35*17, 1000),
+            nn.Linear(8*n_chan*17*8, 1000),
             act_fn(),      
             nn.Linear(1000, latent_dim),
         )
@@ -228,57 +204,33 @@ class DecoderDeep(nn.Module):
         self.decoder_lin = nn.Sequential(
             nn.Linear(latent_dim, 1000),
             act_fn(),
-            nn.Linear(1000, 4*n_chan*35*17),
+            nn.Linear(1000, 8*n_chan*17*8),
             act_fn()
         )
 
         self.unflatten = nn.Unflatten(dim=1, 
-        unflattened_size=(4*n_chan, 35, 17))
+        unflattened_size=(8*n_chan, 17, 8))
 
         self.decoder_conv = nn.Sequential(  
-            nn.ConvTranspose2d(in_channels=4*n_chan, 
-                               out_channels=2*n_chan, 
-                               kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 8x8 ==> 16x16
+            nn.ConvTranspose2d(in_channels=8*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(0,0), output_padding=(0,0)), ## 17x8 ==> 35x17
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(),
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x17 ==> 70x35
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(), 
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(), 
+            nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.ConvTranspose2d(in_channels=2*n_chan, 
-                               out_channels=n_chan, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1), ## 16x16 ==> 32x32
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.ConvTranspose2d(in_channels=n_chan, 
-                               out_channels=1, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1), ## 32x32 ==> 64x64
+            nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
             act_fn()
         )
         
@@ -308,89 +260,31 @@ class EncoderDeeper(nn.Module):
         ### Convolutional section
         self.encoder_cnn = nn.Sequential(
             ## Note the assumption that the input image has a single channel
-            nn.Conv2d(in_channels=1, 
-                      out_channels=n_chan, 
-                      kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
+            nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 70x35 ==> 35x17
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
             act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, stride=2, padding=(1,0)), ## 70x35 ==> 35x17
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=4*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=4*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=4*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=4*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=4*n_chan, 
-                      out_channels=8*n_chan, 
-                      kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
-            act_fn(),
-            nn.Conv2d(in_channels=8*n_chan, 
-                      out_channels=8*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=8*n_chan, 
-                      out_channels=8*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=8*n_chan, 
-                      out_channels=8*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=8*n_chan, 
-                      out_channels=8*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=8*n_chan, 
-                      out_channels=16*n_chan, 
-                      kernel_size=3, stride=2, padding=(0,1)), ## 17x8 ==> 8x4
+            nn.Conv2d(in_channels=8*n_chan, out_channels=16*n_chan, kernel_size=3, stride=2, padding=(0,1)), ## 17x8 ==> 8x4
             act_fn(),
             
         )
@@ -438,89 +332,31 @@ class DecoderDeeper(nn.Module):
         unflattened_size=(16*n_chan, 8, 4))
 
         self.decoder_conv = nn.Sequential(  
-            nn.ConvTranspose2d(in_channels=16*n_chan, 
-                               out_channels=8*n_chan, 
-                               kernel_size=3, stride=2, padding=(0,1), output_padding=(0,1)), ## 8x4 ==> 17x8
+            nn.ConvTranspose2d(in_channels=16*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,1), output_padding=(0,1)), ## 8x4 ==> 17x8
             act_fn(),
-            nn.Conv2d(in_channels=8*n_chan,
-                      out_channels=8*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=8*n_chan,
-                      out_channels=8*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=8*n_chan,
-                      out_channels=8*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.ConvTranspose2d(in_channels=8*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(0,0), output_padding=(0,0)), ## 17x8 ==> 35x17
             act_fn(),
-            nn.Conv2d(in_channels=8*n_chan,
-                      out_channels=8*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.ConvTranspose2d(in_channels=8*n_chan, 
-                               out_channels=4*n_chan, 
-                               kernel_size=3, stride=2, padding=(0,0), output_padding=(0,0)), ## 17x8 ==> 35x17
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=4*n_chan,
-                      out_channels=4*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x17 ==> 70x35
             act_fn(),
-            nn.Conv2d(in_channels=4*n_chan,
-                      out_channels=4*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=4*n_chan,
-                      out_channels=4*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=4*n_chan,
-                      out_channels=4*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.ConvTranspose2d(in_channels=4*n_chan, 
-                               out_channels=2*n_chan, 
-                               kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x17 ==> 70x35
-            act_fn(),
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(), 
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(), 
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(), 
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(), 
-            nn.ConvTranspose2d(in_channels=2*n_chan, 
-                               out_channels=n_chan, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
+            nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
             act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.ConvTranspose2d(in_channels=n_chan, 
-                               out_channels=1, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
+            nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
             act_fn()
         )
         
