@@ -5,7 +5,7 @@ from torch import nn
 from torchvision import transforms
 
 ## Get the autoencoder options I included from elsewhere
-from NN_libs import EncoderSimple, DecoderSimple, EncoderDeep, DecoderDeep, EncoderDeeper, DecoderDeeper
+from NN_libs import EncoderSimple, DecoderSimple, EncoderDeep1, DecoderDeep1, EncoderDeep2, DecoderDeep2, EncoderDeep3, DecoderDeep3, AsymmetricL2Loss, AsymmetricL1Loss
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -63,6 +63,8 @@ def sqrt_transform(x):
     return np.sqrt(x)
 def cbrt_transform(x):
     return np.cbrt(x)
+def log_transform(x):
+    return np.log10(1+x)
 
 ## Wrap the training in a nicer function...
 def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn, optimizer, scheduler=None, state_file=None):
@@ -96,7 +98,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
             # Decode data
             decoded_batch = decoder(encoded_batch)
             # Evaluate loss
-            loss = loss_fn(decoded_batch, image_batch)
+            loss = loss_fn(decoded_batch, image_batch, encoder, decoder)
 
             # Backward pass
             optimizer.zero_grad()
@@ -158,11 +160,12 @@ if __name__ == '__main__':
     parser.add_argument('--arch_type', type=str, default="None", nargs='?')
     parser.add_argument('--norm_data', type=int, default=0, nargs='?')
     
+
     # Parse arguments from command line
     args = parser.parse_args()
 
     ## Other hard-coded values
-    batch_size=1024
+    batch_size=128
     weight_decay=0
     act_fn=nn.LeakyReLU
 
@@ -182,8 +185,8 @@ if __name__ == '__main__':
                                                num_workers=4,
                                                drop_last=True)
     
-    loss_fn = torch.nn.MSELoss() 
-    if args.loss_type == "L1": loss_fn = torch.nn.SmoothL1Loss()
+    loss_fn = AsymmetricL2Loss(5, 1, 1e-2)
+    if args.loss_type == "L1": AsymmetricL1Loss(5, 1, 1e-2)
 
     enc = Encoder
     dec = Decoder
@@ -191,13 +194,15 @@ if __name__ == '__main__':
     if args.arch_type == "simple":
         enc = EncoderSimple
         dec = DecoderSimple
-    if args.arch_type == "deep":
-        enc = EncoderDeep
-        dec = DecoderDeep       
-    if args.arch_type == "deeper":
-        enc = EncoderDeeper
-        dec = DecoderDeeper      
-
+    if args.arch_type == "deep1":
+        enc = EncoderDeep1
+        dec = DecoderDeep1       
+    if args.arch_type == "deep2":
+        enc = EncoderDeep2
+        dec = DecoderDeep2
+    if args.arch_type == "deep3":
+        enc = EncoderDeep3
+        dec = DecoderDeep3    
         
     ## Get the encoders etc
     encoder=enc(args.nchan, args.latent, act_fn)
@@ -213,11 +218,15 @@ if __name__ == '__main__':
         {'params': encoder.parameters()},
         {'params': decoder.parameters()}
     ]
-    
+
     optimizer = torch.optim.Adam(params_to_optimize, lr=args.lr, weight_decay=weight_decay)
     scheduler = None
 
-    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
+    if args.scheduler == "onecycle":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
+    if args.scheduler == "step":
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optim, milestones=[200,400,600,800], gamma=0.1, last_epoch=-1, verbose=False)
+    if args.scheduler == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
     run_training(args.nstep, args.log, encoder, decoder, train_loader, loss_fn, optimizer, scheduler, args.state_file)

@@ -1,152 +1,84 @@
 from torch import nn
 
+### Alternative L2 loss
+class AsymmetricL2Loss(torch.nn.Module):
+    def __init__(self, nonzero_cost=2.0, zero_cost=1.0, l1_weight=0):
+        super(AsymmetricL2Loss, self).__init__()
+        self.nonzero_cost = nonzero_cost
+        self.zero_cost = zero_cost
+        self.l1_weight = l1_weight
+    
+    def forward(self, predictions, targets, encoder, decoder):
+        ## Calculate the absolute difference between predictions and targets
+        sq_err = (predictions - targets)**2
+        
+        ## Calculate the loss for nonzero values
+        nonzero = self.nonzero_cost * torch.where(targets != 0, sq_err, torch.zeros_like(sq_err))
+        
+        ## Calculate the loss for predicting a nonzero value for zero
+        zero = self.zero_cost * torch.where(targets == 0, torch.where(predictions != 0, sq_err, torch.zeros_like(sq_err)), torch.zeros_like(sq_err))
 
+        ## Total loss is the sum of nonzero_loss and zero_loss
+        reco_loss = torch.mean(zero + nonzero)
+        
+        ## Add the L1 norm term
+        l1_norm = torch.tensor(0., device=predictions.device)
+        num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
+        for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
+        for param in decoder.parameters(): l1_norm += torch.norm(param, p=1)
+    
+        total_loss = reco_loss + self.l1_weight*reco_loss.item()*l1_norm/num_params        
+        return total_loss
+
+
+## Alternative L1 loss
+class AsymmetricL1Loss(torch.nn.Module):
+    def __init__(self, nonzero_cost=2.0, zero_cost=1.0, l1_weight=0):
+        super(AsymmetricL1Loss, self).__init__()
+        self.nonzero_cost = nonzero_cost
+        self.zero_cost = zero_cost
+        self.l1_weight = l1_weight
+    
+    def forward(self, predictions, targets, encoder, decoder):
+        ## Calculate the absolute difference between predictions and targets
+        diff = torch.abs(predictions - targets)
+        
+        ## Calculate the loss for nonzero values
+        nonzero = self.nonzero_cost * torch.where(targets != 0, diff, torch.zeros_like(diff))
+        
+        ## Calculate the loss for predicting a nonzero value for zero
+        zero = self.zero_cost * torch.where(targets == 0, torch.where(predictions != 0, diff, torch.zeros_like(diff)), torch.zeros_like(diff))
+
+        ## Total loss is the sum of nonzero_loss and zero_loss
+        reco_loss = torch.mean(zero + nonzero)
+        
+        ## Add the L1 norm term
+        l1_norm = torch.tensor(0., device=predictions.device)
+        num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
+        for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
+        for param in decoder.parameters(): l1_norm += torch.norm(param, p=1)
+    
+        total_loss = reco_loss + self.l1_weight*reco_loss.item()*l1_norm/num_params        
+        return total_loss
+
+    
+### Encoder/decoder pairs below
 class EncoderSimple(nn.Module):
     
     def __init__(self, 
-                 base_channel_size : int,
+                 n_chan : int,
                  latent_dim : int,
                  act_fn : object = nn.LeakyReLU):
         """
         Inputs:
-            - base_channel_size : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
+            - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
             - latent_dim : Dimensionality of latent representation z
             - act_fn : Activation function used throughout the encoder network
         """
         super().__init__()
-        n_chan = base_channel_size
         
         ### Convolutional section
         self.encoder_cnn = nn.Sequential(
-            ## Note the assumption that the input image has a single channel
-            nn.Conv2d(in_channels=1, 
-                      out_channels=n_chan, 
-                      kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
-            act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=2*n_chan, 
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=2*n_chan, 
-                      out_channels=4*n_chan, 
-                      kernel_size=3, stride=2, padding=(1,0)), ## 35x17
-            act_fn()
-        )
-        
-        ### Flatten layer
-        self.flatten = nn.Flatten(start_dim=1)
-        
-        ### Linear section, simple for now
-        self.encoder_lin = nn.Sequential(
-            ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(4*n_chan*35*17, 1000),
-            act_fn(),      
-            nn.Linear(1000, latent_dim),
-        )
-        
-    def forward(self, x):
-        x = self.encoder_cnn(x)
-        x = self.flatten(x)
-        x = self.encoder_lin(x)
-        return x
-    
-class DecoderSimple(nn.Module):
-    
-    def __init__(self, 
-                 base_channel_size : int,
-                 latent_dim : int,
-                 act_fn : object = nn.LeakyReLU):
-        """
-        Inputs:
-            - base_channel_size : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
-            - latent_dim : Dimensionality of latent representation z
-            - act_fn : Activation function used throughout the decoder network
-        """
-        super().__init__()
-        n_chan = base_channel_size
-
-        self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, 1000),
-            act_fn(),
-            nn.Linear(1000, 4*n_chan*35*17),
-            act_fn()
-        )
-
-        self.unflatten = nn.Unflatten(dim=1, 
-        unflattened_size=(4*n_chan, 35, 17))
-
-        self.decoder_conv = nn.Sequential(  
-            nn.ConvTranspose2d(in_channels=4*n_chan, 
-                               out_channels=2*n_chan, 
-                               kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 8x8 ==> 16x16
-            act_fn(),
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(), 
-            nn.Conv2d(in_channels=2*n_chan,
-                      out_channels=2*n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(), 
-            nn.ConvTranspose2d(in_channels=2*n_chan, 
-                               out_channels=n_chan, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1), ## 16x16 ==> 32x32
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=n_chan,
-                      out_channels=n_chan,
-                      kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.ConvTranspose2d(in_channels=n_chan, 
-                               out_channels=1, 
-                               kernel_size=3, stride=2, padding=1, output_padding=1), ## 32x32 ==> 64x64
-            act_fn()
-        )
-        
-    def forward(self, x):
-        x = self.decoder_lin(x)
-        x = self.unflatten(x)
-        x = self.decoder_conv(x)
-        return x
-
-    
-class EncoderDeep(nn.Module):
-    
-    def __init__(self, 
-                 base_channel_size : int,
-                 latent_dim : int,
-                 act_fn : object = nn.LeakyReLU):
-        """
-        Inputs:
-            - base_channel_size : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
-            - latent_dim : Dimensionality of latent representation z
-            - act_fn : Activation function used throughout the encoder network
-        """
-        super().__init__()
-        n_chan = base_channel_size
-        
-        ### Convolutional section
-        self.encoder_cnn = nn.Sequential(
-            ## Note the assumption that the input image has a single channel
             nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
@@ -159,13 +91,144 @@ class EncoderDeep(nn.Module):
             act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
             act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 35x17
+            act_fn()
+        )
+        
+        ### Flatten layer
+        self.flatten = nn.Flatten(start_dim=1)
+        
+        ### Linear section, simple for now
+        self.encoder_lin = nn.Sequential(
+            nn.Linear(4*n_chan*35*17, 1000),
+            act_fn(),      
+            nn.Linear(1000, latent_dim),
+        )
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+    def forward(self, x):
+        x = self.encoder_cnn(x)
+        x = self.flatten(x)
+        x = self.encoder_lin(x)
+        return x
+    
+class DecoderSimple(nn.Module):
+    
+    def __init__(self, 
+                 n_chan : int,
+                 latent_dim : int,
+                 act_fn : object = nn.LeakyReLU,
+                 drop_fract : float = 0.2):
+        """
+        Inputs:
+            - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
+            - latent_dim : Dimensionality of latent representation z
+            - act_fn : Activation function used throughout the decoder network
+        """
+        super().__init__()
+
+        self.decoder_lin = nn.Sequential(
+            nn.Linear(latent_dim, 1000),
+            act_fn(),
+            nn.Linear(1000, 4*n_chan*35*17),
+            act_fn()
+        )
+
+        self.unflatten = nn.Unflatten(dim=1, 
+        unflattened_size=(4*n_chan, 35, 17))
+
+        self.decoder_conv = nn.Sequential(  
+            nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x7 ==> 70x35
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(), 
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(), 
+            nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
+            act_fn()
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)      
+
+    def forward(self, x):
+        x = self.decoder_lin(x)
+        x = self.unflatten(x)
+        x = self.decoder_conv(x)
+        return x
+
+## Deep1   
+class EncoderDeep1(nn.Module):
+    
+    def __init__(self, 
+                 n_chan : int,
+                 latent_dim : int,
+                 act_fn : object = nn.LeakyReLU):
+        """
+        Inputs:
+            - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
+            - latent_dim : Dimensionality of latent representation z
+            - act_fn : Activation function used throughout the encoder network
+        """
+        super().__init__()
+        
+        ### Convolutional section
+        self.encoder_cnn = nn.Sequential(
+            ## Note the assumption that the input image has a single channel
+            nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 70x35 ==> 35x17
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
+            nn.BatchNorm2d(8*n_chan),
             act_fn()
         )
         
@@ -177,8 +240,22 @@ class EncoderDeep(nn.Module):
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
             nn.Linear(8*n_chan*17*8, 1000),
             act_fn(),      
+            nn.Dropout(drop_fract),
             nn.Linear(1000, latent_dim),
+            act_fn()      
         )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
         
     def forward(self, x):
         x = self.encoder_cnn(x)
@@ -186,20 +263,19 @@ class EncoderDeep(nn.Module):
         x = self.encoder_lin(x)
         return x
     
-class DecoderDeep(nn.Module):
+class DecoderDeep1(nn.Module):
     
     def __init__(self, 
-                 base_channel_size : int,
+                 n_chan : int,
                  latent_dim : int,
                  act_fn : object = nn.LeakyReLU):
         """
         Inputs:
-            - base_channel_size : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
+            - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
             - latent_dim : Dimensionality of latent representation z
             - act_fn : Activation function used throughout the decoder network
         """
         super().__init__()
-        n_chan = base_channel_size
 
         self.decoder_lin = nn.Sequential(
             nn.Linear(latent_dim, 1000),
@@ -213,26 +289,47 @@ class DecoderDeep(nn.Module):
 
         self.decoder_conv = nn.Sequential(  
             nn.ConvTranspose2d(in_channels=8*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(0,0), output_padding=(0,0)), ## 17x8 ==> 35x17
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x17 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
             act_fn(), 
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
             act_fn(), 
             nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
             act_fn()
         )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
         
     def forward(self, x):
         x = self.decoder_lin(x)
@@ -241,50 +338,62 @@ class DecoderDeep(nn.Module):
         return x
 
 
-
-class EncoderDeeper(nn.Module):
+## Deep2
+class EncoderDeep2(nn.Module):
     
     def __init__(self, 
-                 base_channel_size : int,
+                 n_chan : int,
                  latent_dim : int,
                  act_fn : object = nn.LeakyReLU):
         """
         Inputs:
-            - base_channel_size : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
+            - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
             - latent_dim : Dimensionality of latent representation z
             - act_fn : Activation function used throughout the encoder network
         """
         super().__init__()
-        n_chan = base_channel_size
         
         ### Convolutional section
         self.encoder_cnn = nn.Sequential(
             ## Note the assumption that the input image has a single channel
             nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 70x35 ==> 35x17
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
+            nn.BatchNorm2d(8*n_chan),
+            act_fn()
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
-            act_fn(),
-            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=8*n_chan, out_channels=16*n_chan, kernel_size=3, stride=2, padding=(0,1)), ## 17x8 ==> 8x4
+            nn.BatchNorm2d(16*n_chan),
             act_fn(),
             
         )
@@ -296,9 +405,23 @@ class EncoderDeeper(nn.Module):
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
             nn.Linear(16*n_chan*8*4, 1000),
-            act_fn(),   
+            act_fn(),      
+            nn.Dropout(drop_fract),
             nn.Linear(1000, latent_dim),
+            act_fn()      
         )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
         
     def forward(self, x):
         x = self.encoder_cnn(x)
@@ -306,20 +429,19 @@ class EncoderDeeper(nn.Module):
         x = self.encoder_lin(x)
         return x
     
-class DecoderDeeper(nn.Module):
+class DecoderDeep2(nn.Module):
     
     def __init__(self, 
-                 base_channel_size : int,
+                 n_chan : int,
                  latent_dim : int,
                  act_fn : object = nn.LeakyReLU):
         """
         Inputs:
-            - base_channel_size : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
+            - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
             - latent_dim : Dimensionality of latent representation z
             - act_fn : Activation function used throughout the decoder network
         """
         super().__init__()
-        n_chan = base_channel_size
 
         self.decoder_lin = nn.Sequential(
             nn.Linear(latent_dim, 1000),
@@ -333,35 +455,252 @@ class DecoderDeeper(nn.Module):
 
         self.decoder_conv = nn.Sequential(  
             nn.ConvTranspose2d(in_channels=16*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,1), output_padding=(0,1)), ## 8x4 ==> 17x8
+            nn.BatchNorm2d(8*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
             act_fn(),
             nn.ConvTranspose2d(in_channels=8*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(0,0), output_padding=(0,0)), ## 17x8 ==> 35x17
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
             act_fn(),
             nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x17 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
             act_fn(), 
             nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
             act_fn(), 
             nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
             act_fn()
         )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
         
     def forward(self, x):
         x = self.decoder_lin(x)
         x = self.unflatten(x)
         x = self.decoder_conv(x)
         return x
+
+## Deep3
+class EncoderDeep3(nn.Module):
+    
+    def __init__(self, 
+                 n_chan : int,
+                 latent_dim : int,
+                 act_fn : object = nn.LeakyReLU):
+        """
+        Inputs:
+            - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
+            - latent_dim : Dimensionality of latent representation z
+            - act_fn : Activation function used throughout the encoder network
+        """
+        super().__init__()
+        
+        ### Convolutional section
+        self.encoder_cnn = nn.Sequential(
+            ## Note the assumption that the input image has a single channel
+            nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 70x35 ==> 35x17
+            nn.BatchNorm2d(4*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
+            nn.BatchNorm2d(8*n_chan),
+            act_fn()
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=8*n_chan, out_channels=16*n_chan, kernel_size=3, stride=2, padding=(0,1)), ## 17x8 ==> 8x4
+            nn.BatchNorm2d(16*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=16*n_chan, out_channels=16*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(16*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=16*n_chan, out_channels=16*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(16*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=16*n_chan, out_channels=32*n_chan, kernel_size=3, stride=2, padding=1), ## 8x4 ==> 4x2
+            nn.BatchNorm2d(32*n_chan),
+            act_fn(), 
+        )
+        
+        ### Flatten layer
+        self.flatten = nn.Flatten(start_dim=1)
+        
+        ### Linear section, simple for now
+        self.encoder_lin = nn.Sequential(
+            ## Number of nodes in last layer multiplied by number of pixels in deepest layer
+            nn.Linear(32*n_chan*4*2, 1000),
+            act_fn(),      
+            nn.Dropout(drop_fract),
+            nn.Linear(1000, latent_dim),
+            act_fn()      
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+    def forward(self, x):
+        x = self.encoder_cnn(x)
+        x = self.flatten(x)
+        x = self.encoder_lin(x)
+        return x
+    
+class DecoderDeep3(nn.Module):
+    
+    def __init__(self, 
+                 n_chan : int,
+                 latent_dim : int,
+                 act_fn : object = nn.LeakyReLU):
+        """
+        Inputs:
+            - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
+            - latent_dim : Dimensionality of latent representation z
+            - act_fn : Activation function used throughout the decoder network
+        """
+        super().__init__()
+
+        self.decoder_lin = nn.Sequential(
+            nn.Linear(latent_dim, 1000),
+            act_fn(),
+            nn.Linear(1000, 32*n_chan*4*2),
+            act_fn()
+        )
+
+        self.unflatten = nn.Unflatten(dim=1, 
+        unflattened_size=(32*n_chan, 4, 2))
+
+        self.decoder_conv = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=32*n_chan, out_channels=16*n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 4x2 ==> 8x4
+            nn.BatchNorm2d(16*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=16*n_chan, out_channels=16*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(16*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=16*n_chan, out_channels=16*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(16*n_chan),
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=16*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,1), output_padding=(0,1)), ## 8x4 ==> 17x8
+            nn.BatchNorm2d(8*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(8*n_chan),
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=8*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(0,0), output_padding=(0,0)), ## 17x8 ==> 35x17
+            nn.BatchNorm2d(4*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=4*n_chan, out_channels=4*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(4*n_chan),
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x17 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(), 
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(), 
+            nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
+            act_fn()
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+    def forward(self, x):
+        x = self.decoder_lin(x)
+        x = self.unflatten(x)
+        x = self.decoder_conv(x)
+        return x
+
+    
