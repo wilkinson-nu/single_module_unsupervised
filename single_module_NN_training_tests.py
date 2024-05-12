@@ -1,7 +1,7 @@
 import numpy as np
 import joblib
 import argparse
-from torch import nn
+from torch import nn, optim
 from torchvision import transforms
 
 ## Get the autoencoder options I included from elsewhere
@@ -164,6 +164,10 @@ if __name__ == '__main__':
     # Parse arguments from command line
     args = parser.parse_args()
 
+    ## Report arguments
+    for arg in vars(args):
+        print(arg, getattr(args, arg))
+    
     ## Other hard-coded values
     batch_size=128
     weight_decay=0
@@ -188,19 +192,24 @@ if __name__ == '__main__':
     loss_fn = AsymmetricL2Loss(5, 1, 1e-2)
     if args.loss_type == "L1": AsymmetricL1Loss(5, 1, 1e-2)
 
-    enc = Encoder
-    dec = Decoder
+    enc = None
+    dec = None
 
+    print("Found arch_type", args.arch_type)
     if args.arch_type == "simple":
+        print("simple!")
         enc = EncoderSimple
         dec = DecoderSimple
     if args.arch_type == "deep1":
+        print("deep1!")
         enc = EncoderDeep1
         dec = DecoderDeep1       
     if args.arch_type == "deep2":
+        print("deep2!")
         enc = EncoderDeep2
         dec = DecoderDeep2
     if args.arch_type == "deep3":
+        print("deep3!")
         enc = EncoderDeep3
         dec = DecoderDeep3    
         
@@ -223,10 +232,10 @@ if __name__ == '__main__':
     scheduler = None
 
     if args.scheduler == "onecycle":
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
     if args.scheduler == "step":
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optim, milestones=[200,400,600,800], gamma=0.1, last_epoch=-1, verbose=False)
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[200,400,600,800], gamma=0.1, last_epoch=-1, verbose=False)
     if args.scheduler == "plateau":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
     run_training(args.nstep, args.log, encoder, decoder, train_loader, loss_fn, optimizer, scheduler, args.state_file)
