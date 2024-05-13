@@ -100,9 +100,9 @@ class EncoderSimple(nn.Module):
         
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
-            nn.Linear(4*n_chan*35*17, 1000),
+            nn.Linear(4*n_chan*35*17, 1024),
             act_fn(),      
-            nn.Linear(1000, latent_dim),
+            nn.Linear(1024, latent_dim),
         )
         # Initialize weights using Xavier initialization
         self.initialize_weights()
@@ -138,9 +138,9 @@ class DecoderSimple(nn.Module):
         super().__init__()
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, 1000),
+            nn.Linear(latent_dim, 1024),
             act_fn(),
-            nn.Linear(1000, 4*n_chan*35*17),
+            nn.Linear(1024, 4*n_chan*35*17),
             act_fn()
         )
 
@@ -238,10 +238,10 @@ class EncoderDeep1(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(8*n_chan*17*8, 1000),
+            nn.Linear(8*n_chan*17*8, 1024),
             act_fn(),      
             nn.Dropout(drop_fract),
-            nn.Linear(1000, latent_dim),
+            nn.Linear(1024, latent_dim),
             act_fn()      
         )
 
@@ -278,9 +278,9 @@ class DecoderDeep1(nn.Module):
         super().__init__()
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, 1000),
+            nn.Linear(latent_dim, 1024),
             act_fn(),
-            nn.Linear(1000, 8*n_chan*17*8),
+            nn.Linear(1024, 8*n_chan*17*8),
             act_fn()
         )
 
@@ -404,10 +404,10 @@ class EncoderDeep2(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(16*n_chan*8*4, 1000),
+            nn.Linear(16*n_chan*8*4, 1024),
             act_fn(),      
             nn.Dropout(drop_fract),
-            nn.Linear(1000, latent_dim),
+            nn.Linear(1024, latent_dim),
             act_fn()      
         )
 
@@ -444,9 +444,9 @@ class DecoderDeep2(nn.Module):
         super().__init__()
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, 1000),
+            nn.Linear(latent_dim, 1024),
             act_fn(),
-            nn.Linear(1000, 16*n_chan*8*4),
+            nn.Linear(1024, 16*n_chan*8*4),
             act_fn()
         )
 
@@ -586,10 +586,10 @@ class EncoderDeep3(nn.Module):
         ### Linear section, simple for now
         self.encoder_lin = nn.Sequential(
             ## Number of nodes in last layer multiplied by number of pixels in deepest layer
-            nn.Linear(32*n_chan*4*2, 1000),
+            nn.Linear(32*n_chan*4*2, 1024),
             act_fn(),      
             nn.Dropout(drop_fract),
-            nn.Linear(1000, latent_dim),
+            nn.Linear(1024, latent_dim),
             act_fn()      
         )
 
@@ -626,9 +626,9 @@ class DecoderDeep3(nn.Module):
         super().__init__()
 
         self.decoder_lin = nn.Sequential(
-            nn.Linear(latent_dim, 1000),
+            nn.Linear(latent_dim, 1024),
             act_fn(),
-            nn.Linear(1000, 32*n_chan*4*2),
+            nn.Linear(1024, 32*n_chan*4*2),
             act_fn()
         )
 
