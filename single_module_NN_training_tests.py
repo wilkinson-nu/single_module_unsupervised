@@ -5,7 +5,7 @@ from torch import nn, optim
 from torchvision import transforms
 
 ## Get the autoencoder options I included from elsewhere
-from NN_libs import EncoderSimple, DecoderSimple, EncoderDeep1, DecoderDeep1, EncoderDeep2, DecoderDeep2, EncoderDeep3, DecoderDeep3, AsymmetricL2Loss, AsymmetricL1Loss
+from NN_libs import EncoderSimple, DecoderSimple, EncoderSimple2, DecoderSimple2, EncoderDeep1, DecoderDeep1, EncoderDeep2, DecoderDeep2, EncoderDeep3, DecoderDeep3, AsymmetricL2Loss, AsymmetricL1Loss
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -200,6 +200,10 @@ if __name__ == '__main__':
         print("simple!")
         enc = EncoderSimple
         dec = DecoderSimple
+    if args.arch_type == "simple":
+        print("simple!")
+        enc = EncoderSimple2
+        dec = DecoderSimple2
     if args.arch_type == "deep1":
         print("deep1!")
         enc = EncoderDeep1
