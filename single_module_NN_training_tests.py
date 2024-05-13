@@ -109,12 +109,12 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
             nbatches += 1
         
         ## See if we have an LR scheduler...
-        if scheduler: scheduler.step(total_loss)
+        if scheduler: scheduler.step()
         
         av_loss = total_loss/nbatches
         if log_dir: 
             writer.add_scalar('loss/train', av_loss, iteration)
-            writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
+            if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
         #if iteration%10 == 0:
         print("Processed", iteration, "/", num_iterations, "; loss =", av_loss)
@@ -234,7 +234,7 @@ if __name__ == '__main__':
     if args.scheduler == "onecycle":
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
     if args.scheduler == "step":
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[200,400,600,800], gamma=0.1, last_epoch=-1, verbose=False)
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150,300,450], gamma=0.1, last_epoch=-1, verbose=False)
     if args.scheduler == "plateau":
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
