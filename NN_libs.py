@@ -182,6 +182,142 @@ class DecoderSimple(nn.Module):
         x = self.decoder_conv(x)
         return x
 
+
+## Simple2 with dropout and batch norm
+class EncoderSimple2(nn.Module):
+    
+    def __init__(self, 
+                 n_chan : int,
+                 latent_dim : int,
+                 act_fn : object = nn.LeakyReLU,
+                 drop_fract : float = 0.2):
+        """
+        Inputs:
+            - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
+            - latent_dim : Dimensionality of latent representation z
+            - act_fn : Activation function used throughout the encoder network
+        """
+        super().__init__()
+        
+        ### Convolutional section
+        self.encoder_cnn = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=n_chan, kernel_size=3, stride=2, padding=1), ## 280x140 ==> 140x70
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=1), ## 140x70 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=4*n_chan, kernel_size=3, stride=2, padding=(1,0)), ## 35x17
+            nn.BatchNorm2d(4*n_chan),
+            act_fn()
+        )
+        
+        ### Flatten layer
+        self.flatten = nn.Flatten(start_dim=1)
+        
+        ### Linear section, simple for now
+        self.encoder_lin = nn.Sequential(
+            nn.Linear(4*n_chan*35*17, 1024),
+            act_fn(),      
+            nn.Dropout(drop_fract),
+            nn.Linear(1024, latent_dim),
+            act_fn(),
+        )
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        
+    def forward(self, x):
+        x = self.encoder_cnn(x)
+        x = self.flatten(x)
+        x = self.encoder_lin(x)
+        return x
+    
+class DecoderSimple2(nn.Module):
+    
+    def __init__(self, 
+                 n_chan : int,
+                 latent_dim : int,
+                 act_fn : object = nn.LeakyReLU):
+        """
+        Inputs:
+            - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
+            - latent_dim : Dimensionality of latent representation z
+            - act_fn : Activation function used throughout the decoder network
+        """
+        super().__init__()
+
+        self.decoder_lin = nn.Sequential(
+            nn.Linear(latent_dim, 1024),
+            act_fn(),
+            nn.Linear(1024, 4*n_chan*35*17),
+            act_fn()
+        )
+
+        self.unflatten = nn.Unflatten(dim=1, 
+        unflattened_size=(4*n_chan, 35, 17))
+
+        self.decoder_conv = nn.Sequential(  
+            nn.ConvTranspose2d(in_channels=4*n_chan, out_channels=2*n_chan, kernel_size=3, stride=2, padding=(1,0), output_padding=(1,0)), ## 35x7 ==> 70x35
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(), 
+            nn.Conv2d(in_channels=2*n_chan, out_channels=2*n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(2*n_chan),
+            act_fn(), 
+            nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1), ## 70x35 ==> 140x70
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1), ## No change in size
+            nn.BatchNorm2d(n_chan),
+            act_fn(),
+            nn.ConvTranspose2d(in_channels=n_chan, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), ## 140x70 ==> 280x140
+            act_fn()
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or \
+               isinstance(m, nn.ConvTranspose2d) or \
+               isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)      
+
+    def forward(self, x):
+        x = self.decoder_lin(x)
+        x = self.unflatten(x)
+        x = self.decoder_conv(x)
+        return x
+
 ## Deep1   
 class EncoderDeep1(nn.Module):
     
