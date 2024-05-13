@@ -1,7 +1,8 @@
 from torch import nn
+import torch
 
 ### Alternative L2 loss
-class AsymmetricL2Loss(torch.nn.Module):
+class AsymmetricL2Loss(nn.Module):
     def __init__(self, nonzero_cost=2.0, zero_cost=1.0, l1_weight=0):
         super(AsymmetricL2Loss, self).__init__()
         self.nonzero_cost = nonzero_cost
@@ -32,7 +33,7 @@ class AsymmetricL2Loss(torch.nn.Module):
 
 
 ## Alternative L1 loss
-class AsymmetricL1Loss(torch.nn.Module):
+class AsymmetricL1Loss(nn.Module):
     def __init__(self, nonzero_cost=2.0, zero_cost=1.0, l1_weight=0):
         super(AsymmetricL1Loss, self).__init__()
         self.nonzero_cost = nonzero_cost
@@ -127,8 +128,7 @@ class DecoderSimple(nn.Module):
     def __init__(self, 
                  n_chan : int,
                  latent_dim : int,
-                 act_fn : object = nn.LeakyReLU,
-                 drop_fract : float = 0.2):
+                 act_fn : object = nn.LeakyReLU):
         """
         Inputs:
             - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
@@ -188,7 +188,8 @@ class EncoderDeep1(nn.Module):
     def __init__(self, 
                  n_chan : int,
                  latent_dim : int,
-                 act_fn : object = nn.LeakyReLU):
+                 act_fn : object = nn.LeakyReLU,
+                 drop_fract : float = 0.2):
         """
         Inputs:
             - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
@@ -344,7 +345,8 @@ class EncoderDeep2(nn.Module):
     def __init__(self, 
                  n_chan : int,
                  latent_dim : int,
-                 act_fn : object = nn.LeakyReLU):
+                 act_fn : object = nn.LeakyReLU,
+                 drop_fract : float = 0.2):
         """
         Inputs:
             - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
@@ -385,7 +387,7 @@ class EncoderDeep2(nn.Module):
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
             nn.BatchNorm2d(8*n_chan),
-            act_fn()
+            act_fn(),
             nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
             nn.BatchNorm2d(8*n_chan),
             act_fn(),
@@ -518,7 +520,8 @@ class EncoderDeep3(nn.Module):
     def __init__(self, 
                  n_chan : int,
                  latent_dim : int,
-                 act_fn : object = nn.LeakyReLU):
+                 act_fn : object = nn.LeakyReLU,
+                 drop_fract : float = 0.2):
         """
         Inputs:
             - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
@@ -559,7 +562,7 @@ class EncoderDeep3(nn.Module):
             act_fn(),
             nn.Conv2d(in_channels=4*n_chan, out_channels=8*n_chan, kernel_size=3, stride=2, padding=(0,0)), ## 35x17 ==> 17x8
             nn.BatchNorm2d(8*n_chan),
-            act_fn()
+            act_fn(),
             nn.Conv2d(in_channels=8*n_chan, out_channels=8*n_chan, kernel_size=3, padding=1), ## No change in size
             nn.BatchNorm2d(8*n_chan),
             act_fn(),
