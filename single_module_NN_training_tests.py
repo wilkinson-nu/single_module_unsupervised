@@ -200,8 +200,8 @@ if __name__ == '__main__':
         print("simple!")
         enc = EncoderSimple
         dec = DecoderSimple
-    if args.arch_type == "simple":
-        print("simple!")
+    if args.arch_type == "simple2":
+        print("simple2!")
         enc = EncoderSimple2
         dec = DecoderSimple2
     if args.arch_type == "deep1":
