@@ -174,7 +174,7 @@ if __name__ == '__main__':
     act_fn=nn.LeakyReLU
 
     ## Hard code the transform for now...
-    transform = transforms.Compose([transforms.Lambda(cbrt_transform)])
+    transform = transforms.Compose([transforms.Lambda(log_transform)])
     
     ## Get a concrete dataset and data loader
     start = time.process_time() 
