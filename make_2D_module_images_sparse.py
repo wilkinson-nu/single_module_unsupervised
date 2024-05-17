@@ -52,7 +52,13 @@ def make_image(these_hits):
     ## Slightly confusing as this isn't necessary for csr or csc matrices
     this_sparse.sum_duplicates()
 
-    return this_sparse
+    # Apply the log10(1+x) transformation to the data array
+    trans_data = np.log10(1 + this_sparse.data)
+
+    # Reconstruct the coo_matrix with the transformed data
+    trans_sparse = coo_matrix((trans_data, (this_sparse.row, this_sparse.col)), shape=this_sparse.shape)
+    
+    return trans_sparse
 
 def make_images(input_file_name, output_file_name):
 
