@@ -5,7 +5,7 @@ from torch import nn, optim
 from torchvision import transforms
 
 ## Get the autoencoder options I included from elsewhere
-from NN_libs import EncoderSimple, DecoderSimple, EncoderSimple2, DecoderSimple2, EncoderDeep1, DecoderDeep1, EncoderDeep2, DecoderDeep2, EncoderDeep3, DecoderDeep3, AsymmetricL2Loss, AsymmetricL1Loss
+from NN_libs import EncoderSimple, DecoderSimple, EncoderDeep1, DecoderDeep1, EncoderDeep2, DecoderDeep2, EncoderDeep3, DecoderDeep3, AsymmetricL2Loss, AsymmetricL1Loss
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -178,7 +178,7 @@ if __name__ == '__main__':
     
     ## Get a concrete dataset and data loader
     start = time.process_time() 
-    train_dataset = SingleModuleImage2D_sparse_joblib(args.infile, args.norm_data, transform=transform)
+    train_dataset = SingleModuleImage2D_sparse_joblib(args.infile, args.norm_data) #, transform=transform)
     print("Time taken to load", train_dataset.__len__(),"images:", time.process_time() - start)
     
     ## Randomly chosen batching
@@ -189,8 +189,8 @@ if __name__ == '__main__':
                                                num_workers=4,
                                                drop_last=True)
     
-    loss_fn = AsymmetricL2Loss(5, 1, 1e-2)
-    if args.loss_type == "L1": AsymmetricL1Loss(5, 1, 1e-2)
+    loss_fn = AsymmetricL2Loss(10, 1, 1e-2)
+    if args.loss_type == "L1": AsymmetricL1Loss(10, 1, 1e-2)
 
     enc = None
     dec = None
@@ -200,10 +200,6 @@ if __name__ == '__main__':
         print("simple!")
         enc = EncoderSimple
         dec = DecoderSimple
-    if args.arch_type == "simple2":
-        print("simple2!")
-        enc = EncoderSimple2
-        dec = DecoderSimple2
     if args.arch_type == "deep1":
         print("deep1!")
         enc = EncoderDeep1
