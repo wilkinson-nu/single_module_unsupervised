@@ -695,7 +695,7 @@ class DecoderDeep3(nn.Module):
         unflattened_size=(32*n_chan, 5, 3))
 
         self.decoder_conv = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=32*n_chan, out_channels=16*n_chan, kernel_size=3, stride=2, padding=1, output_padding=(0,0), ## 5x3 ==> 9x5
+            nn.ConvTranspose2d(in_channels=32*n_chan, out_channels=16*n_chan, kernel_size=3, stride=2, padding=1, output_padding=(0,0)), ## 5x3 ==> 9x5
             nn.BatchNorm2d(16*n_chan),
             act_fn(),
             nn.Conv2d(in_channels=16*n_chan, out_channels=16*n_chan, kernel_size=3, padding=1), ## No change in size
