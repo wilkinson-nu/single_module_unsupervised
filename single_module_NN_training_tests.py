@@ -217,19 +217,15 @@ if __name__ == '__main__':
 
     print("Found arch_type", args.arch_type)
     if args.arch_type == "simple":
-        print("simple!")
         enc = EncoderSimple
         dec = DecoderSimple
     if args.arch_type == "deep1":
-        print("deep1!")
         enc = EncoderDeep1
         dec = DecoderDeep1       
     if args.arch_type == "deep2":
-        print("deep2!")
         enc = EncoderDeep2
         dec = DecoderDeep2
     if args.arch_type == "deep3":
-        print("deep3!")
         enc = EncoderDeep3
         dec = DecoderDeep3    
         
