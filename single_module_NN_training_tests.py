@@ -3,6 +3,7 @@ import joblib
 import argparse
 from torch import nn, optim
 from torchvision import transforms
+import sys
 
 ## Get the autoencoder options I included from elsewhere
 from NN_libs import EncoderSimple, DecoderSimple, EncoderDeep1, DecoderDeep1, EncoderDeep2, DecoderDeep2, EncoderDeep3, DecoderDeep3, AsymmetricL2Loss, AsymmetricL1Loss
@@ -67,11 +68,25 @@ def log_transform(x):
     return np.log10(1+x)
 
 ## Wrap the training in a nicer function...
-def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn, optimizer, scheduler=None, state_file=None):
+def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn, optimizer, scheduler=None, state_file=None, restart=False):
 
     print("Training with", num_iterations, "iterations")
     tstart = time.time()
-
+    start_iteration = 0
+    
+    ## Load the checkpoint if one has been given
+    if restart:
+        if state_file:
+            checkpoint = torch.load(state_file, map_location=device)
+            encoder.load_state_dict(checkpoint['encoder_state_dict'])
+            decoder.load_state_dict(checkpoint['decoder_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_iteration = checkpoint['epoch'] + 1
+            print("Restarting from iteration", start_iteration)
+        else:
+            print("Restart requested, but no state file provided, aborting")
+            sys.exit()
+    
     if log_dir: writer = SummaryWriter(log_dir=log_dir)
 
     # Set train mode for both the encoder and the decoder
@@ -79,7 +94,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
     decoder.train()
 
     ## Loop over the desired iterations
-    for iteration in range(num_iterations):
+    for iteration in range(start_iteration, start_iteration+num_iterations):
         
         total_loss = 0
         nbatches   = 0
@@ -121,7 +136,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
         print("Time taken:", time.process_time() - start)
 
         ## For checkpointing
-        if iteration%50 == 0 and iteration != 0:
+        if iteration%100 == 0 and iteration != 0:
             torch.save({
                 'epoch': iteration,
                 'encoder_state_dict': encoder.state_dict(),
@@ -138,7 +153,10 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, loss_fn,
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': loss
     }, state_file)    
-        
+
+    ## Close logging
+    if log_dir: writer.close()
+    
 ## Do the business
 if __name__ == '__main__':
 
@@ -159,7 +177,9 @@ if __name__ == '__main__':
     parser.add_argument('--loss_type', type=str, default="L2", nargs='?')
     parser.add_argument('--arch_type', type=str, default="None", nargs='?')
     parser.add_argument('--norm_data', type=int, default=0, nargs='?')
-    
+
+    ## Restart option
+    parser.add_argument('--restart', type=int, default=0, nargs='?')    
 
     # Parse arguments from command line
     args = parser.parse_args()
@@ -234,8 +254,21 @@ if __name__ == '__main__':
     if args.scheduler == "onecycle":
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
     if args.scheduler == "step":
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150,300,450], gamma=0.1, last_epoch=-1, verbose=False)
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
+                                                   milestones=[150,300,450],
+                                                   gamma=0.1,
+                                                   last_epoch=-1,
+                                                   verbose=False)
     if args.scheduler == "plateau":
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
-    run_training(args.nstep, args.log, encoder, decoder, train_loader, loss_fn, optimizer, scheduler, args.state_file)
+    run_training(args.nstep,
+                 args.log,
+                 encoder,
+                 decoder,
+                 train_loader,
+                 loss_fn,
+                 optimizer,
+                 scheduler,
+                 args.state_file,
+                 args.restart)
