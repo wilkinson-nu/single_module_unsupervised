@@ -179,7 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--norm_data', type=int, default=0, nargs='?')
 
     ## Restart option
-    parser.add_argument('--restart', type=int, default=0, nargs='?')    
+    parser.add_argument('--restart', action='store_true')
 
     # Parse arguments from command line
     args = parser.parse_args()
