@@ -189,7 +189,7 @@ if __name__ == '__main__':
         print(arg, getattr(args, arg))
     
     ## Other hard-coded values
-    batch_size=128
+    batch_size=512
     weight_decay=0
     act_fn=nn.LeakyReLU
 
