@@ -1,5 +1,6 @@
 from torch import nn
 import torch
+import sys
 
 ### Alternative L2 loss
 class AsymmetricL2Loss(nn.Module):
@@ -763,3 +764,16 @@ class DecoderDeep3(nn.Module):
         return x
 
     
+def get_model(name=None):
+
+    if name == "simple":
+        return EncoderSimple, DecoderSimple
+    if name == "deep1":
+        return EncoderDeep1, DecoderDeep1      
+    if name == "deep2":
+        return EncoderDeep2, DecoderDeep2
+    if name == "deep3":
+        return EncoderDeep3, DecoderDeep3    
+
+    print("Unknown model name:", name)
+    sys.exit()
