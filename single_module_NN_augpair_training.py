@@ -214,7 +214,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
             if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
         #if iteration%10 == 0:
-        print("Processed", iteration, "/", num_iterations, "; loss =", av_loss, "(", av_aug1_loss, "+", av_aug2_loss, "+", av_latent_loss, ";", av_orig_loss)
+        print("Processed", iteration, "/", num_iterations, "; loss =", av_loss, "(", av_aug1_loss, "+", av_aug2_loss, "+", av_latent_loss, ";", av_orig_loss, ")")
         print("Time taken:", time.process_time() - start)
 
         ## For checkpointing
