@@ -24,7 +24,7 @@ class AsymmetricL2Loss(nn.Module):
         total_loss = torch.mean(zero + nonzero)
 
         ## Add the optional L1 norm term
-        if l1_weight != 0:
+        if self.l1_weight != 0:
             l1_norm = torch.tensor(0., device=predictions.device)
             num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
             for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
@@ -56,7 +56,7 @@ class AsymmetricL1Loss(nn.Module):
         total_loss = torch.mean(zero + nonzero)
 
         ## Add the optional L1 norm term
-        if l1_weight != 0:
+        if self.l1_weight != 0:
             l1_norm = torch.tensor(0., device=predictions.device)
             num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
             for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
