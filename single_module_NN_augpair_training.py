@@ -288,7 +288,7 @@ if __name__ == '__main__':
     
     ## Randomly chosen batching
     train_loader = torch.utils.data.DataLoader(train_dataset,
-                                               collate_fn=collate,
+                                               collate_fn=collate_triplet,
                                                batch_size=batch_size,
                                                shuffle=True, 
                                                num_workers=16,
