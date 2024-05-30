@@ -176,7 +176,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
             orig_batch = orig_batch.to(device)
             enc_orig_batch = encoder(orig_batch)
             dec_orig_batch = decoder(enc_orig_batch)
-            aug1_loss = reco_loss_fn(dec_orig_batch, orig_batch, encoder, decoder)
+            orig_loss = reco_loss_fn(dec_orig_batch, orig_batch, encoder, decoder)
 
             ## Get the final component to the loss (using the two augmented batches)
             latent_loss = latent_loss_fn(enc_aug_batch1, enc_aug_batch2)
@@ -277,7 +277,7 @@ if __name__ == '__main__':
         transforms.RandomHorizontalFlip(),
         RandomBlockZero(),
         RandomTensorRotation(-10, 10),
-        RandomShiftTensor()
+        RandomShiftTensor(5)
     ])
 
 
