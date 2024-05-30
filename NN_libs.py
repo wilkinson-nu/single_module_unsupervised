@@ -21,15 +21,16 @@ class AsymmetricL2Loss(nn.Module):
         zero = self.zero_cost * torch.where(targets == 0, torch.where(predictions != 0, sq_err, torch.zeros_like(sq_err)), torch.zeros_like(sq_err))
 
         ## Total loss is the sum of nonzero_loss and zero_loss
-        reco_loss = torch.mean(zero + nonzero)
-        
-        ## Add the L1 norm term
-        l1_norm = torch.tensor(0., device=predictions.device)
-        num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
-        for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
-        for param in decoder.parameters(): l1_norm += torch.norm(param, p=1)
-    
-        total_loss = reco_loss + self.l1_weight*reco_loss.item()*l1_norm/num_params        
+        total_loss = torch.mean(zero + nonzero)
+
+        ## Add the optional L1 norm term
+        if l1_weight != 0:
+            l1_norm = torch.tensor(0., device=predictions.device)
+            num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
+            for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
+            for param in decoder.parameters(): l1_norm += torch.norm(param, p=1)
+            total_loss += self.l1_weight*reco_loss.item()*l1_norm/num_params
+            
         return total_loss
 
 
@@ -52,16 +53,33 @@ class AsymmetricL1Loss(nn.Module):
         zero = self.zero_cost * torch.where(targets == 0, torch.where(predictions != 0, diff, torch.zeros_like(diff)), torch.zeros_like(diff))
 
         ## Total loss is the sum of nonzero_loss and zero_loss
-        reco_loss = torch.mean(zero + nonzero)
-        
-        ## Add the L1 norm term
-        l1_norm = torch.tensor(0., device=predictions.device)
-        num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
-        for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
-        for param in decoder.parameters(): l1_norm += torch.norm(param, p=1)
-    
-        total_loss = reco_loss + self.l1_weight*reco_loss.item()*l1_norm/num_params        
+        total_loss = torch.mean(zero + nonzero)
+
+        ## Add the optional L1 norm term
+        if l1_weight != 0:
+            l1_norm = torch.tensor(0., device=predictions.device)
+            num_params = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in decoder.parameters())
+            for param in encoder.parameters(): l1_norm += torch.norm(param, p=1)
+            for param in decoder.parameters(): l1_norm += torch.norm(param, p=1)
+            total_loss += self.l1_weight*reco_loss.item()*l1_norm/num_params
+            
         return total_loss
+
+    
+## Calculate the average distance between pairs in the latent space
+class EuclideanDistLoss(torch.nn.Module):
+    def __init__(self):
+        super(EuclideanDistLoss, self).__init__()
+    
+    def forward(self, latent1, latent2):
+        # Compute the Euclidean distance between each pair of corresponding tensors in the batch
+        batch_size = latent1.size(0)
+        distances = torch.norm(latent1 - latent2, p=2, dim=1)
+        
+        # Average the distances over the batch
+        loss = distances.mean()
+        
+        return loss
 
     
 ## Simple with dropout and batch norm
