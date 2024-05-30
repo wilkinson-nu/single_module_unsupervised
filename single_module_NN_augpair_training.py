@@ -291,7 +291,7 @@ if __name__ == '__main__':
                                                collate_fn=collate_triplet,
                                                batch_size=batch_size,
                                                shuffle=True, 
-                                               num_workers=16,
+                                               num_workers=4,
                                                drop_last=True)
     
     print("Found arch_type", args.arch_type)
