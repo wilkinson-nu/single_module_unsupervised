@@ -4,6 +4,10 @@ from glob import glob
 
 def merge_images(input_file_names, output_file_name, max_images=None):
 
+    print("Looking for images in", input_file_names)
+    print("Saving in", output_file_name)
+    if max_images: print("Maximum of", max_images, "events")
+    
     outfile = h5py.File(output_file_name, 'w')
 
     ## Global index for the number of images in the output file
@@ -11,7 +15,7 @@ def merge_images(input_file_names, output_file_name, max_images=None):
 
     ## Loop over the input files
     for input_file_name in glob(input_file_names):
-        input_file = h5py.File(input_file, 'r')
+        input_file = h5py.File(input_file_name, 'r')
         
         # Iterate over all event groups in the current input file
         for group in input_file.keys():
