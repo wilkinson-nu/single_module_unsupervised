@@ -10,7 +10,7 @@ class AsymmetricL2Loss(nn.Module):
         self.zero_cost = zero_cost
         self.l1_weight = l1_weight
     
-    def forward(self, predictions, targets, encoder, decoder):
+    def forward(self, predictions, targets, encoder=None, decoder=None):
         ## Calculate the absolute difference between predictions and targets
         sq_err = (predictions - targets)**2
         
@@ -42,7 +42,7 @@ class AsymmetricL1Loss(nn.Module):
         self.zero_cost = zero_cost
         self.l1_weight = l1_weight
     
-    def forward(self, predictions, targets, encoder, decoder):
+    def forward(self, predictions, targets, encoder=None, decoder=None):
         ## Calculate the absolute difference between predictions and targets
         diff = torch.abs(predictions - targets)
         
