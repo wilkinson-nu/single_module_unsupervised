@@ -117,13 +117,14 @@ def make_images(input_file_name, output_file_name):
     ## Write the images to an hdf5 file
     with h5py.File(output_file_name, 'w') as fout:
         for i, sparse_image in enumerate(sparse_image_list):
-            group = fout.create_group('event_'+str(i))
+            group = fout.create_group(str(i))
             group.create_dataset('data', data=sparse_image.data)
             group.create_dataset('row', data=sparse_image.row)
             group.create_dataset('col', data=sparse_image.col)
             group.attrs['shape'] = sparse_image.shape
 
     ## Close the input file
+    f.attrs['N'] = len(sparse_image_list)
     f.close()
 
 if __name__ == '__main__':
