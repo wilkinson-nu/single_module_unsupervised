@@ -757,7 +757,7 @@ class DecoderDeep3(nn.Module):
             nn.ConvTranspose2d(in_channels=2*n_chan, out_channels=n_chan, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False), ## 70x35 ==> 140x70
             nn.BatchNorm2d(n_chan),
             act_fn(),
-            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=, bias=False1), ## No change in size
+            nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1, bias=False), ## No change in size
             nn.BatchNorm2d(n_chan),
             act_fn(),
             nn.Conv2d(in_channels=n_chan, out_channels=n_chan, kernel_size=3, padding=1, bias=False), ## No change in size
