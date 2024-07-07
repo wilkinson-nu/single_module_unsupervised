@@ -8,7 +8,7 @@ def merge_images(input_file_names, output_file_name, max_images=None):
     print("Saving in", output_file_name)
     if max_images: print("Maximum of", max_images, "events")
     
-    outfile = h5py.File(output_file_name, 'w')
+    output_file = h5py.File(output_file_name, 'w')
 
     ## Global index for the number of images in the output file
     index = 0
@@ -26,15 +26,15 @@ def merge_images(input_file_names, output_file_name, max_images=None):
             if group.startswith('event_'):
                 # Copy each event group to the new file with a new sequential index
                 new_group_name = 'event_'+str(index)
-                input_file.copy(group, outfile, new_group_name)
+                input_file.copy(group, output_file, new_group_name)
                 index += 1
 
-        input_file.attrs['nevents'] = event_index
         ## Close this input file
         input_file.close()
 
     ## Close the output file, job done
-    outfile.close()
+    output_file.attrs['nevents'] = index
+    output_file.close()
     
 
 if __name__ == '__main__':
@@ -47,5 +47,5 @@ if __name__ == '__main__':
     input_file_name = sys.argv[1]
     output_file_name = sys.argv[2]
     nimages = None
-    if len(sys.argv) == 3: nimages = int(sys.argv[3])
+    if len(sys.argv) == 4: nimages = int(sys.argv[3])
     merge_images(input_file_name, output_file_name, nimages)

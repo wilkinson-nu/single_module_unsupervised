@@ -1,14 +1,14 @@
 #!/bin/bash
 
 INDIR="/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v1"
-OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/sparse_joblib_fixdupes_pluscuts"
+OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/sparse_hdf5_fixdupes_pluscuts_noneg_transform"
 
 ## Process all files
 for INFILEFULL in $(ls ${INDIR}/*); do
 
     ## SET UP NAMES
     INFILE=${INFILEFULL##*/}
-    OUTFILE=${INFILE/.h5/_images.joblib}
+    OUTFILE=${INFILE/.h5/_images.h5}
 
     ## Check if the output file exists
     if [ -f "${OUTDIR}/${OUTFILE}" ]; then
@@ -28,7 +28,7 @@ for INFILEFULL in $(ls ${INDIR}/*); do
     echo "#SBATCH --ntasks=1" >> ${JOBSCRIPT}
     echo "#SBATCH --mem=4GB" >> ${JOBSCRIPT}
     echo "cd ${SCRATCH}" >> ${JOBSCRIPT}
-    echo "shifter python3 ${PWD}/make_2D_module_images_sparse.py ${INDIR}/${INFILE} ${OUTFILE}" >> ${JOBSCRIPT}
+    echo "shifter python3 ${PWD}/make_2D_module_images_sparse_hdf5.py ${INDIR}/${INFILE} ${OUTFILE}" >> ${JOBSCRIPT}
     echo "cp ${OUTFILE} ${OUTDIR}/." >> ${JOBSCRIPT}
     echo "rm ${OUTFILE}" >> ${JOBSCRIPT}
     
