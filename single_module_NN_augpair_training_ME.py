@@ -8,6 +8,7 @@ import random
 from glob import glob
 from bisect import bisect
 import h5py
+import MinkowskiEngine as ME
 
 ## Includes from my libraries for this project
 from ME_NN_libs import AsymmetricL2LossME, EuclideanDistLoss
@@ -432,8 +433,9 @@ if __name__ == '__main__':
                                            pin_memory=True,
                                            prefetch_factor=2)
 
-    encoder=EncoderME(args.nchan, args.latent, act_fn)
-    decoder=DeccoderME(args.nchan, args.latent, act_fn)
+    ## Dropout is 0 for now...
+    encoder=EncoderME(args.nchan, args.latent, act_fn, 0)
+    decoder=DecoderME(args.nchan, args.latent, act_fn)
 
     encoder.to(device)
     decoder.to(device)
