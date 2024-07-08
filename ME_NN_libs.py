@@ -81,13 +81,13 @@ class AsymmetricL2LossME(torch.nn.Module):
 class EncoderME(nn.Module):
     
     def __init__(self, 
-                 n_chan : int,
+                 nchan : int,
                  latent_dim : int,
                  act_fn : object = ME.MinkowskiReLU,
                  drop_fract : float = 0.2):
         """
         Inputs:
-            - n_chan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
+            - nchan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
             - latent_dim : Dimensionality of latent representation z
             - act_fn : Activation function used throughout the encoder network
         """
@@ -189,12 +189,12 @@ class EncoderME(nn.Module):
 class DecoderME(nn.Module):
     
     def __init__(self, 
-                 n_chan : int,
+                 nchan : int,
                  latent_dim : int,
                  act_fn : object):
         """
         Inputs:
-            - n_chan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
+            - nchan : Number of channels we use in the last convolutional layers. Early layers might use a duplicate of it.
             - latent_dim : Dimensionality of latent representation z
             - act_fn : Activation function used throughout the decoder network
         """

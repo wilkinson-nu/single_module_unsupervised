@@ -1,5 +1,6 @@
 import numpy as np
 import argparse
+import os
 from torch import nn, optim
 from torchvision import transforms
 import sys
@@ -263,13 +264,16 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
     
     if log_dir: writer = SummaryWriter(log_dir=log_dir)
 
-    # Set train mode for both the encoder and the decoder
-    encoder.train()
-    decoder.train()
-
     ## Set up the loss functions
     reco_loss_fn = AsymmetricL2LossME(10, 1)
     latent_loss_fn = EuclideanDistLoss()
+
+    encoder.to(device, non_blocking=True)
+    decoder.to(device)
+    
+    ## Set a maximum for thresholding
+    total_memory = torch.cuda.get_device_properties(0).total_memory
+    gpu_threshold = 0.8 * total_memory
     
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
@@ -284,7 +288,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
         # Set train mode for both the encoder and the decoder
         encoder.train()
         decoder.train()
-    
+        
         # Iterate over batches of images with the dataloader
         for aug1_bcoords, aug1_bfeats, aug2_bcoords, aug2_bfeats, orig_bcoords, orig_bfeats in dataloader:
             
@@ -437,9 +441,6 @@ if __name__ == '__main__':
     encoder=EncoderME(args.nchan, args.latent, act_fn, 0)
     decoder=DecoderME(args.nchan, args.latent, act_fn)
 
-    encoder.to(device)
-    decoder.to(device)
-    
     params_to_optimize = [
         {'params': encoder.parameters()},
         {'params': decoder.parameters()}
