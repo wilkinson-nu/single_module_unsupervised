@@ -2,7 +2,7 @@ import numpy as np
 import argparse
 import os
 from torch import nn, optim
-from torchvision import transforms
+# from torchvision import transforms
 import sys
 import torchvision.transforms.v2 as transforms
 import random
@@ -243,7 +243,7 @@ def triple_ME_collate_fn(batch):
 
 
 ## Wrap the training in a nicer function...
-def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimizer, scheduler=None, state_file=None, restart=False):
+def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimizer, latent_scale=1.0, scheduler=None, state_file=None, restart=False):
 
     print("Training with", num_iterations, "iterations")
     tstart = time.time()
@@ -266,7 +266,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
 
     ## Set up the loss functions
     reco_loss_fn = AsymmetricL2LossME(10, 1)
-    latent_loss_fn = EuclideanDistLoss()
+    latent_loss_fn = EuclideanDistLoss(latent_scale)
 
     encoder.to(device, non_blocking=True)
     decoder.to(device)
@@ -359,7 +359,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
         print("Time taken:", time.process_time() - start)
 
         ## For checkpointing
-        if iteration%50 == 0 and iteration != 0:
+        if iteration%25 == 0 and iteration != 0:
             torch.save({
                 'epoch': iteration,
                 'encoder_state_dict': encoder.state_dict(),
@@ -395,6 +395,7 @@ if __name__ == '__main__':
 
     ## Optional
     parser.add_argument('--latent', type=int, default=8, nargs='?')
+    parser.add_argument('--latent_scale', type=float, default=1, nargs='?')
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
     parser.add_argument('--scheduler', type=str, default=None, nargs='?')
@@ -432,7 +433,7 @@ if __name__ == '__main__':
                                            collate_fn=triple_ME_collate_fn,
                                            batch_size=512,
                                            shuffle=True, 
-                                           num_workers=12,
+                                           num_workers=16,
                                            drop_last=True,
                                            pin_memory=True,
                                            prefetch_factor=2)
@@ -440,6 +441,8 @@ if __name__ == '__main__':
     ## Dropout is 0 for now...
     encoder=EncoderME(args.nchan, args.latent, act_fn, 0)
     decoder=DecoderME(args.nchan, args.latent, act_fn)
+    encoder.to(device, non_blocking=True)
+    decoder.to(device)
 
     params_to_optimize = [
         {'params': encoder.parameters()},
@@ -466,6 +469,7 @@ if __name__ == '__main__':
                  decoder,
                  train_loader,
                  optimizer,
+                 args.latent_scale,
                  scheduler,
                  args.state_file,
                  args.restart)
