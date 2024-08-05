@@ -398,7 +398,7 @@ if __name__ == '__main__':
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
     parser.add_argument('--scheduler', type=str, default=None, nargs='?')
-    parser.add_argument('--temperature', type=float, default=0.5, nargs='?')
+    # parser.add_argument('--temperature', type=float, default=0.5, nargs='?')
 
     ## Restart option
     parser.add_argument('--restart', action='store_true')
@@ -460,9 +460,10 @@ if __name__ == '__main__':
         print("Using the Euclidean distance loss")
         latent_loss_fn = EuclideanDistLoss()
 
-    if args.latent_loss_fn == 'ntxent':
-        print("Using the NT-Xent loss with temperature =", args.temperature)
-        latent_loss_fn = NTXent(512, args.temperature)
+    if 'ntxent' in args.latent_loss_fn:
+        temp = float(args.latent_loss_fn.split("_")[1])
+        print("Using the NT-Xent loss with temperature =", temp)
+        latent_loss_fn = NTXent(512, temp)
     
     optimizer = torch.optim.Adam(params_to_optimize, lr=args.lr, weight_decay=weight_decay)
     scheduler = None
