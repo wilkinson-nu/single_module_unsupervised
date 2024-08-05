@@ -2,7 +2,6 @@ import numpy as np
 import argparse
 import os
 from torch import nn, optim
-# from torchvision import transforms
 import sys
 import torchvision.transforms.v2 as transforms
 import random
@@ -12,7 +11,7 @@ import h5py
 import MinkowskiEngine as ME
 
 ## Includes from my libraries for this project
-from ME_NN_libs import AsymmetricL2LossME, EuclideanDistLoss
+from ME_NN_libs import AsymmetricL2LossME, EuclideanDistLoss, CosDistLoss, NTXent
 from ME_NN_libs import EncoderME, DecoderME
 
 ## For logging
@@ -243,7 +242,7 @@ def triple_ME_collate_fn(batch):
 
 
 ## Wrap the training in a nicer function...
-def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimizer, latent_scale=1.0, scheduler=None, state_file=None, restart=False):
+def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimizer, latent_loss_fn, scheduler=None, state_file=None, restart=False):
 
     print("Training with", num_iterations, "iterations")
     tstart = time.time()
@@ -266,7 +265,7 @@ def run_training(num_iterations, log_dir, encoder, decoder, dataloader, optimize
 
     ## Set up the loss functions
     reco_loss_fn = AsymmetricL2LossME(10, 1)
-    latent_loss_fn = EuclideanDistLoss(latent_scale)
+    # latent_loss_fn = EuclideanDistLoss(latent_scale)
 
     encoder.to(device, non_blocking=True)
     decoder.to(device)
@@ -395,10 +394,11 @@ if __name__ == '__main__':
 
     ## Optional
     parser.add_argument('--latent', type=int, default=8, nargs='?')
-    parser.add_argument('--latent_scale', type=float, default=1, nargs='?')
+    parser.add_argument('--latent_loss_fn', type=str, default=None, nargs='?')
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
     parser.add_argument('--scheduler', type=str, default=None, nargs='?')
+    parser.add_argument('--temperature', type=float, default=0.5, nargs='?')
 
     ## Restart option
     parser.add_argument('--restart', action='store_true')
@@ -449,6 +449,21 @@ if __name__ == '__main__':
         {'params': decoder.parameters()}
     ]
 
+    ## Get the latent loss function
+    latent_loss_fn = None
+
+    if args.latent_loss_fn == 'cos':
+        print("Using the cosine distance loss")
+        latent_loss_fn = CosDistLoss()
+
+    if args.latent_loss_fn == 'eucl':
+        print("Using the Euclidean distance loss")
+        latent_loss_fn = EuclideanDistLoss()
+
+    if args.latent_loss_fn == 'ntxent':
+        print("Using the NT-Xent loss with temperature =", args.temperature)
+        latent_loss_fn = NTXent(512, args.temperature)
+    
     optimizer = torch.optim.Adam(params_to_optimize, lr=args.lr, weight_decay=weight_decay)
     scheduler = None
 
@@ -469,7 +484,7 @@ if __name__ == '__main__':
                  decoder,
                  train_loader,
                  optimizer,
-                 args.latent_scale,
+                 latent_loss_fn,
                  scheduler,
                  args.state_file,
                  args.restart)

@@ -223,26 +223,60 @@ def triple_ME_collate_fn(batch):
 
 ## Calculate the average distance between pairs in the latent space
 class EuclideanDistLoss(torch.nn.Module):
-    def __init__(self, scale, cutoff=0.1, pressure=10):
+    def __init__(self):
         super(EuclideanDistLoss, self).__init__()
-        self.cutoff = cutoff
-        self.pressure = pressure
-        self.scale = scale
         
     def forward(self, latent1, latent2):
         # Compute the Euclidean distance between each pair of corresponding tensors in the batch
-        batch_size = latent1.size(0)
-        distances = torch.norm(latent1 - latent2, p=2, dim=1)
-        mod_penalty = torch.stack([self.calc_penalty(item) for item in distances])
-        loss = mod_penalty.mean()*self.scale
+        norm_lat1 = nn.functional.normalize(latent1, p=2, dim=1)
+        norm_lat2 = nn.functional.normalize(latent2, p=2, dim=1)
+        distances = torch.norm(norm_lat1 - norm_lat2, p=2, dim=1)
+
+        mod_penalty = torch.stack([item**2 for item in distances])
+        loss = mod_penalty.mean()
         return loss
+    
+class CosDistLoss(torch.nn.Module):
+    def __init__(self):
+        super(CosDistLoss, self).__init__()
         
-    def calc_penalty(self, value):
-        ## Apply a penalty that is the value-cutoff above the cutoff, and is penalty*(cutoff - value)**2 for values below it
-        if value > self.cutoff:
-            return value - self.cutoff
-        else: 
-            return self.pressure*(self.cutoff - value)**2
+    def forward(self, latent1, latent2):
+        norm_lat1 = nn.functional.normalize(latent1, p=2, dim=1)
+        norm_lat2 = nn.functional.normalize(latent2, p=2, dim=1)
+                
+        sim = nn.functional.cosine_similarity(norm_lat1, norm_lat2, dim=1)
+        loss = 1 - sim.mean()
+        return loss
+
+class NTXent(torch.nn.Module):
+    def __init__(self, batch_size=512, temperature=0.5):
+        super(NTXent, self).__init__()
+        self.temperature = temperature
+        self.batch_size = batch_size
+    
+    def calc_similarity_batch(self, a, b):
+        representations = torch.cat([a, b], dim=0)
+        return nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+        
+    def forward(self, latent1, latent2):
+        batch_size = latent1.shape[0]
+        z_i = nn.functional.normalize(latent1, p=2, dim=1)
+        z_j = nn.functional.normalize(latent2, p=2, dim=1)
+        
+        similarity_matrix = self.calc_similarity_batch(z_i, z_j)
+        mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(device)
+
+        sim_ij = torch.diag(similarity_matrix, batch_size)
+        sim_ji = torch.diag(similarity_matrix, -batch_size)
+
+        positives = torch.cat([sim_ij, sim_ji], dim=0)
+
+        nominator = torch.exp(positives / self.temperature)
+        denominator = mask*torch.exp(similarity_matrix / self.temperature)
+
+        all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
+        loss = torch.sum(all_losses) / (2 * self.batch_size)
+        return loss
 
     
 ## This is a loss function to deweight the penalty for getting blank pixels wrong
