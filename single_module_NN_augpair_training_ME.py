@@ -463,7 +463,7 @@ if __name__ == '__main__':
     if 'ntxent' in args.latent_loss_fn:
         temp = float(args.latent_loss_fn.split("_")[1])
         print("Using the NT-Xent loss with temperature =", temp)
-        latent_loss_fn = NTXent(512, temp)
+        latent_loss_fn = NTXent(temp)
     
     optimizer = torch.optim.Adam(params_to_optimize, lr=args.lr, weight_decay=weight_decay)
     scheduler = None
