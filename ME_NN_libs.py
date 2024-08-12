@@ -264,7 +264,7 @@ class NTXent(torch.nn.Module):
         z_j = nn.functional.normalize(latent2, p=2, dim=1)
         
         similarity_matrix = self.calc_similarity_batch(z_i, z_j)
-        mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(device)
+        mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(similarity_matrix.device)
 
         sim_ij = torch.diag(similarity_matrix, batch_size)
         sim_ji = torch.diag(similarity_matrix, -batch_size)
