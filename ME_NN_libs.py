@@ -249,35 +249,25 @@ class CosDistLoss(torch.nn.Module):
         return loss
 
 class NTXent(torch.nn.Module):
-    def __init__(self, batch_size=512, temperature=0.5):
+    def __init__(self, temperature=0.5):
         super(NTXent, self).__init__()
         self.temperature = temperature
-        self.batch_size = batch_size
-    
-    def calc_similarity_batch(self, a, b):
-        representations = torch.cat([a, b], dim=0)
-        return nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
         
     def forward(self, latent1, latent2):
         batch_size = latent1.shape[0]
         z_i = nn.functional.normalize(latent1, p=2, dim=1)
         z_j = nn.functional.normalize(latent2, p=2, dim=1)
         
-        similarity_matrix = self.calc_similarity_batch(z_i, z_j)
-        mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(device)
-
-        sim_ij = torch.diag(similarity_matrix, batch_size)
-        sim_ji = torch.diag(similarity_matrix, -batch_size)
-
-        positives = torch.cat([sim_ij, sim_ji], dim=0)
-
-        nominator = torch.exp(positives / self.temperature)
-        denominator = mask*torch.exp(similarity_matrix / self.temperature)
-
-        all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
-        loss = torch.sum(all_losses) / (2 * self.batch_size)
+        xcs = torch.matmul(z_i, z_j.T)        
+        xcs[torch.eye(batch_size).bool()] = float("-inf")
+        
+        target = torch.arange(batch_size, device=xcs.device)
+        target[0::2] += 1
+        target[1::2] -= 1
+        
+        loss = nn.functional.cross_entropy(xcs / self.temperature, target, reduction="mean")
         return loss
-
+    
     
 ## This is a loss function to deweight the penalty for getting blank pixels wrong
 class AsymmetricL2LossME(torch.nn.Module):
