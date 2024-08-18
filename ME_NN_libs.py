@@ -258,14 +258,19 @@ class NTXent(torch.nn.Module):
         z_i = nn.functional.normalize(latent1, p=2, dim=1)
         z_j = nn.functional.normalize(latent2, p=2, dim=1)
         
-        xcs = torch.matmul(z_i, z_j.T)        
-        xcs[torch.eye(batch_size).bool()] = float("-inf")
-        
-        target = torch.arange(batch_size, device=xcs.device)
-        target[0::2] += 1
-        target[1::2] -= 1
-        
-        loss = nn.functional.cross_entropy(xcs / self.temperature, target, reduction="mean")
+        similarity_matrix = self.calc_similarity_batch(z_i, z_j)
+        mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(similarity_matrix.device)
+
+        sim_ij = torch.diag(similarity_matrix, batch_size)
+        sim_ji = torch.diag(similarity_matrix, -batch_size)
+
+        positives = torch.cat([sim_ij, sim_ji], dim=0)
+
+        nominator = torch.exp(positives / self.temperature)
+        denominator = mask*torch.exp(similarity_matrix / self.temperature)
+
+        all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
+        loss = torch.sum(all_losses) / (2 * self.batch_size)
         return loss
     
     
