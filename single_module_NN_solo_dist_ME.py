@@ -62,7 +62,7 @@ def manage_cuda_memory(rank, gpu_threshold):
         torch.cuda.empty_cache()
 
 ## Wrapped training function
-def run_training(rank, world_size, num_iterations, log_dir, encoder, decoder, lr, train_dataset, batch_size, state_file=None, restart=False):
+def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, latent, lr, train_dataset, batch_size, state_file=None, restart=False):
 
     ## For timing
     tstart = time.process_time()
@@ -72,6 +72,13 @@ def run_training(rank, world_size, num_iterations, log_dir, encoder, decoder, lr
     ## Need a local device
     device = torch.device(f'cuda:{rank}')
 
+    ## Setup the models
+    act_fn=ME.MinkowskiReLU
+
+    ## Set up the models
+    encoder=enc(nchan, latent, act_fn, 0)
+    decoder=dec(nchan, latent, act_fn)
+    
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size)
     
@@ -229,7 +236,6 @@ if __name__ == '__main__':
     
     ## Other hard-coded values
     batch_size=512
-    act_fn=ME.MinkowskiReLU
 
     ## Hard code the transform for now...    
     aug_transform = transforms.Compose([
@@ -264,8 +270,8 @@ if __name__ == '__main__':
         print("Using the deeper architecture")
         enc = DeeperEncoderME
         dec = DeeperDecoderME        
-    encoder=enc(args.nchan, args.latent, act_fn, 0)
-    decoder=dec(args.nchan, args.latent, act_fn)
+    #encoder=enc(args.nchan, args.latent, act_fn, 0)
+    #decoder=dec(args.nchan, args.latent, act_fn)
 
     scheduler = None
 
@@ -287,8 +293,10 @@ if __name__ == '__main__':
              args=(world_size,
                    args.nstep,
                    args.log,
-                   encoder,
-                   decoder,
+                   enc,
+                   dec,
+                   args.nchan,
+                   args.latent,
                    args.lr,
                    train_dataset,
                    batch_size,
