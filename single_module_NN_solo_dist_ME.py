@@ -12,6 +12,7 @@ import time
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
 
 ## Includes from my libraries for this project
 from ME_NN_libs import AsymmetricL2LossME, EuclideanDistLoss
@@ -29,7 +30,7 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from ME_dataset_libs import CenterCrop, RandomCro, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, RandomBlockZero
+from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, RandomBlockZero
 
 ## Import dataset
 from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn
@@ -51,7 +52,6 @@ def get_dataloader(rank, world_size, train_dataset, batch_size):
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
                                              num_workers=16,
                                              drop_last=True,
-                                             pin_memory=True,
                                              prefetch_factor=2,
                                              sampler=sampler)
     return dataloader
@@ -79,17 +79,17 @@ def run_training(rank, world_size, num_iterations, log_dir, encoder, decoder, lr
     start_iteration = 0
     
     ## Load the checkpoint if one has been given
-    if restart:
-        if state_file:
-            checkpoint = torch.load(state_file, map_location=device)
-            encoder.load_state_dict(checkpoint['encoder_state_dict'])
-            decoder.load_state_dict(checkpoint['decoder_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            start_iteration = checkpoint['epoch'] + 1
-            print("Restarting from iteration", start_iteration)
-        else:
-            print("Restart requested, but no state file provided, aborting")
-            sys.exit()
+    ## if restart:
+    ##     if state_file:
+    ##         checkpoint = torch.load(state_file, map_location=device)
+    ##         encoder.load_state_dict(checkpoint['encoder_state_dict'])
+    ##         decoder.load_state_dict(checkpoint['decoder_state_dict'])
+    ##         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    ##         start_iteration = checkpoint['epoch'] + 1
+    ##         print("Restarting from iteration", start_iteration)
+    ##     else:
+    ##         print("Restart requested, but no state file provided, aborting")
+    ##         sys.exit()
     
     if rank==0 and log_dir: writer = SummaryWriter(log_dir=log_dir)
 
@@ -103,6 +103,10 @@ def run_training(rank, world_size, num_iterations, log_dir, encoder, decoder, lr
     encoder = DDP(encoder, device_ids=[rank])
     decoder = DDP(decoder, device_ids=[rank])
 
+    if rank==0:
+        print(encoder)
+        print(decoder)
+    
     ## Sort out the optimizer (one for each GPU...)
     params_to_optimize = [
         {'params': encoder.parameters()},
@@ -287,7 +291,7 @@ if __name__ == '__main__':
                    decoder,
                    args.lr,
                    train_dataset,
-                   batch_size
+                   batch_size,
                    args.state_file,
                    args.restart),
              nprocs=world_size,
