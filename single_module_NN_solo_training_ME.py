@@ -349,6 +349,9 @@ if __name__ == '__main__':
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
+    ## Add augment option
+    parser.add_argument('--augment', action='store_true')
+    
     # Parse arguments from command line
     args = parser.parse_args()
 
@@ -369,9 +372,15 @@ if __name__ == '__main__':
         RandomCrop()
     ])
 
+    ## Should I augment?
+    transform=CenterCrop()
+    if args.augment:
+        print("Augmenting the data")
+        transform = aug_transform
+    
     ## Get a concrete dataset and data loader
     start = time.process_time() 
-    train_dataset = SingleModuleImage2D_solo_ME(args.indir, transform=CenterCrop(), max_events=args.nevents)
+    train_dataset = SingleModuleImage2D_solo_ME(args.indir, transform=transform, max_events=args.nevents)
     print("Time taken to load", train_dataset.__len__(),"images:", time.process_time() - start)
     
     ## Randomly chosen batching
