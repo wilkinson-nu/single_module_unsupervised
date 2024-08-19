@@ -21,10 +21,7 @@ from ME_NN_libs import EncoderME, DecoderME, DeepEncoderME, DeepDecoderME, Deepe
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
 
-## Device and seeding
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# print("Running with device:", device)
-# torch.device(device)
+## Seeding
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
@@ -70,6 +67,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     ## For parallel work
     setup(rank, world_size)
     ## Need a local device
+    torch.cuda.set_device(rank)
     device = torch.device(f'cuda:{rank}')
 
     ## Setup the models
@@ -110,10 +108,6 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     encoder = DDP(encoder, device_ids=[rank])
     decoder = DDP(decoder, device_ids=[rank])
 
-    if rank==0:
-        print(encoder)
-        print(decoder)
-    
     ## Sort out the optimizer (one for each GPU...)
     params_to_optimize = [
         {'params': encoder.parameters()},
@@ -131,7 +125,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
         # Ensure shuffling with the sampler each epoch
         train_loader.sampler.set_epoch(iteration)
         
-        total_loss = 0
+        total_loss_tensor = torch.tensor(0.0, device=device)
         nbatches   = len(train_loader)
         
         # Set train mode for both the encoder and the decoder
@@ -157,15 +151,15 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()            
-            total_loss += loss.item()
+            total_loss_tensor += loss.detach()
             
             # Manage CUDA memory for ME
             manage_cuda_memory(rank, gpu_threshold)
         
         ## See if we have an LR scheduler...
         # if scheduler: scheduler.step()
-        dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
-        av_loss = total_loss / (nbatches * world_size) 
+        dist.all_reduce(total_loss_tensor, op=dist.ReduceOp.SUM)
+        av_loss = total_loss_tensor.item() / (nbatches * world_size) 
 
         ## Reporting, but only for rank 0
         if rank==0:
@@ -174,7 +168,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
                 #if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
             print("Processed", iteration, "/", num_iterations, "; loss =", av_loss)
-            print("Time taken:", time.process_time() - start)
+            print("Time taken:", time.process_time() - tstart)
 
         ## For checkpointing
         ## if iteration%25 == 0 and iteration != 0:
