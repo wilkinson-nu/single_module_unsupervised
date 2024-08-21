@@ -41,13 +41,13 @@ def setup(rank, world_size):
         rank=rank
     )
 
-def get_dataloader(rank, world_size, train_dataset, batch_size):
+def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     dataloader = torch.utils.data.DataLoader(train_dataset,
                                              collate_fn=solo_ME_collate_fn,
                                              batch_size=batch_size,
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
-                                             num_workers=16,
+                                             num_workers=num_workers,
                                              drop_last=True,
                                              prefetch_factor=1,
                                              sampler=sampler)
@@ -98,7 +98,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     decoder=dec(nchan, latent, act_fn)
     
     ## Set up the distributed dataset
-    train_loader = get_dataloader(rank, world_size, train_dataset, batch_size)
+    train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
     
     if rank==0:
         print("Training with", num_iterations, "iterations")
@@ -135,7 +135,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     
     ## Set a maximum for thresholding
     total_memory = torch.cuda.get_device_properties(rank).total_memory
-    gpu_threshold = 0.95 * total_memory
+    gpu_threshold = 0.8 * total_memory
     
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
