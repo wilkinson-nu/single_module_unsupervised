@@ -192,7 +192,10 @@ class EncoderME(nn.Module):
             ME.MinkowskiLinear(self.ch[7], self.ch[4]),
             act_fn(),      
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiLinear(self.ch[4], latent_dim),
+            ME.MinkowskiLinear(self.ch[4], self.ch[3]),
+	    act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiLinear(self.ch[3], latent_dim),
         )
         # Initialize weights using Xavier initialization
         self.initialize_weights()
@@ -231,8 +234,10 @@ class DecoderME(nn.Module):
         self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16, nchan*32, nchan*64, nchan*128]
         
         self.decoder_lin = nn.Sequential(
-            ME.MinkowskiLinear(latent_dim, self.ch[4]),
-            act_fn(),      
+            ME.MinkowskiLinear(latent_dim, self.ch[3]),
+            act_fn(),
+            ME.MinkowskiLinear(self.ch[3], self.ch[4]),
+            act_fn(),
             ME.MinkowskiLinear(self.ch[4], self.ch[7]),
             act_fn()   
         )
@@ -423,9 +428,6 @@ class DeepEncoderME(nn.Module):
             ME.MinkowskiLinear(self.ch[4], self.ch[3]),
             act_fn(),      
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiLinear(self.ch[3], self.ch[3]),
-            act_fn(),      
-            ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiLinear(self.ch[3], latent_dim),
         )
         # Initialize weights using Xavier initialization
@@ -465,8 +467,10 @@ class DeepDecoderME(nn.Module):
         self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16, nchan*32, nchan*64, nchan*128]
         
         self.decoder_lin = nn.Sequential(
-            ME.MinkowskiLinear(latent_dim, self.ch[4]),
-            act_fn(),      
+            ME.MinkowskiLinear(latent_dim, self.ch[3]),
+            act_fn(),
+            ME.MinkowskiLinear(self.ch[3], self.ch[4]),
+            act_fn(),
             ME.MinkowskiLinear(self.ch[4], self.ch[7]),
             act_fn()   
         )
@@ -584,10 +588,10 @@ class DeeperEncoderME(nn.Module):
             ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 256x128 ==> 128x64
             ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[0]),
-            act_fn(),
+            #ME.MinkowskiDropout(drop_fract),
+            #ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            #ME.MinkowskiBatchNorm(self.ch[0]),
+            #act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
             ME.MinkowskiBatchNorm(self.ch[0]),
@@ -600,10 +604,10 @@ class DeeperEncoderME(nn.Module):
             ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 128x64 ==> 64x32
             ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[1]),
-            act_fn(),
+            #ME.MinkowskiDropout(drop_fract),
+            #ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            #ME.MinkowskiBatchNorm(self.ch[1]),
+            #act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
             ME.MinkowskiBatchNorm(self.ch[1]),
@@ -707,9 +711,6 @@ class DeeperEncoderME(nn.Module):
             ME.MinkowskiLinear(self.ch[4], self.ch[3]),
             act_fn(),      
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiLinear(self.ch[3], self.ch[3]),
-            act_fn(),      
-            ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiLinear(self.ch[3], latent_dim),
         )
         # Initialize weights using Xavier initialization
@@ -749,8 +750,10 @@ class DeeperDecoderME(nn.Module):
         self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16, nchan*32, nchan*64, nchan*128]
         
         self.decoder_lin = nn.Sequential(
-            ME.MinkowskiLinear(latent_dim, self.ch[4]),
+            ME.MinkowskiLinear(latent_dim, self.ch[3]),
             act_fn(),      
+            ME.MinkowskiLinear(self.ch[3], self.ch[4]),
+            act_fn(),
             ME.MinkowskiLinear(self.ch[4], self.ch[7]),
             act_fn()   
         )
@@ -825,9 +828,9 @@ class DeeperDecoderME(nn.Module):
             ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
             ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
-            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[1]),
-            act_fn(), 
+            #ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            #ME.MinkowskiBatchNorm(self.ch[1]),
+            #act_fn(), 
             ME.MinkowskiGenerativeConvolutionTranspose(in_channels=self.ch[1], out_channels=self.ch[0], kernel_size=2, stride=2, bias=False, dimension=2), ## 64x32 ==> 128x64
             ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
@@ -837,9 +840,9 @@ class DeeperDecoderME(nn.Module):
             ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
             ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
-            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[0]),
-            act_fn(),  
+            #ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            #ME.MinkowskiBatchNorm(self.ch[0]),
+            #act_fn(),  
             ME.MinkowskiGenerativeConvolutionTranspose(in_channels=self.ch[0], out_channels=1, kernel_size=2, stride=2, bias=True, dimension=2), ## 128x64 ==> 256x128
             act_fn()
         )
