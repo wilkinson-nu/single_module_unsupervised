@@ -49,7 +49,7 @@ def get_dataloader(rank, world_size, train_dataset, batch_size):
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
                                              num_workers=16,
                                              drop_last=True,
-                                             prefetch_factor=2,
+                                             prefetch_factor=1,
                                              sampler=sampler)
     return dataloader
 
@@ -57,6 +57,26 @@ def manage_cuda_memory(rank, gpu_threshold):
     """Check and clear GPU memory if it exceeds the threshold."""
     if torch.cuda.memory_allocated() > gpu_threshold:
         torch.cuda.empty_cache()
+
+def load_checkpoint(encoder, decoder, optimizer, state_file_name):
+    checkpoint = torch.load(state_file_name, map_location='cpu')
+    encoder.load_state_dict(checkpoint['encoder_state_dict'])
+    decoder.load_state_dict(checkpoint['decoder_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    torch.set_rng_state(checkpoint['rng_state'].cpu())
+    torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+    return checkpoint['epoch'] + 1
+
+def save_checkpoint(encoder, decoder, optimizer, state_file_name, iteration, loss):
+    torch.save({
+        'epoch': iteration,
+        'encoder_state_dict': encoder.state_dict(),
+        'decoder_state_dict': decoder.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'rng_state': torch.get_rng_state(),
+        'cuda_rng_state': torch.cuda.get_rng_state_all(),
+        'loss': loss
+    }, state_file_name)
 
 ## Wrapped training function
 def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, latent, lr, train_dataset, batch_size, state_file=None, restart=False):
@@ -80,26 +100,12 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size)
     
-    if rank==0: print("Training with", num_iterations, "iterations")
-    start_iteration = 0
-    
-    ## Load the checkpoint if one has been given
-    ## if restart:
-    ##     if state_file:
-    ##         checkpoint = torch.load(state_file, map_location=device)
-    ##         encoder.load_state_dict(checkpoint['encoder_state_dict'])
-    ##         decoder.load_state_dict(checkpoint['decoder_state_dict'])
-    ##         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    ##         start_iteration = checkpoint['epoch'] + 1
-    ##         print("Restarting from iteration", start_iteration)
-    ##     else:
-    ##         print("Restart requested, but no state file provided, aborting")
-    ##         sys.exit()
-    
-    if rank==0 and log_dir: writer = SummaryWriter(log_dir=log_dir)
+    if rank==0:
+        print("Training with", num_iterations, "iterations")
+        if log_dir: writer = SummaryWriter(log_dir=log_dir)
 
     ## Set up the loss functions
-    reco_loss_fn = AsymmetricL2LossME(10, 1)
+    reco_loss_fn = AsymmetricL2LossME(10, 1, batch_size)
 
     encoder.to(device, non_blocking=True)
     decoder.to(device)
@@ -114,10 +120,22 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
         {'params': decoder.parameters()},
     ]
     optimizer = torch.optim.AdamW(params_to_optimize, lr=lr, weight_decay=0)
+
+    ## Load the checkpoint if one has been given
+    start_iteration = 0
+    if restart:
+        if not state_file:
+            if rank==0: print("Restart requested, but no state file provided, aborting")
+            sys.exit()
+        start_iteration = load_checkpoint(encoder, decoder, optimizer, state_file)
+        if rank==0: print("Restarting from iteration", start_iteration)
+
+    if rank==0 and log_dir: writer = SummaryWriter(log_dir=log_dir)
+
     
     ## Set a maximum for thresholding
     total_memory = torch.cuda.get_device_properties(rank).total_memory
-    gpu_threshold = 0.8 * total_memory
+    gpu_threshold = 0.95 * total_memory
     
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
@@ -167,30 +185,17 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
                 writer.add_scalar('loss/total', av_loss, iteration)
                 #if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
-            print("Processed", iteration, "/", num_iterations, "; loss =", av_loss)
+            print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_loss)
             print("Time taken:", time.process_time() - tstart)
 
         ## For checkpointing
-        ## if iteration%25 == 0 and iteration != 0:
-        ##     torch.save({
-        ##         'epoch': iteration,
-        ##         'encoder_state_dict': encoder.state_dict(),
-        ##         'decoder_state_dict': decoder.state_dict(),
-        ##         'optimizer_state_dict': optimizer.state_dict(),
-        ##         'loss': loss
-        ##     }, state_file+".check"+str(iteration))
+        if rank==0 and iteration%50 == 0 and iteration != 0:
+            save_checkpoint(encoder, decoder, optimizer, state_file+".check"+str(iteration), iteration, av_loss)
         
     ## Final version of the model
-    ## torch.save({
-    ##     'epoch': iteration,
-    ##     'encoder_state_dict': encoder.state_dict(),
-    ##     'decoder_state_dict': decoder.state_dict(),
-    ##     'optimizer_state_dict': optimizer.state_dict(),
-    ##     'loss': loss
-    ## }, state_file)    
-
-    ## Close logging
-    if rank==0 and log_dir: writer.close()
+    if rank==0:
+        save_checkpoint(encoder, decoder, optimizer, state_file, iteration, av_loss)
+        if log_dir: writer.close()
 
     ## Clear things up
     dist.destroy_process_group()
@@ -209,6 +214,9 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float)
     parser.add_argument('--state_file', type=str)
 
+    ## World size is the number of GPUs
+    parser.add_argument('--world_size', type=int)
+    
     ## Optional
     parser.add_argument('--latent', type=int, default=8, nargs='?')
     parser.add_argument('--arch', type=str, default=None, nargs='?')
@@ -229,7 +237,7 @@ if __name__ == '__main__':
     for arg in vars(args): print(arg, getattr(args, arg))
     
     ## Other hard-coded values
-    batch_size=512
+    batch_size=1024
 
     ## Hard code the transform for now...    
     aug_transform = transforms.Compose([
@@ -264,11 +272,8 @@ if __name__ == '__main__':
         print("Using the deeper architecture")
         enc = DeeperEncoderME
         dec = DeeperDecoderME        
-    #encoder=enc(args.nchan, args.latent, act_fn, 0)
-    #decoder=dec(args.nchan, args.latent, act_fn)
 
     scheduler = None
-
     if args.scheduler == "onecycle":
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
     if args.scheduler == "step":
@@ -280,11 +285,8 @@ if __name__ == '__main__':
     if args.scheduler == "plateau":
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
 
-    # Number of GPUs
-    world_size = 4
-
     mp.spawn(run_training,
-             args=(world_size,
+             args=(args.world_size,
                    args.nstep,
                    args.log,
                    enc,
@@ -296,5 +298,5 @@ if __name__ == '__main__':
                    batch_size,
                    args.state_file,
                    args.restart),
-             nprocs=world_size,
+             nprocs=args.world_size,
              join=True)

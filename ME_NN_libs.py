@@ -57,10 +57,11 @@ class NTXent(torch.nn.Module):
     
 ## This is a loss function to deweight the penalty for getting blank pixels wrong
 class AsymmetricL2LossME(torch.nn.Module):
-    def __init__(self, nonzero_cost=2.0, zero_cost=1.0):
+    def __init__(self, nonzero_cost=2.0, zero_cost=1.0, batch_size=512):
         super(AsymmetricL2LossME, self).__init__()
         self.nonzero_cost = nonzero_cost
         self.zero_cost = zero_cost
+        self.batch_size = batch_size
     
     def forward(self, pred, targ):
         #diff = pred - targ
@@ -99,7 +100,7 @@ class AsymmetricL2LossME(torch.nn.Module):
         only_p = torch.sum(self.zero_cost*(uncommon_pred_F**2))
         only_t = torch.sum(self.nonzero_cost*(uncommon_targ_F**2))
         
-        return (common+only_p+only_t)/(512*128*256)
+        return (common+only_p+only_t)/(self.batch_size*128*256)
 
 
 ## These are the original encoders
