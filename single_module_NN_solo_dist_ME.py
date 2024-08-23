@@ -41,6 +41,33 @@ def setup(rank, world_size):
         rank=rank
     )
 
+def print_model_summary(model):
+    total_params = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Layer: {name} | Size: {param.size()} | Number of parameters: {param.numel()}")
+            total_params += param.numel()
+    print("Total parameters =", total_params)
+
+## def print_model_summary(model):
+##     total_params = 0
+##     print(f"{'Layer':<25} {'Output Shape':<20} {'Param #':<15}")
+##     print("="*60)
+##     
+##     for name, layer in model.named_modules():
+##         if len(list(layer.children())) == 0:  # Only print layers without children
+##             layer_params = sum(p.numel() for p in layer.parameters())
+##             total_params += layer_params
+##             if layer.parameters():
+##                 output_shape = list(layer.parameters())[0].shape
+##             else:
+##                 output_shape = "N/A"
+##             print(f"{name:<25} {str(output_shape):<20} {layer_params:<15}")
+##     
+##     print("="*60)
+##     print(f"Total Parameters: {total_params}")
+            
+    
 def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -55,7 +82,7 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
 
 def manage_cuda_memory(rank, gpu_threshold):
     """Check and clear GPU memory if it exceeds the threshold."""
-    if torch.cuda.memory_allocated() > gpu_threshold:
+    if torch.cuda.memory_allocated(rank) > gpu_threshold:
         torch.cuda.empty_cache()
 
 def load_checkpoint(encoder, decoder, optimizer, state_file_name):
@@ -96,6 +123,10 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     ## Set up the models
     encoder=enc(nchan, latent, act_fn, 0)
     decoder=dec(nchan, latent, act_fn)
+
+    ## if rank==0:
+    ##     print_model_summary(encoder)
+    ##     print_model_summary(decoder)
     
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
@@ -132,11 +163,6 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
 
     if rank==0 and log_dir: writer = SummaryWriter(log_dir=log_dir)
 
-    
-    ## Set a maximum for thresholding
-    total_memory = torch.cuda.get_device_properties(rank).total_memory
-    gpu_threshold = 0.8 * total_memory
-    
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
 
@@ -172,8 +198,8 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
             total_loss_tensor += loss.detach()
             
             # Manage CUDA memory for ME
-            manage_cuda_memory(rank, gpu_threshold)
-        
+            torch.cuda.empty_cache()
+            
         ## See if we have an LR scheduler...
         # if scheduler: scheduler.step()
         dist.all_reduce(total_loss_tensor, op=dist.ReduceOp.SUM)
