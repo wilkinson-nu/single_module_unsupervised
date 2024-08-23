@@ -87,8 +87,8 @@ def manage_cuda_memory(rank, gpu_threshold):
 
 def load_checkpoint(encoder, decoder, optimizer, state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')
-    encoder.load_state_dict(checkpoint['encoder_state_dict'])
-    decoder.load_state_dict(checkpoint['decoder_state_dict'])
+    encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
+    decoder.module.load_state_dict(checkpoint['decoder_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     torch.set_rng_state(checkpoint['rng_state'].cpu())
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
@@ -97,8 +97,8 @@ def load_checkpoint(encoder, decoder, optimizer, state_file_name):
 def save_checkpoint(encoder, decoder, optimizer, state_file_name, iteration, loss):
     torch.save({
         'epoch': iteration,
-        'encoder_state_dict': encoder.state_dict(),
-        'decoder_state_dict': decoder.state_dict(),
+        'encoder_state_dict': encoder.module.state_dict(),
+        'decoder_state_dict': decoder.module.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
