@@ -27,7 +27,8 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, RandomBlockZero
+from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, \
+    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, BilinearInterpolation
 
 ## Import dataset
 from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn
@@ -49,25 +50,6 @@ def print_model_summary(model):
             total_params += param.numel()
     print("Total parameters =", total_params)
 
-## def print_model_summary(model):
-##     total_params = 0
-##     print(f"{'Layer':<25} {'Output Shape':<20} {'Param #':<15}")
-##     print("="*60)
-##     
-##     for name, layer in model.named_modules():
-##         if len(list(layer.children())) == 0:  # Only print layers without children
-##             layer_params = sum(p.numel() for p in layer.parameters())
-##             total_params += layer_params
-##             if layer.parameters():
-##                 output_shape = list(layer.parameters())[0].shape
-##             else:
-##                 output_shape = "N/A"
-##             print(f"{name:<25} {str(output_shape):<20} {layer_params:<15}")
-##     
-##     print("="*60)
-##     print(f"Total Parameters: {total_params}")
-            
-    
 def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -267,10 +249,14 @@ if __name__ == '__main__':
 
     ## Hard code the transform for now...    
     aug_transform = transforms.Compose([
+        RandomGridDistortion2D(5,5,2),
         RandomShear2D(0.1, 0.1),
         RandomHorizontalFlip(),
         RandomRotation2D(-10,10),
         RandomBlockZero(5, 6),
+        BilinearInterpolation(),
+        RandomScaleCharge(0.02),
+        RandomJitterCharge(0.02),
         RandomCrop()
     ])
 
