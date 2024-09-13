@@ -88,7 +88,7 @@ def save_checkpoint(encoder, decoder, optimizer, state_file_name, iteration, los
     }, state_file_name)
 
 ## Wrapped training function
-def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, latent, lr, train_dataset, batch_size, state_file=None, restart=False):
+def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, latent, lr, train_dataset, batch_size, sched, state_file=None, restart=False):
 
     ## For timing
     tstart = time.process_time()
@@ -106,10 +106,6 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     encoder=enc(nchan, latent, act_fn, 0)
     decoder=dec(nchan, latent, act_fn)
 
-    ## if rank==0:
-    ##     print_model_summary(encoder)
-    ##     print_model_summary(decoder)
-    
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
     
@@ -134,6 +130,20 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     ]
     optimizer = torch.optim.AdamW(params_to_optimize, lr=lr, weight_decay=0)
 
+    ## Deal with a scheduler
+    scheduler = None
+    if sched == "onecycle":
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr*100, total_steps=num_iterations, cycle_momentum=False)
+    if sched == "step":
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
+                                                   milestones=[150,300,450],
+                                                   gamma=0.1,
+                                                   last_epoch=-1,
+                                                   verbose=False)
+    if sched == "plateau":
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
+
+    
     ## Load the checkpoint if one has been given
     start_iteration = 0
     if restart:
@@ -183,7 +193,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
             torch.cuda.empty_cache()
             
         ## See if we have an LR scheduler...
-        # if scheduler: scheduler.step()
+        if scheduler: scheduler.step()
         dist.all_reduce(total_loss_tensor, op=dist.ReduceOp.SUM)
         av_loss = total_loss_tensor.item() / (nbatches * world_size) 
 
@@ -191,7 +201,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
         if rank==0:
             if log_dir: 
                 writer.add_scalar('loss/total', av_loss, iteration)
-                #if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
+                if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
             print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_loss)
             print("Time taken:", time.process_time() - tstart)
@@ -249,12 +259,12 @@ if __name__ == '__main__':
 
     ## Hard code the transform for now...    
     aug_transform = transforms.Compose([
-        RandomGridDistortion2D(5,5,2),
+        RandomGridDistortion2D(5,5),
         RandomShear2D(0.1, 0.1),
         RandomHorizontalFlip(),
         RandomRotation2D(-10,10),
         RandomBlockZero(5, 6),
-        BilinearInterpolation(),
+        # BilinearInterpolation(),
         RandomScaleCharge(0.02),
         RandomJitterCharge(0.02),
         RandomCrop()
@@ -285,18 +295,6 @@ if __name__ == '__main__':
         enc = DeeperEncoderME
         dec = DeeperDecoderME        
 
-    scheduler = None
-    if args.scheduler == "onecycle":
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=num_iterations, cycle_momentum=False)
-    if args.scheduler == "step":
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
-                                                   milestones=[150,300,450],
-                                                   gamma=0.1,
-                                                   last_epoch=-1,
-                                                   verbose=False)
-    if args.scheduler == "plateau":
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
-
     mp.spawn(run_training,
              args=(args.world_size,
                    args.nstep,
@@ -308,6 +306,7 @@ if __name__ == '__main__':
                    args.lr,
                    train_dataset,
                    batch_size,
+                   args.scheduler,
                    args.state_file,
                    args.restart),
              nprocs=args.world_size,
