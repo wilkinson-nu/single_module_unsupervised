@@ -200,7 +200,7 @@ class RandomElasticDistortion2D:
     
 ## Apply distortions in a regular grid, with random strength at each point up to some maximum, smoothed by some amount
 class RandomGridDistortion2D:
-    def __init__(self, grid_size, distortion_strength, sigma=1):
+    def __init__(self, grid_size, distortion_strength):
         """
         Initializes the GridDistortion2D transformation.
 
@@ -209,7 +209,6 @@ class RandomGridDistortion2D:
         """
         self.grid_size = grid_size
         self.distortion_strength = distortion_strength
-        self.smoothing_sigma = sigma
         self.height = 280
         self.width = 140
 
@@ -229,9 +228,6 @@ class RandomGridDistortion2D:
         distorted_map_x = (grid_x + displacement_x)/ self.width * (self.grid_size - 1)
         distorted_map_y = (grid_y + displacement_y)/ self.height * (self.grid_size - 1)
         
-        displacement_x = gaussian_filter(displacement_x, sigma=self.smoothing_sigma)
-        displacement_y = gaussian_filter(displacement_y, sigma=self.smoothing_sigma)
-        
         # Normalize coords to the grid size
         norm_y = coords[:, 0] / self.height * (self.grid_size - 1)
         norm_x = coords[:, 1] / self.width * (self.grid_size - 1)
@@ -247,9 +243,10 @@ class RandomGridDistortion2D:
         return distorted_coords, feats
     
 class BilinearInterpolation:
-    def __init__(self):
+    def __init__(self, threshold=0.04):
         self.height=280
         self.width=140
+        self.threshold=threshold
         
     def __call__(self, coords, feats):
         """
@@ -296,13 +293,28 @@ class BilinearInterpolation:
     
         # Round coordinates to nearest integers and clip them
         coords_combined = np.round(coords_combined).astype(int)
-        coords_combined = np.clip(coords_combined, [0, 0], [self.height-1, self.width-1])
-    
+        # coords_combined = np.clip(coords_combined, [0, 0], [self.height-1, self.width-1])
+
+        ## The clipping is wrong...
+        mask = (coords_combined[:,0] > 0) \
+             & (coords_combined[:,0] < (self.height-1)) \
+             & (coords_combined[:,1] > 0) \
+             & (coords_combined[:,1] < (self.width-1))
+        coords_combined = coords_combined[mask]
+        features_combined = features_combined[mask]
+        
         # Consolidate features at unique coordinates
         unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
         summed_feats = np.zeros(len(unique_coords))    
         np.add.at(summed_feats, indices, features_combined)
-            
+
+        # Create a mask for values above the threshold
+        mask = summed_feats >= self.threshold
+    
+        # Apply the mask to filter features and coordinates
+        unique_coords = unique_coords[mask]
+        summed_feats = summed_feats[mask]        
+        
         # Reshape summed_feats to (N, 1)
         summed_feats = summed_feats.reshape(-1, 1)
         
@@ -451,15 +463,15 @@ def solo_ME_collate_fn(batch):
 
 
 ## Utility functions to make a dense image
-def make_dense(coords_batch, feats_batch, device, max_i=256, max_j=128):
+def make_dense(coords_batch, feats_batch, device, index=0, max_i=256, max_j=128):
     img = ME.SparseTensor(feats_batch.float(), coords_batch.int(), device=device)
     coords, feats = img.decomposed_coordinates_and_features
     batch_size = len(coords)
     img_dense,_,_ = img.dense(torch.Size([batch_size, 1, max_i, max_j]))
-    return img_dense[0].squeeze().numpy()
+    return img_dense[index].squeeze().numpy()
 
-def make_dense_from_tensor(sparse_batch, max_i=256, max_j=128):
+def make_dense_from_tensor(sparse_batch, index=0, max_i=256, max_j=128):
     coords, feats = sparse_batch.decomposed_coordinates_and_features
     batch_size = len(coords)
     img_dense,_,_ = sparse_batch.dense(torch.Size([batch_size, 1, max_i, max_j]), min_coordinate=torch.IntTensor([0,0]))
-    return img_dense[0]
+    return img_dense[index]
