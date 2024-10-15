@@ -87,8 +87,31 @@ def save_checkpoint(encoder, decoder, optimizer, state_file_name, iteration, los
         'loss': loss
     }, state_file_name)
 
+def get_act_from_string(act_name):
+
+    ## For the hidden layers
+    if act_name == "relu":
+        return ME.MinkowskiReLU
+    if act_name == "leakyrelu":
+        return ME.MinkowskiLeakyReLU
+    if act_name == "gelu":
+        return ME.MinkowskiGELU
+    if act_name in ["silu", "swish"]:
+        return ME.MinkowskiSiLU
+    if act_name == "selu":
+        return ME.MinkowskiSELU
+
+    ## For the bottleneck
+    if act_name == "tanh":
+        return ME.MinkowskiTanh
+    if act_name == "softsign":
+        return ME.MinkowskiSoftsign
+
+    return None
+
+    
 ## Wrapped training function
-def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, latent, lr, train_dataset, batch_size, sched, state_file=None, restart=False):
+def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act_name, latent_act_name, nchan, latent, lr, train_dataset, batch_size, sched, state_file=None, restart=False):
 
     ## For timing
     tstart = time.process_time()
@@ -100,11 +123,11 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, nchan, lat
     device = torch.device(f'cuda:{rank}')
 
     ## Setup the models
-    act_fn=ME.MinkowskiReLU
+    hidden_act_fn=get_act_from_string(hidden_act_name)
+    latent_act_fn=get_act_from_string(latent_act_name)
 
-    ## Set up the models
-    encoder=enc(nchan, latent, act_fn, 0)
-    decoder=dec(nchan, latent, act_fn)
+    encoder=enc(nchan, latent, hidden_act_fn, latent_act_fn, 0)
+    decoder=dec(nchan, latent, hidden_act_fn)
 
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
@@ -241,7 +264,9 @@ if __name__ == '__main__':
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
     parser.add_argument('--scheduler', type=str, default=None, nargs='?')
-
+    parser.add_argument('--latent_act', type=str, default="relu", nargs='?')
+    parser.add_argument('--hidden_act', type=str, default="tanh", nargs='?')
+    
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
@@ -301,6 +326,8 @@ if __name__ == '__main__':
                    args.log,
                    enc,
                    dec,
+                   args.hidden_act,
+                   args.latent_act,
                    args.nchan,
                    args.latent,
                    args.lr,
