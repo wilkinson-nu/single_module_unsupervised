@@ -59,6 +59,28 @@ def make_image(these_hits):
     
     return trans_sparse
 
+
+## Check whether there is something in the central region
+def filter_central_region(sparse):
+
+    x_min = (140-128)/2
+    x_max = x_min+128
+
+    y_min = (280-256)/2
+    y_max = y_min+256
+    
+    x_indices = sparse.col
+    y_indices = sparse.row
+
+    # Check if any values are within the specified x and y ranges
+    in_x_range = (x_indices >= x_min) & (x_indices <= x_max)
+    in_y_range = (y_indices >= y_min) & (y_indices <= y_max)
+    
+    if np.any(in_x_range & in_y_range): return True
+    
+    return False
+
+
 def make_images(input_file_name, output_file_name):
 
     f = h5py.File(input_file_name, "r")
@@ -104,6 +126,8 @@ def make_images(input_file_name, output_file_name):
         ## Check whether this is a "good image"
         if np.count_nonzero(this_sparse.data) > 4000: continue
         if np.count_nonzero(this_sparse.data) < 200: continue
+
+        if not filter_central_region(this_sparse): continue
         
         sparse_image_list .append(this_sparse)
 
