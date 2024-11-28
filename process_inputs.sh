@@ -1,10 +1,10 @@
 #!/bin/bash
 
 INDIR="/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v1"
-OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/sparse_hdf5_fixdupes_pluscuts_noneg_transform"
+OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/sparse_hdf5_fixdupes_pluscuts_noneg_transform_central"
 
 ## Process all files
-for INFILEFULL in $(ls ${INDIR}/*); do
+for INFILEFULL in $(ls ${INDIR}/*.h5); do
 
     ## SET UP NAMES
     INFILE=${INFILEFULL##*/}
