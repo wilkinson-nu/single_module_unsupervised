@@ -361,7 +361,7 @@ class SingleModuleImage2D_MultiHDF5_ME(Dataset):
         row = group['row'][:]
         col = group['col'][:]
 
-	## Use the format that ME requires
+        ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
         ## And this function is replicated * num_workers
         raw_coords = np.vstack((row, col)).T #.copy()
