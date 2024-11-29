@@ -941,8 +941,8 @@ class ProjectionHead(nn.Module):
         for m in self.modules():
             if isinstance(m, ME.MinkowskiLinear):
                 ## use xavier because it's a bounded activation function
-                ME.utils.xavier_normal_(m.linear.weight)
-                # ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity='relu')   
+                # ME.utils.xavier_normal_(m.linear.weight)
+                ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity='relu')   
             if isinstance(m, ME.MinkowskiBatchNorm):
                 nn.init.constant_(m.bn.weight, 1)
                 nn.init.constant_(m.bn.bias, 0)
