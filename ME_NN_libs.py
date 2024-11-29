@@ -29,31 +29,63 @@ class CosDistLoss(torch.nn.Module):
         loss = 1 - sim.mean()
         return loss
 
-class NTXent(torch.nn.Module):
+## class NTXent(torch.nn.Module):
+##     def __init__(self, temperature=0.5):
+##         super(NTXent, self).__init__()
+##         self.temperature = temperature
+##         
+##     def forward(self, latent1, latent2):
+##         batch_size = latent1.shape[0]
+##         z_i = nn.functional.normalize(latent1, p=2, dim=1)
+##         z_j = nn.functional.normalize(latent2, p=2, dim=1)
+##         
+##         similarity_matrix = self.calc_similarity_batch(z_i, z_j)
+##         mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(similarity_matrix.device)
+## 
+##         sim_ij = torch.diag(similarity_matrix, batch_size)
+##         sim_ji = torch.diag(similarity_matrix, -batch_size)
+## 
+##         positives = torch.cat([sim_ij, sim_ji], dim=0)
+## 
+##         nominator = torch.exp(positives / self.temperature)
+##         denominator = mask*torch.exp(similarity_matrix / self.temperature)
+## 
+##         all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
+##         loss = torch.sum(all_losses) / (2 * self.batch_size)
+##         return loss
+    
+class NTXent(nn.Module):
     def __init__(self, temperature=0.5):
-        super(NTXent, self).__init__()
+        super().__init__()
         self.temperature = temperature
-        
-    def forward(self, latent1, latent2):
-        batch_size = latent1.shape[0]
-        z_i = nn.functional.normalize(latent1, p=2, dim=1)
-        z_j = nn.functional.normalize(latent2, p=2, dim=1)
-        
-        similarity_matrix = self.calc_similarity_batch(z_i, z_j)
-        mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(similarity_matrix.device)
 
+    def forward(self, emb_i, emb_j):
+        """
+        emb_i and emb_j are batches of embeddings, where corresponding indices are pairs
+        z_i, z_j as per SimCLR paper
+        """
+        batch_size = emb_i.shape[0]
+        z_i = nn.functional.normalize(emb_i, dim=1)
+        z_j = nn.functional.normalize(emb_j, dim=1)
+        
+        negatives_mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool, device=device)).float()
+
+        representations = torch.cat([z_i, z_j], dim=0)
+        xcs = torch.matmul(z_i, z_j.T)        
+
+        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+        
         sim_ij = torch.diag(similarity_matrix, batch_size)
         sim_ji = torch.diag(similarity_matrix, -batch_size)
-
         positives = torch.cat([sim_ij, sim_ji], dim=0)
-
+        
         nominator = torch.exp(positives / self.temperature)
-        denominator = mask*torch.exp(similarity_matrix / self.temperature)
-
-        all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
-        loss = torch.sum(all_losses) / (2 * self.batch_size)
-        return loss
+        denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
     
+        loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
+        loss = torch.sum(loss_partial) / (2 * batch_size)
+        
+        return loss
     
 ## This is a loss function to deweight the penalty for getting blank pixels wrong
 class AsymmetricL2LossME(torch.nn.Module):
@@ -885,4 +917,37 @@ class DeeperDecoderME(nn.Module):
     def forward(self, x, target_key=None):
         x = self.decoder_lin(x)
         x = self.decoder_conv(x)
+        return x
+
+
+class ProjectionHead(nn.Module):
+    def __init__(self, dim, act_fn=ME.MinkowskiReLU):
+        super(ProjectionHead, self).__init__()
+
+        self.linear_proj = nn.Sequential(
+            ME.MinkowskiLinear(dim[0], dim[1], bias=False),
+            ME.MinkowskiBatchNorm(dim[1]),
+            act_fn(), 
+            ME.MinkowskiLinear(dim[1], dim[2], bias=False),
+            ME.MinkowskiBatchNorm(dim[2]),
+            act_fn(), 
+            ME.MinkowskiLinear(dim[2], dim[3], bias=False),
+            act_fn(), 
+        )
+        
+        self.initialize_weights()
+        
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, ME.MinkowskiLinear):
+                ## use xavier because it's a bounded activation function
+                ME.utils.xavier_normal_(m.linear.weight)
+                # ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity='relu')   
+            if isinstance(m, ME.MinkowskiBatchNorm):
+                nn.init.constant_(m.bn.weight, 1)
+                nn.init.constant_(m.bn.bias, 0)
+
+        
+    def forward(self, x):
+        x = self.linear_proj(x)
         return x
