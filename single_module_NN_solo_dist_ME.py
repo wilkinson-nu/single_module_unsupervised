@@ -28,7 +28,8 @@ _=torch.manual_seed(SEED)
 
 ## Import transformations
 from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, \
-    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, BilinearInterpolation
+    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, \
+    BilinearInterpolation, ConstantCharge
 
 ## Import dataset
 from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn
@@ -130,6 +131,9 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act
     encoder=enc(nchan, latent, hidden_act_fn, latent_act_fn, dropout)
     decoder=dec(nchan, latent, hidden_act_fn)
 
+    encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
+    decoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(decoder)
+    
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
     
@@ -273,7 +277,7 @@ if __name__ == '__main__':
     parser.add_argument('--restart', action='store_true')
 
     ## Add augment option
-    parser.add_argument('--augment', action='store_true')
+    parser.add_argument('--aug_type', type=str, default=None, nargs='?')
     
     # Parse arguments from command line
     args = parser.parse_args()
@@ -284,27 +288,47 @@ if __name__ == '__main__':
     ## Other hard-coded values
     batch_size=1024
 
-    ## Hard code the transform for now...    
-    aug_transform = transforms.Compose([
-        RandomGridDistortion2D(5,5),
-        RandomShear2D(0.1, 0.1),
-        RandomHorizontalFlip(),
-        RandomRotation2D(-10,10),
-        RandomBlockZero(5, 6),
-        # BilinearInterpolation(),
-        RandomScaleCharge(0.02),
-        RandomJitterCharge(0.02),
-        RandomCrop()
-    ])
+    aug_transform = CenterCrop()
 
-    ## Should I augment?
-    transform=CenterCrop()
-    if args.augment:
-        print("Augmenting the data")
-        transform = aug_transform
+    if args.aug_type == "unitcharge":
+        aug_transform = transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.1, 0.1),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10),
+            RandomBlockZero(5, 6),
+            RandomCrop(),
+            ConstantCharge()
+        ])
+
+    if args.aug_type == "smallmod":
+        aug_transform = transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.1, 0.1),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10),
+            RandomBlockZero(5, 6),
+            RandomScaleCharge(0.02),
+            RandomJitterCharge(0.02),
+            RandomCrop()
+        ])
+
+    ## Add alternatives here
+    if args.aug_type == "bigmod":
+        aug_transform = transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZero(5, 6),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.1),
+            RandomCrop()
+        ])
+
     
     ## Get the concrete dataset
-    train_dataset = SingleModuleImage2D_solo_ME(args.indir, transform=transform, max_events=args.nevents)
+    train_dataset = SingleModuleImage2D_solo_ME(args.indir, transform=aug_transform, max_events=args.nevents)
 
     ## Dropout is 0 for now...
     enc, dec = None, None
