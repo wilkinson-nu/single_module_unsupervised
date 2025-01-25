@@ -4,12 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 from scipy.sparse import coo_matrix
-import joblib
 from glob import glob
 
-def make_dataset_summary_plots(input_file_names):
+# plt.rcParams['text.usetex'] = True
 
-    plotDir = "plots_fixdupes_pluscuts"
+def make_dataset_summary_plots(input_file_names, plotDir="plots_fixdupes_pluscuts"):
+
+    max_images = 1e6
+    sum_images = 0
     
     ## Get some high-level summary information
     maxN = 0
@@ -19,10 +21,10 @@ def make_dataset_summary_plots(input_file_names):
     ndodgy = 0
     
     ## Binning
-    N_lin_bin_edges = np.linspace(0, 10000, 500)
-    N_log_bin_edges = np.logspace(0, 4, 100)
-    Q_bin_edges = np.linspace(0, 200, 200)    
-    SumQ_bin_edges = np.logspace(1, 6, 100)
+    N_lin_bin_edges = np.linspace(0, 4000, 200)
+    N_log_bin_edges = np.logspace(0, 3.7, 100)
+    Q_bin_edges = np.linspace(0, 5, 100)    
+    SumQ_bin_edges = np.logspace(2, 4, 100)
     
     ## Bin counts for 1D plots
     Q_arr,_ = np.histogram([], bins=Q_bin_edges)
@@ -32,11 +34,14 @@ def make_dataset_summary_plots(input_file_names):
     N_log_arr,_ = np.histogram([], bins=N_log_bin_edges)
     
     ## Loop over all of the files
-    for f in glob(input_file_names):
-        print("Reading", f)
-        input_list = joblib.load(f)
+    for file in glob(input_file_names):
 
-        nimages = len(input_list)
+        if sum_images > max_images: break
+
+        print("Reading", file)
+        f = h5py.File(file, 'r', libver='latest')
+
+        nimages = f.attrs['N']
         print("Found", nimages, "images")
 
         total_images += nimages
@@ -48,29 +53,34 @@ def make_dataset_summary_plots(input_file_names):
         
         ## Loop over the images
         for i in range(nimages):
-        
+
+            if sum_images > max_images: break
+            
             ## Make a dense array for ease of use
-            this_image = input_list[i].data
-            these_Q   += list(this_image)
-            these_N    .append(np.count_nonzero(this_image))
-            these_sumQ .append(np.sum(this_image))
-            these_maxQ .append(np.max(this_image))
+            group = f[str(i)]
+            data = group['data'][:]
+            these_Q   += list(data)
+            these_N    .append(np.count_nonzero(data))
+            these_sumQ .append(np.sum(data))
+            these_maxQ .append(np.max(data))
         
-            if np.sum(this_image) > 1e5 or \
-               np.sum(this_image) < 1e3 or \
-               np.count_nonzero(this_image) < 200:
+            if np.sum(data) > 1e5 or \
+               np.sum(data) < 1e3 or \
+               np.count_nonzero(data) < 200:
                 ndodgy += 1
-            ## If np.sum(this_image) > 1e5, kind of dodgy, whole tile triggering
-            ## If np.sum(this_image) < 1e3, very dull event, not worth throwing in
-            ## If np.count_nonzero(this_image) < 200: also very dull
-            if np.sum(this_image) > 1e5:
-                print("Found event with sumQ =", np.sum(this_image))
-            # if np.sum(this_image) < 1e3:
+            ## If np.sum(data) > 1e5, kind of dodgy, whole tile triggering
+            ## If np.sum(data) < 1e3, very dull event, not worth throwing in
+            ## If np.count_nonzero(data) < 200: also very dull
+            if np.sum(data) > 1e5:
+                print("Found event with sumQ =", np.sum(data))
+            # if np.sum(data) < 1e3:
             #    ## Show image temporarily
             #     this_dense = input_list[i].toarray()
             #     plt.imshow(this_dense, origin='lower')
             #     plt.show() #block=False)
             #     # input("Continue...")
+
+            sum_images += 1
             
         ## Now fill the histograms
         this_Q_arr,_ = np.histogram(these_Q, bins=Q_bin_edges)
@@ -93,6 +103,9 @@ def make_dataset_summary_plots(input_file_names):
         if max(these_sumQ) > maxSumQ:
             maxSumQ = max(these_sumQ)
 
+        ## End of this file
+        f.close()
+        
     ## Draw the final histograms
     plt.hist(N_lin_bin_edges[:-1], bins=N_lin_bin_edges, weights=N_lin_arr, log=True)
     plt.xlabel('N. hits')
@@ -107,19 +120,19 @@ def make_dataset_summary_plots(input_file_names):
     plt.close()
     
     plt.hist(Q_bin_edges[:-1], bins=Q_bin_edges, weights=Q_arr, log=False)
-    plt.xlabel('Q')
+    plt.xlabel(r'log$_{10}$(1 + Q)')
     plt.ylabel('N. hits')
     plt.savefig(plotDir+"/Q_distribution.png")
     plt.close()
     
     plt.hist(Q_bin_edges[:-1], bins=Q_bin_edges, weights=maxQ_arr, log=False)
-    plt.xlabel('Max. Q')
+    plt.xlabel(r'Max. log$_{10}$(1 + Q)')
     plt.ylabel('N. events')
     plt.savefig(plotDir+"/maxQ_distribution.png")
     plt.close()
     
     plt.hist(SumQ_bin_edges[:-1], bins=SumQ_bin_edges, weights=SumQ_arr, log=True)
-    plt.xlabel('Sum Q')
+    plt.xlabel(r'$\sum$log$_{10}$(1 + Q)')
     plt.xscale('log')
     plt.ylabel('N. events')
     plt.savefig(plotDir+"/sumQ_distribution.png")
