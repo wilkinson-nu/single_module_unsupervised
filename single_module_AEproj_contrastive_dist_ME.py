@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
 ## Includes from my libraries for this project
-from ME_NN_libs import AsymmetricL2LossME, NTXent
+from ME_NN_libs import AsymmetricL2LossME, NTXentMerged, NTXentMergedTopTenNeg
 from ME_NN_libs import EncoderME, DecoderME, DeepEncoderME, DeepDecoderME, DeeperEncoderME, DeeperDecoderME
 from ME_NN_libs import ProjectionHead
 
@@ -28,11 +28,11 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, \
-    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D
+from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, BilinearInterpolation, \
+    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, ConstantCharge
 
 ## Import dataset
-from ME_dataset_libs import SingleModuleImage2D_MultiHDF5_ME, triple_ME_collate_fn
+from ME_dataset_libs import SingleModuleImage2D_MultiHDF5_ME, triple_ME_collate_fn, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):
@@ -54,7 +54,7 @@ def print_model_summary(model):
 def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     dataloader = torch.utils.data.DataLoader(train_dataset,
-                                             collate_fn=triple_ME_collate_fn,
+                                             collate_fn=cat_ME_collate_fn,
                                              batch_size=batch_size,
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
                                              num_workers=num_workers,
@@ -78,7 +78,7 @@ def load_checkpoint(encoder, decoder, project, optimizer, state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
     decoder.module.load_state_dict(checkpoint['decoder_state_dict'])
-    project.module.load_state_dict(checkpoint['project._state_dict'])    
+    project.module.load_state_dict(checkpoint['project_state_dict'])    
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     torch.set_rng_state(checkpoint['rng_state'].cpu())
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
@@ -121,8 +121,9 @@ def get_act_from_string(act_name):
     
 ## Wrapped training function
 def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act_name, latent_act_name, \
-                 nchan, latent, lr, dropout, ntx_temp, train_dataset, batch_size, sched, state_file=None, pretrained=None, restart=False):
-
+                 nchan, latent, proj_size, lr, dropout, latent_loss, ntx_temp, train_dataset, \
+                 batch_size, sched, state_file=None, pretrained=None, restart=False):
+    torch.autograd.set_detect_anomaly(True)
     ## For timing
     tstart = time.process_time()
 
@@ -138,7 +139,13 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act
 
     encoder=enc(nchan, latent, hidden_act_fn, latent_act_fn, dropout)
     decoder=dec(nchan, latent, hidden_act_fn)
-    project=ProjectionHead([latent, latent, latent, latent], latent_act_fn)
+
+    if proj_size == 0: proj_size = latent
+    project=ProjectionHead([latent, latent, latent, proj_size], latent_act_fn)
+
+    encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
+    decoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(decoder)
+    project = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(project)
     
     ## Set up the distributed dataset
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
@@ -149,7 +156,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act
 
     ## Set up the loss functions
     reco_loss_fn = AsymmetricL2LossME(10, 1, batch_size)
-    latent_loss_fn = NTXent(ntx_temp)
+    latent_loss_fn = latent_loss(ntx_temp)
     
     encoder.to(device, non_blocking=True)
     decoder.to(device, non_blocking=True)
@@ -218,30 +225,24 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act
         project.train()
         
         # Iterate over batches of images with the dataloader
-        for aug1_bcoords, aug1_bfeats, aug2_bcoords, aug2_bfeats, orig_bcoords, orig_bfeats in train_loader:
+        for cat_bcoords, cat_bfeats in train_loader:
 
             ## Send to the device, then make the sparse tensors
-            aug1_bcoords = aug1_bcoords.to(device, non_blocking=True)
-            aug1_bfeats  = aug1_bfeats .to(device, non_blocking=True)
-            aug2_bcoords = aug2_bcoords.to(device, non_blocking=True)
-            aug2_bfeats  = aug2_bfeats .to(device)
-            aug1_batch   = ME.SparseTensor(aug1_bfeats, aug1_bcoords, device=device)
-            aug2_batch   = ME.SparseTensor(aug2_bfeats, aug2_bcoords, device=device)
-                                    
+            cat_bcoords = cat_bcoords.to(device, non_blocking=True)
+            cat_bfeats  = cat_bfeats .to(device)
+            cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
+
             ## Now do the forward passes
-            encoded_batch1 = encoder(aug1_batch)
-            decoded_batch1 = decoder(encoded_batch1)
-            encoded_batch2 = encoder(aug2_batch)
-            decoded_batch2 = decoder(encoded_batch2)
-            project_batch1 = project(encoded_batch1)
-            project_batch2 = project(encoded_batch2)
+            encoded_batch = encoder(cat_batch)
+            decoded_batch = decoder(encoded_batch)
+            project_batch = project(encoded_batch) 
             
             # Evaluate losses
-            aug1_loss = reco_loss_fn(decoded_batch1, aug1_batch)
-            aug2_loss = reco_loss_fn(decoded_batch2, aug2_batch)
-            lat_loss  = latent_loss_fn(project_batch1.F, project_batch2.F)
-            tot_loss  = aug1_loss + aug2_loss + lat_loss
-            
+            rec_loss = reco_loss_fn(decoded_batch, cat_batch)
+            lat_loss = latent_loss_fn(project_batch.F)
+            # lat_loss2 = latent_loss_fn(torch.cat(project_batch.decomposed_features))
+            tot_loss = rec_loss + lat_loss
+
             # Backward pass
             optimizer.zero_grad()
             tot_loss .backward()
@@ -249,7 +250,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act
 
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
-            rec_loss_tensor += (aug1_loss+aug2_loss).detach()
+            rec_loss_tensor += rec_loss.detach()
             lat_loss_tensor += lat_loss.detach()
             
             # Manage CUDA memory for ME
@@ -275,16 +276,16 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, dec, hidden_act
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
             print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss, \
-                  "("+av_rec_loss, "+", av_lat_loss+")")
+                  "(", av_rec_loss, "+", av_lat_loss, ")")
             print("Time taken:", time.process_time() - tstart)
 
         ## For checkpointing
         if rank==0 and iteration%50 == 0 and iteration != 0:
-            save_checkpoint(encoder, decoder, project, optimizer, state_file+".check"+str(iteration), iteration, av_loss)
+            save_checkpoint(encoder, decoder, project, optimizer, state_file+".check"+str(iteration), iteration, av_tot_loss)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, decoder, project, optimizer, state_file, iteration, av_loss)
+        save_checkpoint(encoder, decoder, project, optimizer, state_file, iteration, av_tot_loss)
         if log_dir: writer.close()
 
     ## Clear things up
@@ -317,7 +318,10 @@ if __name__ == '__main__':
     parser.add_argument('--latent_act', type=str, default="relu", nargs='?')
     parser.add_argument('--hidden_act', type=str, default="tanh", nargs='?')
     parser.add_argument('--dropout', type=float, default=0, nargs='?')
+    parser.add_argument('--latent_loss', type=str, default=None, nargs='?')
     parser.add_argument('--ntx_temp', type=float, default=0.5, nargs='?')
+    parser.add_argument('--aug_type', type=str, default=None, nargs='?')
+    parser.add_argument('--proj_size', type=int, default=0, nargs='?')
     
     ## Restart option
     parser.add_argument('--restart', action='store_true')
@@ -329,7 +333,7 @@ if __name__ == '__main__':
     for arg in vars(args): print(arg, getattr(args, arg))
     
     ## Other hard-coded values
-    batch_size=1024
+    batch_size=512
 
     ## Hard code the transform for now...    
     aug_transform = transforms.Compose([
@@ -343,6 +347,43 @@ if __name__ == '__main__':
         RandomCrop()
     ])
 
+    if args.aug_type == "unitcharge":
+        aug_transform = transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.1, 0.1),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10),
+            RandomBlockZero(5, 6),
+            RandomCrop(),
+            ConstantCharge()
+        ])
+
+    ## Add alternatives here
+    if args.aug_type == "bigmod":
+        aug_transform = transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZero(5, 6),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.1),
+            RandomCrop()
+        ])
+    if args.aug_type ==	"bigbilin":
+        aug_transform = transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZero(5, 6),
+            BilinearInterpolation(0.05),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.1),
+            RandomCrop()
+        ])
+
+        
     ## Get the concrete dataset
     train_dataset = SingleModuleImage2D_MultiHDF5_ME(args.indir, \
                                                      nom_transform=CenterCrop(), \
@@ -364,6 +405,10 @@ if __name__ == '__main__':
         enc = DeeperEncoderME
         dec = DeeperDecoderME        
 
+    latent_loss = NTXentMerged
+    if args.latent_loss == 'NTXentMergedTopTenNeg':
+        latent_loss = NTXentMergedTopTenNeg
+        
     mp.spawn(run_training,
              args=(args.world_size,
                    args.nstep,
@@ -374,8 +419,10 @@ if __name__ == '__main__':
                    args.latent_act,
                    args.nchan,
                    args.latent,
+                   args.proj_size,
                    args.lr,
                    args.dropout,
+                   latent_loss,
                    args.ntx_temp,
                    train_dataset,
                    batch_size,
