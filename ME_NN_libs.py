@@ -68,11 +68,8 @@ class NTXent(nn.Module):
         z_i = nn.functional.normalize(emb_i, dim=1)
         z_j = nn.functional.normalize(emb_j, dim=1)
         
-        negatives_mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool, device=device)).float()
-
+        negatives_mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool, device=emb_i.device)).float()
         representations = torch.cat([z_i, z_j], dim=0)
-        xcs = torch.matmul(z_i, z_j.T)        
-
         similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
         
         sim_ij = torch.diag(similarity_matrix, batch_size)
@@ -86,6 +83,78 @@ class NTXent(nn.Module):
         loss = torch.sum(loss_partial) / (2 * batch_size)
         
         return loss
+
+    
+class NTXentMerged(nn.Module):
+    def __init__(self, temperature=0.5):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, emb_cat):
+        """
+        emb_cat are the concatenated batches of pairs emb_cat = z_i + z_j
+        """
+        batch_size = emb_cat.shape[0]//2
+        z_cat = nn.functional.normalize(emb_cat, dim=1)
+        z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
+
+        negatives_mask = (~torch.eye(batch_size*2, batch_size*2, dtype=bool, device=emb_cat.device)).float()
+        representations = torch.cat([z_i, z_j], dim=0)
+        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+
+        sim_ij = torch.diag(similarity_matrix, batch_size)
+        sim_ji = torch.diag(similarity_matrix, -batch_size)
+        positives = torch.cat([sim_ij, sim_ji], dim=0)
+
+        nominator = torch.exp(positives / self.temperature)
+        denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
+
+        loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
+        loss = torch.sum(loss_partial) / (2*batch_size)
+
+        return loss
+
+class NTXentMergedTopTenNeg(nn.Module):
+    def __init__(self, temperature=0.5):
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, emb_cat):
+        """                                                                                                                                                                              
+        emb_cat are the concatenated batches of pairs emb_cat = z_i + z_j                                                                                                                
+        """
+        batch_size = emb_cat.shape[0]//2
+        z_cat = nn.functional.normalize(emb_cat, dim=1)
+        z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
+
+        negatives_mask = (~torch.eye(batch_size*2, batch_size*2, dtype=bool, device=emb_cat.device)).float()
+        representations = torch.cat([z_i, z_j], dim=0)
+        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+
+        sorted_indices = torch.argsort(similarity_matrix, dim=1)  # Sort similarities in ascending order
+        top_10_percent = int(batch_size * 2 * 0.1)
+        filtered_mask = torch.zeros_like(negatives_mask)
+
+        for i in range(batch_size * 2):
+            # Keep only the top 10% least similar negatives
+            top_negatives = sorted_indices[i, :top_10_percent]
+            filtered_mask[i, top_negatives] = 1.0
+
+        # Adjust mask to include only top 10% least similar negatives
+        final_negatives_mask = negatives_mask * filtered_mask
+        
+        sim_ij = torch.diag(similarity_matrix, batch_size)
+        sim_ji = torch.diag(similarity_matrix, -batch_size)
+        positives = torch.cat([sim_ij, sim_ji], dim=0)
+
+        nominator = torch.exp(positives / self.temperature)
+        denominator = final_negatives_mask * torch.exp(similarity_matrix / self.temperature)
+
+        loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
+        loss = torch.sum(loss_partial) / (2*batch_size)
+
+        return loss
+
     
 ## This is a loss function to deweight the penalty for getting blank pixels wrong
 class AsymmetricL2LossME(torch.nn.Module):
@@ -246,7 +315,8 @@ class EncoderME(nn.Module):
             if isinstance(m, ME.MinkowskiBatchNorm):
                     nn.init.constant_(m.bn.weight, 1)
                     nn.init.constant_(m.bn.bias, 0)
-        
+                    m.track_running_stats = False
+                    
     def forward(self, x):
         x = self.encoder_cnn(x)
         x = self.encoder_lin(x)
@@ -340,7 +410,8 @@ class DecoderME(nn.Module):
             if isinstance(m, ME.MinkowskiBatchNorm):
                     nn.init.constant_(m.bn.weight, 1)
                     nn.init.constant_(m.bn.bias, 0)
-             
+                    m.track_running_stats = False
+                    
     def forward(self, x, target_key=None):
         x = self.decoder_lin(x)
         x = self.decoder_conv(x)
