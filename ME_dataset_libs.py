@@ -29,9 +29,7 @@ class CenterCrop:
 
         return coords[mask], feats[mask]
 
-    
-## This just takes a 256x128 subimage from the original 280x140 block
-class RandomCrop:
+class MaxNonZeroCrop:
     def __init__(self):
         self.orig_y = 280
         self.orig_x = 140
@@ -39,17 +37,131 @@ class RandomCrop:
         self.new_x = 128
 
     def __call__(self, coords, feats):
-	## Need to copy the array
-        new_coords = coords.copy()
+        """
+        Crop to the region with the most non-zero values.
+        """
+        # Create a 2D histogram to count nonzeros in each pixel
+        hist, xedges, yedges = np.histogram2d(coords[:, 0], coords[:, 1],
+                                              bins=(self.orig_y, self.orig_x),
+                                              range=[[0, self.orig_y], [0, self.orig_x]])
+        # Compute the sliding window sum
+        max_count = 0
+        best_start_y = 0
+        best_start_x = 0
+
+        for start_y in range(self.orig_y - self.new_y + 1):
+            for start_x in range(self.orig_x - self.new_x + 1):
+                window_sum = np.sum(hist[start_y:start_y + self.new_y, start_x:start_x + self.new_x])
+                if window_sum > max_count:
+                    max_count = window_sum
+                    best_start_y = start_y
+                    best_start_x = start_x
+
+        # Define the selected crop area
+        crop_min_y = best_start_y
+        crop_max_y = best_start_y + self.new_y
+        crop_min_x = best_start_x
+        crop_max_x = best_start_x + self.new_x
+
+        # Apply the crop mask to sparse coordinates
+        mask = (coords[:, 0] >= crop_min_y) & (coords[:, 0] < crop_max_y) & \
+               (coords[:, 1] >= crop_min_x) & (coords[:, 1] < crop_max_x)
+
+        # Adjust coordinates to the cropped region
+        cropped_coords = coords[mask] - np.array([crop_min_y, crop_min_x])
+        cropped_feats = feats[mask]
+
+        return cropped_coords, cropped_feats
+
+class MaxRegionCrop:
+    def __init__(self):
+        self.orig_y = 280
+        self.orig_x = 140
+        self.new_y = 256
+        self.new_x = 128
+
+        # Predefined regions (center, corners)
+        self.regions = {
+            "center": ((self.orig_y - self.new_y) // 2, (self.orig_x - self.new_x) // 2),
+            "top_left": (0, 0),
+            "top_right": (0, self.orig_x - self.new_x),
+            "bottom_left": (self.orig_y - self.new_y, 0),
+            "bottom_right": (self.orig_y - self.new_y, self.orig_x - self.new_x),
+        }
+
+    def __call__(self, coords, feats):
+        """
+        Crop the sparse coordinates and features to the region with the most non-zero hits.
+        """
+        max_count = 0
+        best_region = None
+
+        # Iterate through predefined regions
+        for region, (start_y, start_x) in self.regions.items():
+            crop_min_y, crop_max_y = start_y, start_y + self.new_y
+            crop_min_x, crop_max_x = start_x, start_x + self.new_x
+
+            # Mask for the region
+            mask = (coords[:, 0] >= crop_min_y) & (coords[:, 0] < crop_max_y) & \
+                   (coords[:, 1] >= crop_min_x) & (coords[:, 1] < crop_max_x)
+
+            # Count the number of non-zero elements in this region
+            count = np.sum(mask)
+
+            # Update the best region if this one has more hits
+            if count > max_count:
+                max_count = count
+                best_region = (start_y, start_x)
+
+        # Apply the best region crop
+        crop_min_y, crop_max_y = best_region[0], best_region[0] + self.new_y
+        crop_min_x, crop_max_x = best_region[1], best_region[1] + self.new_x
+
+        # Mask for the best region
+        mask = (coords[:, 0] >= crop_min_y) & (coords[:, 0] < crop_max_y) & \
+               (coords[:, 1] >= crop_min_x) & (coords[:, 1] < crop_max_x)
+
+        # Adjust the coordinates and filter the features
+        cropped_coords = coords[mask] - np.array([crop_min_y, crop_min_x])
+        cropped_feats = feats[mask]
+
+        return cropped_coords, cropped_feats
+
+## This just takes a 256x128 subimage from the transformed block
+class RandomCrop:
+    def __init__(self, clip=5):
+        self.new_y = 256
+        self.new_x = 128  
+        self.clip = clip
+
+    def __call__(self, coords, feats):
         new_feats = feats.copy()
+        y_round, x_round = np.round(coords[:, 0]).astype(int), np.round(coords[:, 1]).astype(int)
+        new_coords = np.stack([y_round, x_round], axis=-1)
+                
+        y_max = np.max(y_round)
+        y_min = np.min(y_round)
+        x_max = np.max(x_round)
+        x_min = np.min(x_round)
+        
+        shift_x, shift_y = 0, 0
+        
+        if x_max - x_min >= self.new_x:
+            ## If the transformed image is wider than the cropped image, ensure it's "through-going"
+            shift_x = random.randint(self.new_x-x_max, -1*x_min)
+        else: 
+            ## If not, randomly place it in the image, with a small region "clipped"
+            shift_x = random.randint(-x_min -self.clip, self.new_x-x_max + self.clip)
+            
+        if y_max - y_min >= self.new_y:
+            shift_y = random.randint(self.new_y-y_max, -1*y_min)
+        else: 
+            shift_y = random.randint(-y_min -self.clip, self.new_y-y_max + self.clip)
 
-        shift_y = random.randint(0, self.orig_y - self.new_y)
-        shift_x = random.randint(0, self.orig_x - self.new_x)
-
-        new_coords = new_coords - np.array([shift_x, shift_y])
+        new_coords = new_coords + np.array([shift_y, shift_x])        
         mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_y)) \
              & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_x))
-
+                
         return new_coords[mask], new_feats[mask]
 
 
@@ -160,6 +272,17 @@ class RandomScaleCharge:
         new_feats = feats*scale_factor
         return coords, new_feats
 
+## This is just used to check the performance when the charge scale is artificially removed
+class ConstantCharge:
+    
+    def __init__(self, value=1.0):
+        self.value = value
+
+    def __call__(self,  coords, feats):
+        new_feats = np.ones_like(feats)
+        return coords, new_feats
+    
+    
 class RandomElasticDistortion2D:
     def __init__(self, alpha_range, sigma):
         self.alpha_range = alpha_range
@@ -379,7 +502,6 @@ class SingleModuleImage2D_MultiHDF5_ME(Dataset):
             ## Make sure the images aren't empty...
             while aug1_feats.size == 0: aug1_coords, aug1_feats = self.aug_transform(raw_coords, raw_feats)
             while aug2_feats.size == 0: aug2_coords, aug2_feats = self.aug_transform(raw_coords, raw_feats)
-
             raw_coords, raw_feats   = self.nom_transform(raw_coords, raw_feats)
 
         return aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats
@@ -398,6 +520,18 @@ def triple_ME_collate_fn(batch):
     raw_bfeats  = torch.from_numpy(np.concatenate(raw_feats, 0)).float()
 
     return aug1_bcoords, aug1_bfeats, aug2_bcoords, aug2_bfeats, raw_bcoords, raw_bfeats
+
+
+def cat_ME_collate_fn(batch):
+    aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats = zip(*batch)
+
+    # Create batched coordinates for the SparseTensor input
+    cat_bcoords = ME.utils.batched_coordinates(aug1_coords+aug2_coords)
+
+    # Concatenate all lists
+    cat_bfeats = torch.from_numpy(np.concatenate(aug1_feats+aug2_feats, 0)).float()
+
+    return cat_bcoords, cat_bfeats
 
 
 class SingleModuleImage2D_solo_ME(Dataset):
