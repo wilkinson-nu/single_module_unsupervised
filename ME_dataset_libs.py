@@ -252,6 +252,35 @@ class RandomBlockZero:
         new_feats = feats.copy()
         return new_coords[combined_mask], new_feats[combined_mask]
 
+## Updated function to remove random blocks
+## Adds more flexibility
+class RandomBlockZeroImproved:
+    def __init__(self, nblocks=[0,6], block_range=[0,10]):
+        self.nblocks = nblocks
+        self.rblocks = block_range
+        self.xmax = 140
+        self.ymax = 280
+
+    def __call__(self, coords, feats):
+        
+        combined_mask = np.full(feats.size, True, dtype=bool)
+        
+        num_blocks_removed = random.randint(self.nblocks[0], self.nblocks[1])
+        for _ in range(num_blocks_removed):
+            
+            this_size = random.randint(self.rblocks[0], self.rblocks[1])
+            block_x = random.randint(0, self.xmax - this_size - 1)
+            block_y = random.randint(0, self.ymax - this_size - 1)
+
+            mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+this_size)) \
+                     & (coords[:,1] > block_x) & (coords[:,1] < (block_x+this_size)))
+            combined_mask = np.logical_and(combined_mask, mask)
+            
+        ## Need to copy the array
+        new_coords = coords.copy()
+        new_feats = feats.copy()
+        return new_coords[combined_mask], new_feats[combined_mask]
+    
 ## Apply a Gaussian jitter to all values
 class RandomJitterCharge:
     def __init__(self, width=0.1):
@@ -609,3 +638,84 @@ def make_dense_from_tensor(sparse_batch, index=0, max_i=256, max_j=128):
     batch_size = len(coords)
     img_dense,_,_ = sparse_batch.dense(torch.Size([batch_size, 1, max_i, max_j]), min_coordinate=torch.IntTensor([0,0]))
     return img_dense[index]
+
+def make_dense_array(coords, feats, max_i=256, max_j=128):
+    img_dense = np.zeros((max_i, max_j))
+    i_coords, j_coords = coords[:, 0], coords[:, 1]
+    img_dense[i_coords, j_coords] = feats
+    return img_dense
+
+
+
+## Just a big function to return a set of transforms, to be returned by name
+def get_transform(aug_type=None):
+
+    if aug_type == "block10x10":
+        return transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.1, 0.1),
+	    RandomHorizontalFlip(),
+	    RandomRotation2D(-10,10),
+	    RandomBlockZeroImproved([0,10], [5,10]),
+            RandomScaleCharge(0.02),
+            RandomJitterCharge(0.02),
+	    RandomCrop()
+        ])
+    if aug_type == "bigmodblock10x10":
+        return transforms.Compose([
+	    RandomGridDistortion2D(5,5),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZeroImproved([0,10], [5,10]),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.1),
+            RandomCrop()
+        ])
+    if aug_type == "unitcharge":
+        return transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.1, 0.1),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10),
+            RandomBlockZero(5, 6),
+            RandomCrop(),
+            ConstantCharge()
+        ])
+    if aug_type == "bigmod":
+        return transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZero(5, 6),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.1),
+            RandomCrop()
+        ])
+    if aug_type == "bigbilin":
+        return transforms.Compose([
+            RandomGridDistortion2D(5,5),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZero(5, 6),
+            BilinearInterpolation(0.05),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.1),
+            RandomCrop()
+        ])
+
+    ## If not, return the default
+    return transforms.Compose([
+	RandomGridDistortion2D(5,5),
+	RandomShear2D(0.1, 0.1),
+	RandomHorizontalFlip(),
+	RandomRotation2D(-10,10),
+	RandomBlockZero(5, 6),
+	RandomScaleCharge(0.02),
+	RandomJitterCharge(0.02),
+	RandomCrop()
+    ])
+
+    

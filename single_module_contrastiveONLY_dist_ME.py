@@ -27,8 +27,9 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, BilinearInterpolation, \
-    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, ConstantCharge
+# from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, BilinearInterpolation, \
+#    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, ConstantCharge, RandomBlockZeroImproved
+from ME_dataset_libs import CenterCrop, get_transform
 
 ## Import dataset
 from ME_dataset_libs import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
@@ -158,7 +159,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
     ## Deal with a scheduler
     scheduler = None
     if sched == "onecycle":
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr*100, total_steps=num_iterations, cycle_momentum=False)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr*1000, total_steps=num_iterations, cycle_momentum=False)
     if sched == "step":
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
                                                    milestones=[150,300,450],
@@ -292,56 +293,10 @@ if __name__ == '__main__':
 
     ## Report arguments
     for arg in vars(args): print(arg, getattr(args, arg))
+
+    ## Get the augmentation from the argument name
+    aug_transform = get_transform(args.aug_type)
     
-    ## Hard code the transform for now...    
-    aug_transform = transforms.Compose([
-        RandomGridDistortion2D(5,5),
-        RandomShear2D(0.1, 0.1),
-        RandomHorizontalFlip(),
-        RandomRotation2D(-10,10),
-        RandomBlockZero(5, 6),
-        RandomScaleCharge(0.02),
-        RandomJitterCharge(0.02),
-        RandomCrop()
-    ])
-
-    if args.aug_type == "unitcharge":
-        aug_transform = transforms.Compose([
-            RandomGridDistortion2D(5,5),
-            RandomShear2D(0.1, 0.1),
-            RandomHorizontalFlip(),
-            RandomRotation2D(-10,10),
-            RandomBlockZero(5, 6),
-            RandomCrop(),
-            ConstantCharge()
-        ])
-
-    ## Add alternatives here
-    if args.aug_type == "bigmod":
-        aug_transform = transforms.Compose([
-            RandomGridDistortion2D(5,5),
-            RandomShear2D(0.2, 0.2),
-            RandomHorizontalFlip(),
-            RandomRotation2D(-30,30),
-            RandomBlockZero(5, 6),
-            RandomScaleCharge(0.1),
-            RandomJitterCharge(0.1),
-            RandomCrop()
-        ])
-    if args.aug_type ==	"bigbilin":
-        aug_transform = transforms.Compose([
-            RandomGridDistortion2D(5,5),
-            RandomShear2D(0.2, 0.2),
-            RandomHorizontalFlip(),
-            RandomRotation2D(-30,30),
-            RandomBlockZero(5, 6),
-            BilinearInterpolation(0.05),
-            RandomScaleCharge(0.1),
-            RandomJitterCharge(0.1),
-            RandomCrop()
-        ])
-
-        
     ## Get the concrete dataset
     train_dataset = SingleModuleImage2D_MultiHDF5_ME(args.indir, \
                                                      nom_transform=CenterCrop(), \

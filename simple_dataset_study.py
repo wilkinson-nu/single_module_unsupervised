@@ -8,6 +8,17 @@ from glob import glob
 
 # plt.rcParams['text.usetex'] = True
 
+def get_n_images(input_file_names):
+
+    images = 0
+    for file in glob(input_file_names):
+        f = h5py.File(file, 'r', libver='latest')
+        images += f.attrs['N']
+        f.close()
+
+    print("Found a total of", images, "images")
+
+
 def make_dataset_summary_plots(input_file_names, plotDir="plots_fixdupes_pluscuts"):
 
     max_images = 1e6
@@ -152,4 +163,5 @@ if __name__ == '__main__':
         sys.exit()
 
     input_file_names = sys.argv[1]
-    make_dataset_summary_plots(input_file_names)
+    get_n_images(input_file_names)
+    # make_dataset_summary_plots(input_file_names)

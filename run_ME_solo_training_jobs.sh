@@ -6,9 +6,9 @@
 INDIR="/pscratch/sd/c/cwilk/h5_inputs/"
 
 ## These are fixed for now
-NSTEP=100
-NEVENTS=2000000
-NEVTSTRING="2M"
+NSTEP=50
+NEVENTS=4000000
+NEVTSTRING="4M"
 scheduler="onecycle"
 
 NCHAN=16
@@ -16,17 +16,19 @@ arch=simple
 
 hidden_act=silu
 latent_act=tanh
+dropout=0
 
 #for LR in 5e-4 1e-4 2e-5; do #1e-2 1e-3 1e-4 1e-5; do
 for LR in 5e-6; do
     #for LATENT in 32 64 192; do
     for LATENT in 128; do
-	for dropout in 0.01 0.02 0.05 0.1 0.2; do
-	    for NCHAN in 48; do
+	for AUG_TYPE in unitcharge; do
+	    for NCHAN in 32; do
+		
 
 		## Make a log file
-		ROOT_NAME=lat${LATENT}_nchan${NCHAN}_${LR}_drop${dropout}_arch${arch}_SOLO_actfns_${hidden_act}_${latent_act}_${NEVTSTRING}_${scheduler}_ME
-		LOGFILE=log_dropout_tests_111124/log_${ROOT_NAME}
+		ROOT_NAME=lat${LATENT}_nchan${NCHAN}_${LR}_drop${dropout}_arch${arch}_SOLO_actfns_${hidden_act}_${latent_act}_${NEVTSTRING}_${scheduler}_${AUG_TYPE}_ME
+		LOGFILE=log_unitcharge_200125/log_${ROOT_NAME}
 		
 		## Spawn a job to process the file
 		JOBSCRIPT=job_${ROOT_NAME}.sh
@@ -38,6 +40,7 @@ for LR in 5e-6; do
 		echo "#SBATCH --image=docker:wilkinsonnu/ml_tools:ME" >> ${JOBSCRIPT}
 		echo "#SBATCH --account=dune" >> ${JOBSCRIPT}
 		echo "#SBATCH --qos=regular" >> ${JOBSCRIPT}
+		# echo "#SBATCH --qos=premium" >> ${JOBSCRIPT}
 		echo "#SBATCH --constraint=gpu" >> ${JOBSCRIPT}
 		echo "#SBATCH --gpus=4" >> ${JOBSCRIPT}
 		echo "#SBATCH --cpus-per-task=32" >> ${JOBSCRIPT}
@@ -51,7 +54,7 @@ for LR in 5e-6; do
 		echo "export WORLD_SIZE=4" >> ${JOBSCRIPT}
 		
 		echo "shifter python3 single_module_NN_solo_dist_ME.py --indir=${INDIR} --nevents=${NEVENTS} --log=${LOGFILE} --lr=${LR} \
-		     --latent=${LATENT} --nchan=${NCHAN} --nstep=${NSTEP} --arch=${arch} --augment \
+		     --latent=${LATENT} --nchan=${NCHAN} --nstep=${NSTEP} --arch=${arch} --aug_type=${AUG_TYPE} \
 		     --hidden_act=${hidden_act} --latent_act=${latent_act} --dropout=${dropout} \
 		     --state_file=${SCRATCH}/${STATE_FILE} --scheduler=${scheduler} --world_size=4" >> ${JOBSCRIPT}	 
 
