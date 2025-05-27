@@ -39,7 +39,6 @@ for LR in 5e-6; do
 	    echo "#!/bin/bash" > ${JOBSCRIPT}
 	    echo "#SBATCH --image=docker:wilkinsonnu/ml_tools:ME" >> ${JOBSCRIPT}
 	    echo "#SBATCH --account=dune" >> ${JOBSCRIPT}
-	    # echo "#SBATCH --qos=premium" >> ${JOBSCRIPT}
             echo "#SBATCH --qos=regular" >> ${JOBSCRIPT}
 	    echo "#SBATCH --constraint=gpu" >> ${JOBSCRIPT}
 	    echo "#SBATCH --gpus=4" >> ${JOBSCRIPT}
