@@ -7,6 +7,12 @@ from scipy.sparse import coo_matrix
 
 show_plots = False
 
+y_limits = (-61.85430145263672, 61.85430145263672)
+z_limits = (-30.816299438476562, 30.816299438476562)
+
+## For v5 reflow or below, must use:
+# y_limits = (-83.67790222167969, 40.03070068359375)
+
 def make_image(these_hits):
 
     ## coo_matrix sums any duplicated values, so don't sum them
@@ -27,14 +33,11 @@ def make_image(these_hits):
         if hit['Q'] < 0: continue
         
         ## Get pixel numbers and charge values
-        ## (Ugly but it's compiled!)
-        z_min = -30.816299438476562   
         pixel_pitch = 0.4434
-        this_z = int((hit['z'] - z_min)/0.4424 + pixel_pitch/10.)
+        this_z = int((hit['z'] - z_limits[0])/0.4424 + pixel_pitch/10.)
 
-        y_min = -83.67790222167969
         pixel_pitch = 0.4434
-        this_y = int((hit['y'] - y_min)/0.4424 + pixel_pitch/10.)
+        this_y = int((hit['y'] - y_limits[0])/0.4424 + pixel_pitch/10.)
         
         this_q = hit['Q']
 
@@ -91,6 +94,8 @@ def make_images(input_file_name, output_file_name):
     raw_events = f['charge/events/data']
     events = raw_events[raw_events['nhit'] > min_hits]
 
+    ## raw_events['id'] for the unique event ID
+    
     ## How many events do we have?
     nevts = len(events)
     print("Found:", len(events), "events")
@@ -106,6 +111,7 @@ def make_images(input_file_name, output_file_name):
         plt.figure(figsize=(4.5, 7))
 
     sparse_image_list = []
+    event_id_list = []
 
     ## Loop over events
     for evt in range(nevts):
@@ -130,6 +136,7 @@ def make_images(input_file_name, output_file_name):
         if not filter_central_region(this_sparse): continue
         
         sparse_image_list .append(this_sparse)
+        event_id_list     .append(ev_id)
 
         if show_plots:
             ## Show image temporarily
@@ -144,13 +151,14 @@ def make_images(input_file_name, output_file_name):
         ## Save the number of images in the file
         fout.attrs['N'] = len(sparse_image_list)
 
-        for i, sparse_image in enumerate(sparse_image_list):
+        for i, (sparse_image, event_id) in enumerate(zip(sparse_image_list, event_id_list)):
             group = fout.create_group(str(i))
             group.create_dataset('data', data=sparse_image.data)
             group.create_dataset('row', data=sparse_image.row)
             group.create_dataset('col', data=sparse_image.col)
             group.attrs['shape'] = sparse_image.shape
-
+            group.attrs['event_id'] = event_id
+            
     ## Close the input file
     f.close()
 
