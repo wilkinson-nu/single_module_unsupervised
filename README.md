@@ -8,6 +8,37 @@ And then push it to dockerhub, before pulling into shifter on NERSC
 
 The container is available for any jobs submitting through slurm on Perlmutter (see `run_contrastive_jobs.sh` for a working example). To use a custom container as the kernel in JupyterLab, follow the instructions here: `https://docs.nersc.gov/services/jupyter/how-to-guides/`
 
+To simply use this prebuilt docker image for your own jupyter notebook, on NERSC you can run
+```
+
+shifter --image=docker:wilkinsonnu/ml_tools:ME python -m ipykernel install --prefix $HOME/.local --name ml_env --display-name MinkowskiEngine
+```
+If successful, you'll get a message like `Installed kernelspec ml_env in {directory}`. In that directory, find the file called `kernel.json`. Add the two lines
+```
+"shifter",
+"--image=docker:wilkinsonnu/ml_tools:ME",
+```
+to the beginning of the argv block. When done, the json file look something like
+```
+{
+  "argv": [
+  "shifter",
+  "--image=docker:wilkinsonnu/ml_tools:ME",
+  "/opt/conda/bin/python",
+  "-m",
+  "ipykernel_launcher",
+  "-f",
+  "{connection_file}"
+ ],
+ "display_name": "MinkowskiEngine",
+ "language": "python",
+ "metadata": {
+  "debugger": true
+ }
+}
+```
+Now when you start a notebook in JupyterLab, you should be able to choose MinkowskiEngine from the list of available kernels.
+
 # Preparing inputs
 The inputs to this work are post "flow" output, the latest at time of writing are v9, found here: 
 ```
