@@ -20,6 +20,9 @@ Processed images can be found in, which should be accessible to anybody with acc
 /pscratch/sd/c/cwilk/h5_inputs_v9
 ```
 
+# Data augmentations
+A critical choice for contrastive learning tasks is choosing appropriate augmentations to apply to the data. An example jupyter notebook for looking at the impact of augmentations (by default using the nominal set used for training), can be found in: `single_module_augmentation_tests_ME.ipynb`.
+
 # Training the encoder
 There's an example training jupyter notebook: `single_module_contrastive_training_ME.ipynb`, which is useful for testing new loss functions and looking at training dynamics. It can also optionally use a pre-trained model for a warm start for more advanced training studies.
 
