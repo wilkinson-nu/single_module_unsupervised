@@ -565,11 +565,12 @@ def cat_ME_collate_fn(batch):
 
 class SingleModuleImage2D_solo_ME(Dataset):
 
-    def __init__(self, infile_dir, transform, max_events=None):
+    def __init__(self, infile_dir, transform, max_events=None, return_metadata=False):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
         self.file_indices = []
         self.transform = transform
         self.max_events = max_events
+        self.return_metadata = return_metadata
         
         ## Sort out the file map
         self.create_file_indices()
@@ -610,6 +611,10 @@ class SingleModuleImage2D_solo_ME(Dataset):
         feats = data.reshape(-1, 1)  # Reshape data to be of shape (N, 1)            
         coords, feats = self.transform(coords, feats)
 
+        if self.return_metadata:
+            event_id = group.attrs.get("event_id", this_idx)
+            filename = os.path.basename(self.hdf5_files[file_index])
+            return coords, feats, filename, event_id        
         return coords, feats
     
 def solo_ME_collate_fn(batch):
@@ -623,6 +628,12 @@ def solo_ME_collate_fn(batch):
     
     return bcoords, bfeats
 
+
+def solo_ME_collate_fn_with_meta(batch):
+    coords, feats, filenames, event_ids = zip(*batch)
+    bcoords = ME.utils.batched_coordinates(coords)
+    bfeats = torch.from_numpy(np.concatenate(feats, 0)).float()
+    return bcoords, bfeats, filenames, event_ids
 
 
 ## Utility functions to make a dense image
