@@ -15,7 +15,15 @@ The inputs to this work are post "flow" output, the latest at time of writing ar
 ```
 They are processed to 2D sparse tensors using `make_2D_module_images_sparse_hdf5.py`, and `process_inputs.sh` is a convenience bash script for submitting a series of parallel jobs to process all of the input files. A simple script `simple_dataset_study.py` makes some high level plots using those processed images.
 
+Processed images can be found in, which should be accessible to anybody with access to the DUNE allocation:
+```
+/pscratch/sd/c/cwilk/h5_inputs_v9
+```
+
 # Training the encoder
 There's an example training jupyter notebook: `single_module_contrastive_training_ME.ipynb`, which is useful for testing new loss functions and looking at training dynamics. It can also optionally use a pre-trained model for a warm start for more advanced training studies.
 
 To train at scale, `single_module_contrastive_dist_ME.py` allows for distributed training using multiple GPUs, and in principle multiple nodes (although currently that hasn't been tested). There are many arguments to the training script, and `run_contrastive_jobs.sh` provides an example bash script for submitting jobs with different combinations of those parameters.
+
+# Evaluating the trained model
+A messy jupyter notebook, which encodes a series of images, and then has a number of functions for investigating the distributions of images in encoded space can be found here: `single_module_pretrained_contrastive_ME.ipynb`. It includes example t-SNE, k nearest neighbour and DBSCAN algorithms, using (RAPIDS) cuML to use GPU-enabled implementations. Using the GPU, they're all pretty fast tested up to 500k images. There are also a number of plotting functions for convenience.
