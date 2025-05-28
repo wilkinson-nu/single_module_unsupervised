@@ -20,7 +20,7 @@ scheduler="onecycle"
 latent_loss="NTXentMerged"
 TEMP=0.5
 VERSION=9
-INDIR="/pscratch/sd/c/cwilk/h5_inputs_v${VERSION}/"
+INDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_unsupervised/h5_inputs_v${VERSION}/"
 for LR in 5e-6; do
     for LATENT in 32 64 128; do
 	for aug_type in block10x10 bigmodblock10x10; do
