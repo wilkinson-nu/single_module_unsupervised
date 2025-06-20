@@ -8,7 +8,7 @@ from scipy.sparse import coo_matrix
 from enum import Enum, auto
 import json
 
-show_plots = True
+show_plots = False
 
 ## FSD data, reflow v3
 y_limits = (-148.61399841308594, 148.61399841308594)
@@ -354,11 +354,11 @@ def make_images(input_file_name, output_file_name):
         for i, (sparse_image, event_id, label) in enumerate(zip(sparse_image_list, event_id_list, label_list)):
             group = fout.create_group(str(i))
             group.create_dataset('data', data=sparse_image.data)
-            group.create_dataset('row', data=sparse_image.row)
-            group.create_dataset('col', data=sparse_image.col)
-            group.create_dataset('label', data=label)
-            group.attrs['shape'] = sparse_image.shape
-            group.attrs['event_id'] = event_id
+            group.create_dataset('row', data=sparse_image.row.astype(np.uint16))
+            group.create_dataset('col', data=sparse_image.col.astype(np.uint16))
+            group.create_dataset('label', data=np.int8(label))
+            group.attrs['shape'] = np.array(sparse_image.shape, dtype=np.uint16)
+            group.attrs['event_id'] = np.uint32(event_id)
             
     ## Close the input file
     f.close()
