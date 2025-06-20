@@ -167,18 +167,17 @@ class RandomCrop:
 
 class RandomHorizontalFlip:
     def __init__(self, p=0.5):
+        ## This is the probability to flip the image
         self.p = p
-        self.ncols = 128
 
     def __call__(self, coords, feats):
-
-        ## Need to copy the array
-        new_coords = coords.copy()
+        new_coords = np.round(coords).astype(np.int32)
 
         if torch.rand(1) < self.p:
-            new_coords[:,1] = self.ncols - 1 - new_coords[:,1]
+            min_col = new_coords[:,1].min()
+            max_col = new_coords[:,1].max()
+            new_coords[:,1] = max_col - (new_coords[:,1] - min_col)
         return new_coords,feats
-
 
 ## Need to define a fairly standard functions that work for ME tensors
 class RandomRotation2D:
@@ -187,18 +186,17 @@ class RandomRotation2D:
         self.max_angle = max_angle
 
     def _M(self, theta):
-        """Generate a 2D rotation matrix for a given angle theta."""
+        # Generate a 2D rotation matrix for a given angle theta
         return np.array([
             [np.cos(theta), -np.sin(theta)],
             [np.sin(theta),  np.cos(theta)]
 	])
 
     def __call__(self, coords, feats):
-        """Apply a random rotation to 2D coordinates and return the rotated coordinates with features."""
-	# Generate a random rotation angle
+    	# Generate a random rotation angle
         angle = np.deg2rad(torch.FloatTensor(1).uniform_(self.min_angle, self.max_angle).item())
 
-	# Get the 2D rotation matrix
+    	# Get the 2D rotation matrix
         R = self._M(angle)
         # Apply the rotation
         rotated_coords = coords @ R
@@ -253,33 +251,33 @@ class RandomBlockZero:
         return new_coords[combined_mask], new_feats[combined_mask]
 
 ## Updated function to remove random blocks
-## Adds more flexibility
 class RandomBlockZeroImproved:
     def __init__(self, nblocks=[0,6], block_range=[0,10]):
         self.nblocks = nblocks
         self.rblocks = block_range
-        self.xmax = 140
-        self.ymax = 280
 
     def __call__(self, coords, feats):
-        
+
+        coords = np.round(coords).astype(np.int32)
         combined_mask = np.full(feats.size, True, dtype=bool)
+
+        # Dynamically determine extent
+        y_min, y_max = coords[:, 0].min(), coords[:, 0].max()
+        x_min, x_max = coords[:, 1].min(), coords[:, 1].max()
         
-        num_blocks_removed = random.randint(self.nblocks[0], self.nblocks[1])
+        num_blocks_removed = random.randint(*self.nblocks)
         for _ in range(num_blocks_removed):
             
-            this_size = random.randint(self.rblocks[0], self.rblocks[1])
-            block_x = random.randint(0, self.xmax - this_size - 1)
-            block_y = random.randint(0, self.ymax - this_size - 1)
+            block_size = random.randint(*self.rblocks)
+            block_x = random.randint(x_min, x_max - block_size)
+            block_y = random.randint(y_min, y_max - block_size)
 
-            mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+this_size)) \
-                     & (coords[:,1] > block_x) & (coords[:,1] < (block_x+this_size)))
-            combined_mask = np.logical_and(combined_mask, mask)
+            mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+block_size)) \
+                     & (coords[:,1] > block_x) & (coords[:,1] < (block_x+block_size)))
+            combined_mask &= mask
             
-        ## Need to copy the array
-        new_coords = coords.copy()
-        new_feats = feats.copy()
-        return new_coords[combined_mask], new_feats[combined_mask]
+        return coords[combined_mask].copy(), feats[combined_mask].copy()
+        
     
 ## Apply a Gaussian jitter to all values
 class RandomJitterCharge:
