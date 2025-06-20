@@ -8,7 +8,7 @@ from scipy.sparse import coo_matrix
 from enum import Enum, auto
 import json
 
-show_plots = True
+show_plots = False
 
 ## FSD data, reflow v3
 y_limits = (-148.61399841308594, 148.61399841308594)
