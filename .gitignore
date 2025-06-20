@@ -164,3 +164,4 @@ cython_debug/
 images/
 inputs/
 plots/
+*.json

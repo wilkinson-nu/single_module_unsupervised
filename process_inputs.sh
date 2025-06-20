@@ -1,7 +1,10 @@
 #!/bin/bash
 
-INDIR="/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v1"
-OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/sparse_hdf5_fixdupes_pluscuts_noneg_transform_central"
+#INDIR="/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v1"
+#OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/sparse_hdf5_fixdupes_pluscuts_noneg_transform_central"
+
+INDIR="/global/cfs/cdirs/dune/www/data/Module1/TPC12/reflow-test/flowed_v9/charge_only/"
+OUTDIR="/global/cfs/cdirs/dune/users/cwilk/single_module_images/flowed_v9_charge_only"
 
 ## Process all files
 for INFILEFULL in $(ls ${INDIR}/*.h5); do

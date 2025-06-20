@@ -1,4 +1,4 @@
-## This file trains the autoencoder + a projective head with a contrastive loss. It should work with any number of GPUs distributed across nodes
+## This file trains a simple encoder with a contrastive loss. It should work with any number of GPUs distributed across nodes
 import numpy as np
 import argparse
 from torch import optim
@@ -27,8 +27,6 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-# from ME_dataset_libs import CenterCrop, RandomCrop, RandomHorizontalFlip, RandomRotation2D, RandomShear2D, BilinearInterpolation, \
-#    RandomBlockZero, RandomJitterCharge, RandomScaleCharge, RandomElasticDistortion2D, RandomGridDistortion2D, ConstantCharge, RandomBlockZeroImproved
 from ME_dataset_libs import CenterCrop, get_transform
 
 ## Import dataset
@@ -213,7 +211,6 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
             
             # Evaluate losses
             tot_loss = loss_fn(encoded_batch.F)
-            # lat_loss2 = latent_loss_fn(torch.cat(project_batch.decomposed_features))
 
             # Backward pass
             optimizer.zero_grad()
