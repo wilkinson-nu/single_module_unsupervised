@@ -252,9 +252,11 @@ class RandomBlockZero:
 
 ## Updated function to remove random blocks
 class RandomBlockZeroImproved:
-    def __init__(self, nblocks=[0,6], block_range=[0,10]):
+    def __init__(self, nblocks=[0,6], block_range=[0,10], xrange=[0,140], yrange=[0,280]):
         self.nblocks = nblocks
         self.rblocks = block_range
+        self.xrange = xrange
+        self.yrange = yrange
 
     def __call__(self, coords, feats):
 
@@ -262,8 +264,8 @@ class RandomBlockZeroImproved:
         combined_mask = np.full(feats.size, True, dtype=bool)
 
         # Dynamically determine extent
-        y_min, y_max = coords[:, 0].min(), coords[:, 0].max()
-        x_min, x_max = coords[:, 1].min(), coords[:, 1].max()
+        y_min, y_max = min(self.yrange[0], coords[:, 0].min()), max(self.yrange[1], coords[:, 0].max())
+        x_min, x_max = min(self.xrange[0], coords[:, 1].min()), max(self.xrange[1], coords[:, 1].max())
         
         num_blocks_removed = random.randint(*self.nblocks)
         for _ in range(num_blocks_removed):
