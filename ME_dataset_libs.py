@@ -130,8 +130,8 @@ class MaxRegionCrop:
 ## This just takes a 256x128 subimage from the transformed block
 class RandomCrop:
     def __init__(self, new_x, new_y, clip=5):
-        self.new_y = new_x
-        self.new_x = new_y
+        self.new_y = new_y
+        self.new_x = new_x
         self.clip = clip
 
     def __call__(self, coords, feats):
@@ -594,7 +594,7 @@ def cat_ME_collate_fn(batch):
     # Concatenate all lists
     cat_bfeats = torch.from_numpy(np.concatenate(aug1_feats+aug2_feats, 0)).float()
 
-    return cat_bcoords, cat_bfeats
+    return cat_bcoords, cat_bfeats, len(raw_feats)*2
 
 
 class SingleModuleImage2D_solo_ME(Dataset):
