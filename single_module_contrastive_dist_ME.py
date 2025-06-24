@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg
-from ME_NN_libs import ContrastiveEncoderME
+from ME_NN_libs import ContrastiveEncoderME, ContrastiveEncoderShallowME
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -199,7 +199,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
         encoder.train()
         
         # Iterate over batches of images with the dataloader
-        for cat_bcoords, cat_bfeats in train_loader:
+        for cat_bcoords, cat_bfeats, this_batch_size in train_loader:
 
             ## Send to the device, then make the sparse tensors
             cat_bcoords = cat_bcoords.to(device, non_blocking=True)
@@ -207,10 +207,11 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
             cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
 
             ## Now do the forward passes
-            encoded_batch = encoder(cat_batch)
+            encoded_batch = encoder(cat_batch, this_batch_size)
             
             # Evaluate losses
-            tot_loss = loss_fn(encoded_batch.F)
+            if hasattr(encoded_batch, 'F'): tot_loss = loss_fn(encoded_batch.F)
+            else: tot_loss = loss_fn(encoded_batch) 
 
             # Backward pass
             optimizer.zero_grad()
@@ -281,7 +282,8 @@ if __name__ == '__main__':
     parser.add_argument('--aug_type', type=str, default=None, nargs='?')
     parser.add_argument('--batch_size', type=int, default=512, nargs='?')
     parser.add_argument('--weight_decay', type=float, default=0, nargs='?')
-
+    parser.add_argument('--arch', type=str, default=None, nargs='?')
+    
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
@@ -301,6 +303,9 @@ if __name__ == '__main__':
                                                      max_events=args.nevents)
     ## Only one architecture for now
     enc = ContrastiveEncoderME
+
+    if args.arch == "shallow":
+        enc = ContrastiveEncoderShallowME
 
     latent_loss = NTXentMerged
     if args.latent_loss == 'NTXentMergedTopTenNeg':
