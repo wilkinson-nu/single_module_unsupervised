@@ -351,7 +351,7 @@ class ContrastiveEncoderME(nn.Module):
                     nn.init.constant_(m.bn.bias, 0)
                     m.track_running_stats = False
                     
-    def forward(self, x):
+    def forward(self, x, batch_size):
         x = self.encoder_cnn(x)
         x = self.encoder_lin(x)
         return x
@@ -439,7 +439,7 @@ class ContrastiveEncoderShallowME(nn.Module):
     def forward(self, x, batch_size):
         x = self.encoder_cnn(x)
         # Convert sparse tensor to dense
-        dense,_,_ = x.dense(torch.Size([batch_size, self.feature_channels, 8, 4]))
+        dense,_,_ = x.dense(shape=torch.Size([batch_size, self.feature_channels, 8, 4]))
         #  dense = self.to_dense(x)
         flat = dense.flatten(start_dim=1)     # [B, C * 8 * 4]
         out = self.encoder_lin(flat)          # Final embedding
