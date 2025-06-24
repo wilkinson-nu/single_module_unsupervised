@@ -129,9 +129,9 @@ class MaxRegionCrop:
 
 ## This just takes a 256x128 subimage from the transformed block
 class RandomCrop:
-    def __init__(self, clip=5):
-        self.new_y = 256
-        self.new_x = 128  
+    def __init__(self, new_x, new_y, clip=5):
+        self.new_y = new_x
+        self.new_x = new_y
         self.clip = clip
 
     def __call__(self, coords, feats):
@@ -224,33 +224,9 @@ class RandomShear2D:
 
 ## A function to randomly remove some number of blocks of size
 ## This has to be called before the cropping as it uses the original image size
-class RandomBlockZero:
-    def __init__(self, max_blocks=4, block_size=6):
-        self.max_blocks = max_blocks
-        self.block_size = block_size
-        self.xmax = 140
-        self.ymax = 280
-
-    def __call__(self, coords, feats):
-
-        combined_mask = np.full(feats.size, True, dtype=bool)
-
-        num_blocks_removed = random.randint(0, self.max_blocks)
-        for _ in range(num_blocks_removed):
-            this_size = self.block_size
-            block_x = random.randint(0, self.xmax - this_size - 1)
-            block_y = random.randint(0, self.ymax - this_size - 1)
-
-            mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+this_size)) \
-                   & (coords[:,1] > block_x) & (coords[:,1] < (block_x+this_size)))
-            combined_mask = np.logical_and(combined_mask, mask)
-
-        ## Need to copy the array
-        new_coords = coords.copy()
-        new_feats = feats.copy()
-        return new_coords[combined_mask], new_feats[combined_mask]
-
 ## Updated function to remove random blocks
+## The x and y ranges can be extended if the other augmentations have extended the image
+## These set limits prevent a small image from being entirely blocked out
 class RandomBlockZeroImproved:
     def __init__(self, nblocks=[0,6], block_range=[0,10], xrange=[0,140], yrange=[0,280]):
         self.nblocks = nblocks
@@ -351,49 +327,107 @@ class RandomElasticDistortion2D:
 
     
 ## Apply distortions in a regular grid, with random strength at each point up to some maximum, smoothed by some amount
+## Cell size is the size of the distortion grid (in pixels, assumed square)
+## Distortion strength is the same
 class RandomGridDistortion2D:
-    def __init__(self, grid_size, distortion_strength):
-        """
-        Initializes the GridDistortion2D transformation.
-
-        :param grid_size: Size of the grid (number of grid points along each axis).
-        :param distortion_strength: Maximum displacement for the grid points.
-        """
-        self.grid_size = grid_size
-        self.distortion_strength = distortion_strength
-        self.height = 280
-        self.width = 140
+    def __init__(self, cell_size=50, distortion=5, padding_cells=2):
+        self.cell_size = cell_size
+        self.distortion = distortion
+        self.padding_cells = padding_cells
 
     def __call__(self, coords, feats):
+        coords = np.round(coords).astype(np.int32)
+        y_min, y_max = coords[:, 0].min(), coords[:, 0].max()
+        x_min, x_max = coords[:, 1].min(), coords[:, 1].max()
+        height = y_max - y_min + 1
+        width = x_max - x_min + 1
 
-        # Create a grid of points
-        grid_x, grid_y = np.meshgrid(
-            np.linspace(0, self.width, self.grid_size),
-            np.linspace(0, self.height, self.grid_size)
+        # Control grid size covering image + padding
+        grid_h_img = max(2, int(np.ceil(height / self.cell_size)))
+        grid_w_img = max(2, int(np.ceil(width / self.cell_size)))
+
+        grid_h = grid_h_img + 2 * self.padding_cells
+        grid_w = grid_w_img + 2 * self.padding_cells
+
+        # Create control grid pixel coords
+        control_y = np.linspace(
+            y_min - self.padding_cells * self.cell_size,
+            y_max + self.padding_cells * self.cell_size,
+            grid_h
         )
-                     
-        # Create random displacements for the grid points
-        displacement_x = np.random.uniform(-self.distortion_strength, self.distortion_strength, grid_x.shape)
-        displacement_y = np.random.uniform(-self.distortion_strength, self.distortion_strength, grid_y.shape)
-        
-        # Apply the displacements to the grid points
-        distorted_map_x = (grid_x + displacement_x)/ self.width * (self.grid_size - 1)
-        distorted_map_y = (grid_y + displacement_y)/ self.height * (self.grid_size - 1)
-        
-        # Normalize coords to the grid size
-        norm_y = coords[:, 0] / self.height * (self.grid_size - 1)
-        norm_x = coords[:, 1] / self.width * (self.grid_size - 1)
-                
-        # Interpolate the distorted coordinates using map_coordinates
-        distorted_x = map_coordinates(distorted_map_x, [norm_y, norm_x], order=1, mode='reflect')
-        distorted_y = map_coordinates(distorted_map_y, [norm_y, norm_x], order=1, mode='reflect')
-        
-        # Combine distorted coordinates
-        distorted_coords = np.stack((distorted_y * self.height / (self.grid_size - 1),
-                                    distorted_x * self.width / (self.grid_size - 1)), axis=-1)
-        
+        control_x = np.linspace(
+            x_min - self.padding_cells * self.cell_size,
+            x_max + self.padding_cells * self.cell_size,
+            grid_w
+        )
+
+        grid_x, grid_y = np.meshgrid(control_x, control_y)
+
+        # Random displacement per control point
+        displacement_x = np.random.uniform(-self.distortion, self.distortion, (grid_h, grid_w))
+        displacement_y = np.random.uniform(-self.distortion, self.distortion, (grid_h, grid_w))
+
+        distorted_x = grid_x + displacement_x
+        distorted_y = grid_y + displacement_y
+
+        # Normalize coords into control grid index space (before random shift)
+        coords_norm_x = (coords[:, 1] - control_x[0]) / (control_x[-1] - control_x[0]) * (grid_w - 1)
+        coords_norm_y = (coords[:, 0] - control_y[0]) / (control_y[-1] - control_y[0]) * (grid_h - 1)
+
+        # Interpolate distorted control points at shifted coords
+        interp_x = map_coordinates(distorted_x, [coords_norm_y, coords_norm_x], order=1, mode='reflect')
+        interp_y = map_coordinates(distorted_y, [coords_norm_y, coords_norm_x], order=1, mode='reflect')
+
+        distorted_coords = np.stack((interp_y, interp_x), axis=-1)
+
         return distorted_coords, feats
-    
+
+class DoNothing:
+    def __call__(self, coords, feats):
+        return coords, feats
+
+class SemiRandomCrop:
+    def __init__(self, new_x, new_y, clip_x=20, clip_y=40, offset_y=20):
+        self.new_y = new_y
+        self.new_x = new_x
+        self.clip_x = clip_x
+        self.clip_y = clip_y
+        self.offset_y = offset_y
+        
+
+    def __call__(self, coords, feats):
+        new_feats = feats.copy()
+        y_round = np.round(coords[:, 0]).astype(np.int32)
+        x_round = np.round(coords[:, 1]).astype(np.int32)
+        new_coords = np.stack([y_round, x_round], axis=-1)
+                
+        y_max = np.ceil(np.percentile(y_round,95))
+        y_min = np.floor(np.percentile(y_round,5))
+        x_max = np.max(x_round)
+        x_min = np.min(x_round)
+        
+        shift_x, shift_y = 0, 0
+        
+        if x_max - x_min >= self.new_x:
+            ## If the transformed image is wider than the cropped image, ensure it's "through-going"
+            shift_x = random.randint(self.new_x-x_max, -1*x_min)
+        else: 
+            ## If not, randomly place it in the image, with a small region "clipped"
+            shift_x = random.randint(-x_min -self.clip_x, self.new_x-x_max + self.clip_x)
+        ## y has to be treated differently, because the bottom is far more important
+        if y_max - y_min >= self.new_y:
+            shift_y = random.randint(-y_min-self.clip_y+self.offset_y, -y_min+self.clip_y+self.offset_y)
+        else: 
+            ## 
+            shift_y = random.randint(-y_min-self.clip_y+self.offset_y, self.new_y-y_max+self.clip_y+self.offset_y)
+
+        new_coords = new_coords + np.array([shift_y, shift_x])        
+        mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_y)) \
+             & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_x))
+                
+        return new_coords[mask], new_feats[mask]
+        
+
 class BilinearInterpolation:
     def __init__(self, threshold=0.04):
         self.height=280
@@ -659,74 +693,60 @@ def make_dense_array(coords, feats, max_i=256, max_j=128):
 
 
 ## Just a big function to return a set of transforms, to be returned by name
-def get_transform(aug_type=None):
+def get_transform(det="single", aug_type=None):
 
+    ThisCrop = RandomCrop
+    x_max = 128
+    y_max = 256
+    
+    if det == "fsd":
+        ThisCrop = SemiRandomCrop
+        x_max=256
+        y_max=512
+        
     if aug_type == "block10x10":
         return transforms.Compose([
-            RandomGridDistortion2D(5,5),
+            RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1),
-	    RandomHorizontalFlip(),
-	    RandomRotation2D(-10,10),
-	    RandomBlockZeroImproved([0,10], [5,10]),
+    	    RandomHorizontalFlip(),
+    	    RandomRotation2D(-10,10),
+    	    RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             RandomScaleCharge(0.02),
             RandomJitterCharge(0.02),
-	    RandomCrop()
+    	    ThisCrop(x_max, y_max)
         ])
     if aug_type == "bigmodblock10x10":
         return transforms.Compose([
-	    RandomGridDistortion2D(5,5),
+    	    RandomGridDistortion2D(),
             RandomShear2D(0.2, 0.2),
             RandomHorizontalFlip(),
             RandomRotation2D(-30,30),
-            RandomBlockZeroImproved([0,10], [5,10]),
+            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             RandomScaleCharge(0.1),
             RandomJitterCharge(0.1),
-            RandomCrop()
+            ThisCrop(x_max, y_max)
         ])
     if aug_type == "unitcharge":
         return transforms.Compose([
-            RandomGridDistortion2D(5,5),
+            RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1),
             RandomHorizontalFlip(),
             RandomRotation2D(-10,10),
-            RandomBlockZero(5, 6),
-            RandomCrop(),
+            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
+            ThisCrop(x_max, ymax),
             ConstantCharge()
-        ])
-    if aug_type == "bigmod":
-        return transforms.Compose([
-            RandomGridDistortion2D(5,5),
-            RandomShear2D(0.2, 0.2),
-            RandomHorizontalFlip(),
-            RandomRotation2D(-30,30),
-            RandomBlockZero(5, 6),
-            RandomScaleCharge(0.1),
-            RandomJitterCharge(0.1),
-            RandomCrop()
-        ])
-    if aug_type == "bigbilin":
-        return transforms.Compose([
-            RandomGridDistortion2D(5,5),
-            RandomShear2D(0.2, 0.2),
-            RandomHorizontalFlip(),
-            RandomRotation2D(-30,30),
-            RandomBlockZero(5, 6),
-            BilinearInterpolation(0.05),
-            RandomScaleCharge(0.1),
-            RandomJitterCharge(0.1),
-            RandomCrop()
         ])
 
     ## If not, return the default
     return transforms.Compose([
-	RandomGridDistortion2D(5,5),
-	RandomShear2D(0.1, 0.1),
-	RandomHorizontalFlip(),
-	RandomRotation2D(-10,10),
-	RandomBlockZero(5, 6),
-	RandomScaleCharge(0.02),
-	RandomJitterCharge(0.02),
-	RandomCrop()
-    ])
+    	RandomGridDistortion2D(),
+    	RandomShear2D(0.1, 0.1),
+    	RandomHorizontalFlip(),
+    	RandomRotation2D(-10,10),
+    	RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
+    	RandomScaleCharge(0.02),
+    	RandomJitterCharge(0.02),
+    	ThisCrop(x_max, y_max)
+        ])
 
     
