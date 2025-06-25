@@ -414,10 +414,12 @@ class ContrastiveEncoderShallowME(nn.Module):
         
         # Linear projection head (pure PyTorch)
         self.encoder_lin = nn.Sequential(
-            nn.Linear(self.feature_channels*8*4, self.feature_channels*2),
+            nn.Linear(self.feature_channels*8*4, self.feature_channels),
+            nn.BatchNorm1d(self.feature_channels),
             nn.SiLU(),
             nn.Dropout(drop_fract),
-            nn.Linear(self.feature_channels*2, self.feature_channels),
+            nn.Linear(self.feature_channels, self.feature_channels//4),
+            nn.BatchNorm1d(self.feature_channels//4),
             nn.SiLU(),
             nn.Dropout(drop_fract),
             nn.Linear(self.feature_channels, latent_dim),
