@@ -294,7 +294,7 @@ if __name__ == '__main__':
     for arg in vars(args): print(arg, getattr(args, arg))
 
     ## Get the augmentation from the argument name
-    aug_transform = get_transform(args.aug_type)
+    aug_transform = get_transform('single', args.aug_type)
     
     ## Get the concrete dataset
     train_dataset = SingleModuleImage2D_MultiHDF5_ME(args.indir, \
