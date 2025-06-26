@@ -13,10 +13,11 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import ConcatDataset
 
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg
-from ME_NN_libs import ContrastiveEncoderME, ContrastiveEncoderShallowME
+from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -259,7 +260,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser("NN training module")
 
     # Add arguments
-    parser.add_argument('--indir', type=str)
+    parser.add_argument('--data_dir', type=str)
     parser.add_argument('--nevents', type=int)
     parser.add_argument('--log', type=str)    
     parser.add_argument('--lr', type=float)
@@ -282,7 +283,13 @@ if __name__ == '__main__':
     parser.add_argument('--aug_type', type=str, default=None, nargs='?')
     parser.add_argument('--batch_size', type=int, default=512, nargs='?')
     parser.add_argument('--weight_decay', type=float, default=0, nargs='?')
+
+    ## This changes the architecture
     parser.add_argument('--arch', type=str, default=None, nargs='?')
+
+    ## For adding simulation files, frac_data is the fraction of nevents which should be simulation
+    parser.add_argument('--sim_dir', type=str, default=None, nargs='?')    
+    parser.add_argument('--frac_data', type=float, default=1.0, nargs='?')
     
     ## Restart option
     parser.add_argument('--restart', action='store_true')
@@ -297,10 +304,26 @@ if __name__ == '__main__':
     aug_transform = get_transform('fsd', args.aug_type)
     
     ## Get the concrete dataset
-    train_dataset = SingleModuleImage2D_MultiHDF5_ME(args.indir, \
+    ## train_dataset now has a mix of simulation and data, with a controllable fraction
+    nsim = 0
+    ndata = int(args.nevents*args.frac_data)
+    nsim = args.nevents - ndata
+
+    data_dataset = SingleModuleImage2D_MultiHDF5_ME(args.data_dir, \
                                                      nom_transform=DoNothing(), \
                                                      aug_transform=aug_transform, \
-                                                     max_events=args.nevents)
+                                                     max_events=ndata)
+    if nsim > 0:
+        print("Training with", ndata, "data and", nsim, "simulation events!")
+        sim_dataset = SingleModuleImage2D_MultiHDF5_ME(args.sim_dir, \
+                                                     nom_transform=DoNothing(), \
+                                                     aug_transform=aug_transform, \
+                                                     max_events=nsim)
+        train_dataset = ConcatDataset([data_dataset, sim_dataset])
+    else:
+        print("Training with", ndata, "data events!")
+        train_dataset = data_dataset
+
     ## Only one architecture for now
     enc = ContrastiveEncoderFSD
 
