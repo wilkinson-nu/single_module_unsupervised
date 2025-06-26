@@ -13,11 +13,11 @@ import numpy as np
 
 ## This is a transformation for the nominal image
 class CenterCrop:
-    def __init__(self):
-        self.orig_y = 280
-        self.orig_x = 140
-        self.new_y = 256
-        self.new_x = 128
+    def __init__(self, orig_size=(140,280), new_size=(128,256)):
+        self.orig_x = orig_size[0]
+        self.orig_y = orig_size[1]
+        self.new_x = new_size[0]
+        self.new_y = new_size[1]
         self.pad_y = (self.orig_y - self.new_y)/2
         self.pad_x = (self.orig_x - self.new_x)/2
 
@@ -74,11 +74,11 @@ class MaxNonZeroCrop:
         return cropped_coords, cropped_feats
 
 class MaxRegionCrop:
-    def __init__(self):
-        self.orig_y = 280
-        self.orig_x = 140
-        self.new_y = 256
-        self.new_x = 128
+    def __init__(self, orig_size=(140,280), new_size=(128,256)):
+        self.orig_x = orig_size[0]
+        self.orig_y = orig_size[1]
+        self.new_x = new_size[0]
+        self.new_y = new_size[1]
 
         # Predefined regions (center, corners)
         self.regions = {
@@ -637,6 +637,9 @@ class SingleModuleImage2D_solo_ME(Dataset):
         data = group['data'][:]
         row = group['row'][:]
         col = group['col'][:]
+        # Check for 'label' dataset and fall back if missing
+        label = -1
+        if 'label' in group: label = group['label'][()]
 
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
@@ -648,11 +651,11 @@ class SingleModuleImage2D_solo_ME(Dataset):
         if self.return_metadata:
             event_id = group.attrs.get("event_id", this_idx)
             filename = os.path.basename(self.hdf5_files[file_index])
-            return coords, feats, filename, event_id        
-        return coords, feats
+            return coords, feats, label, filename, event_id        
+        return coords, feats, label
     
 def solo_ME_collate_fn(batch):
-    coords, feats = zip(*batch)
+    coords, feats, labels = zip(*batch)
     
     # Create batched coordinates for the SparseTensor input
     bcoords  = ME.utils.batched_coordinates(coords)
@@ -660,14 +663,14 @@ def solo_ME_collate_fn(batch):
     # Concatenate all lists
     bfeats  = torch.from_numpy(np.concatenate(feats, 0)).float()
     
-    return bcoords, bfeats
+    return bcoords, bfeats, labels
 
 
 def solo_ME_collate_fn_with_meta(batch):
-    coords, feats, filenames, event_ids = zip(*batch)
+    coords, feats, labels, filenames, event_ids = zip(*batch)
     bcoords = ME.utils.batched_coordinates(coords)
     bfeats = torch.from_numpy(np.concatenate(feats, 0)).float()
-    return bcoords, bfeats, filenames, event_ids
+    return bcoords, bfeats, labels, filenames, event_ids
 
 
 ## Utility functions to make a dense image
