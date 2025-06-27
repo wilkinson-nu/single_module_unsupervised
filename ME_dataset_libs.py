@@ -736,9 +736,20 @@ def get_transform(det="single", aug_type=None):
             RandomHorizontalFlip(),
             RandomRotation2D(-10,10),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
-            ThisCrop(x_max, ymax),
+            ThisCrop(x_max, y_max),
             ConstantCharge()
         ])
+    if aug_type == "bigunit":
+        return transforms.Compose([
+            RandomGridDistortion2D(),
+            RandomShear2D(0.2, 0.2),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-30,30),
+            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
+            ThisCrop(x_max, y_max),
+            ConstantCharge()
+	])
+
 
     ## If not, return the default
     return transforms.Compose([
