@@ -136,16 +136,17 @@ class RandomCrop:
 
     def __call__(self, coords, feats):
         new_feats = feats.copy()
-        y_round, x_round = np.round(coords[:, 0]).astype(int), np.round(coords[:, 1]).astype(int)
+        y_round = np.round(coords[:, 0]).astype(np.int32)
+        x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
-                
+        
         y_max = np.max(y_round)
         y_min = np.min(y_round)
         x_max = np.max(x_round)
         x_min = np.min(x_round)
         
         shift_x, shift_y = 0, 0
-        
+            
         if x_max - x_min >= self.new_x:
             ## If the transformed image is wider than the cropped image, ensure it's "through-going"
             shift_x = random.randint(self.new_x-x_max, -1*x_min)
@@ -208,8 +209,6 @@ class RandomShear2D:
         self.max_shear_y = max_shear_y
 
     def __call__(self, coords, feats):
-        """Apply a random rotation to 2D coordinates and return the rotated coordinates with features."""
-        # Generate a random rotation angle
         shear_x = np.random.uniform(-self.max_shear_x, self.max_shear_x)
         shear_y = np.random.uniform(-self.max_shear_y, self.max_shear_y)
 
@@ -220,6 +219,39 @@ class RandomShear2D:
 
         rotated_coords = coords @ shear_matrix
         return rotated_coords, feats
+
+class RandomPixelNoise2D:
+    def __init__(self, poisson_mean=10, image_bounds=(0, 256, 0, 512)):
+        self.poisson_mean = poisson_mean
+        self.noise_value = 1
+        self.image_bounds = image_bounds
+
+    def __call__(self, coords, feats):
+        coords = np.round(coords).astype(np.int32)
+
+        # Determine bounds from input data or fixed override
+        x_min, x_max, y_min, y_max = self.image_bounds
+
+        # Sample number of noise pixels to add
+        n_noise = np.random.poisson(self.poisson_mean)
+        if n_noise == 0:
+            return coords, feats
+
+        # Generate unique random (y, x) pairs inside the image bounds
+        y_noise = np.random.randint(y_min, y_max, size=n_noise)
+        x_noise = np.random.randint(x_min, x_max, size=n_noise)
+        noise_coords = np.stack([y_noise, x_noise], axis=1)
+
+        # If this is applied when constant charge isn't used, will have to be careful about overwriting real pixels with noise
+
+        # Generate corresponding features
+        noise_feats = np.full((len(noise_coords), feats.shape[1]), self.noise_value, dtype=feats.dtype)
+
+        # Append to input
+        new_coords = np.concatenate([coords, noise_coords], axis=0)
+        new_feats = np.concatenate([feats, noise_feats], axis=0)
+
+        return new_coords, new_feats
 
 
 ## A function to randomly remove some number of blocks of size
@@ -739,6 +771,29 @@ def get_transform(det="single", aug_type=None):
             ThisCrop(x_max, y_max),
             ConstantCharge()
         ])
+    if aug_type == "unitnoise10":
+        return transforms.Compose([
+            RandomGridDistortion2D(),
+            RandomShear2D(0.1, 0.1),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10),
+            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
+            ThisCrop(x_max, y_max),
+            ConstantCharge(),
+            RandomPixelNoise2D(10)
+	])
+    if aug_type == "unitnoise30":
+        return transforms.Compose([
+            RandomGridDistortion2D(),
+            RandomShear2D(0.1, 0.1),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10),
+            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
+            ThisCrop(x_max, y_max),
+            ConstantCharge(),
+            RandomPixelNoise2D(30)
+	])
+
     if aug_type == "bigunit":
         return transforms.Compose([
             RandomGridDistortion2D(),
