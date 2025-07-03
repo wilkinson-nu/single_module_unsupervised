@@ -296,15 +296,15 @@ def make_images(input_file_name, output_file_name):
         ## Get an image with 256x800 pixels
         this_sparse = make_image(these_hits)
 
-        nhits_list .append(np.count_nonzero(this_sparse.data))
-        label_list .append(this_label.value)
-        
         ## Check whether this is a "good image" (very arbitrary for now)
         ## Really this is removing the large number of uninteresting images with few hits
         if np.count_nonzero(this_sparse.data) < 100: continue
 
+        ## If we've passed all cuts, fill
         sparse_image_list .append(this_sparse)
         event_id_list     .append(ev_id)
+        nhits_list        .append(np.count_nonzero(this_sparse.data))
+        label_list        .append(this_label.value)
 
         ## For interactive label debugging
         if show_plots and this_label in [Label.NOLABEL]:
