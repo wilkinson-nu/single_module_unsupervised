@@ -166,7 +166,13 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
                                                    last_epoch=-1,
                                                    verbose=False)
     if sched == "plateau":
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                         mode='min',
+                                                         factor=0.2,
+                                                         patience=1,
+                                                         cooldown=2,
+                                                         threshold=2e-3,
+                                                         threshold_mode='rel')
 
     
     ## Load the checkpoint if one has been given
