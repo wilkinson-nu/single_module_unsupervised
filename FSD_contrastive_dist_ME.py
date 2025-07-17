@@ -119,7 +119,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
                  batch_size, sched, state_file=None, pretrained=None, restart=False):
     torch.autograd.set_detect_anomaly(True)
     ## For timing
-    tstart = time.process_time()
+    tstart = time.time()
 
     ## For parallel work
     setup(rank, world_size)
@@ -166,7 +166,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
                                                    last_epoch=-1,
                                                    verbose=False)
     if sched == "plateau":
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
     
     ## Load the checkpoint if one has been given
@@ -225,12 +225,15 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
             # Manage CUDA memory for ME
             torch.cuda.empty_cache()
             
-        ## See if we have an LR scheduler...
-        if scheduler: scheduler.step()
         dist.all_reduce(tot_loss_tensor, op=dist.ReduceOp.SUM)
         
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size) 
-        
+
+        ## See if we have an LR scheduler...
+        if scheduler:
+            if sched == "plateau": scheduler.step(av_tot_loss)
+            else: scheduler.step()
+
         ## Reporting, but only for rank 0
         if rank==0:
             if log_dir: 
@@ -238,7 +241,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
             print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss)
-            print("Time taken:", time.process_time() - tstart)
+            print("Time taken:", time.time() - tstart)
 
         ## For checkpointing
         if rank==0 and iteration%50 == 0 and iteration != 0:
