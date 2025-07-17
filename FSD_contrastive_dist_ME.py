@@ -171,7 +171,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
                                                          factor=0.2,
                                                          patience=1,
                                                          cooldown=2,
-                                                         threshold=2e-3,
+                                                         threshold=5e-3,
                                                          threshold_mode='rel')
 
     
