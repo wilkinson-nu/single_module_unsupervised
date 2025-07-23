@@ -14,10 +14,12 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data import ConcatDataset
+from torch import nn
 
 ## Includes from my libraries for this project
-from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg
+from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
 from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
+from ME_NN_libs import CCEncoderFSD, ProjectionHead, ClusteringHead
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -67,23 +69,29 @@ def manage_cuda_memory(rank, gpu_threshold):
     if torch.cuda.memory_allocated(rank) > gpu_threshold:
         torch.cuda.empty_cache()
 
-def load_pretrained(encoder, file_name):
+def load_pretrained(encoder, proj_head, clust_head, file_name):
     checkpoint = torch.load(file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
+    proj_head.module.load_state_dict(checkpoint['proj_head_state_dict'])
+    clust_head.module.load_state_dict(checkpoint['clust_head_state_dict'])    
     return
 
-def load_checkpoint(encoder, optimizer, state_file_name):
+def load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
+    proj_head.module.load_state_dict(checkpoint['proj_head_state_dict'])
+    clust_head.module.load_state_dict(checkpoint['clust_head_state_dict']) 
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     torch.set_rng_state(checkpoint['rng_state'].cpu())
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
     return checkpoint['epoch'] + 1
 
-def save_checkpoint(encoder, optimizer, state_file_name, iteration, loss):
+def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, iteration, loss):
     torch.save({
         'epoch': iteration,
         'encoder_state_dict': encoder.module.state_dict(),
+        'proj_head_state_dict': proj_head.module.state_dict(),
+        'clust_head_state_dict': clust_head.module.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
@@ -114,8 +122,8 @@ def get_act_from_string(act_name):
 
     
 ## Wrapped training function
-def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name, latent_act_name, \
-                 nchan, latent, lr, weight_decay, dropout, cont_loss, ntx_temp, train_dataset, \
+def run_training(rank, world_size, num_iterations, log_dir, enc, enc_act_name, \
+                 nchan, nlatent, nclusters, lr, weight_decay, dropout, proj_loss, proj_temp, clust_loss, clust_temp, train_dataset, \
                  batch_size, sched, state_file=None, pretrained=None, restart=False):
     torch.autograd.set_detect_anomaly(True)
     ## For timing
@@ -127,11 +135,15 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
     torch.cuda.set_device(rank)
     device = torch.device(f'cuda:{rank}')
 
-    ## Setup the models
-    hidden_act_fn=get_act_from_string(hidden_act_name)
-    latent_act_fn=get_act_from_string(latent_act_name)
+    ## Set up the heads
+    hidden_act_fn = nn.SiLU
+    latent_act_fn=nn.Tanh
+    proj_head = ProjectionHead(nchan, nlatent, hidden_act_fn, latent_act_fn)
+    clust_head = ClusteringHead(nchan, nclusters, hidden_act_fn)
 
-    encoder = enc(nchan, latent, hidden_act_fn, latent_act_fn, dropout)
+    ## Setup the encoder
+    enc_act_fn=get_act_from_string(enc_act_name)
+    encoder = enc(nchan, enc_act_fn, dropout)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
     
     ## Set up the distributed dataset
@@ -142,16 +154,23 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
         if log_dir: writer = SummaryWriter(log_dir=log_dir)
 
     ## Set up the loss functions
-    loss_fn = cont_loss(ntx_temp)
+    proj_loss_fn = proj_loss(proj_temp)
+    clust_loss_fn = clust_loss(clust_temp, 0.1)
     
     encoder.to(device)
+    proj_head.to(device)
+    clust_head.to(device)
     
     ## Sort out parallel models (e.g., one is sent to each GPU)
     encoder = DDP(encoder, device_ids=[rank])
+    proj_head = DDP(proj_head, device_ids=[rank])
+    clust_head = DDP(clust_head, device_ids=[rank])
 
     ## Sort out the optimizer (one for each GPU...)
     params_to_optimize = [
         {'params': encoder.parameters()},
+        {'params': proj_head.parameters()},
+        {'params': clust_head.parameters()},
     ]
     optimizer = torch.optim.AdamW(params_to_optimize, lr=lr, weight_decay=weight_decay)
 
@@ -169,7 +188,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                          mode='min',
                                                          factor=0.2,
-                                                         patience=1,
+                                                         patience=0,
                                                          cooldown=2,
                                                          threshold=5e-3,
                                                          threshold_mode='rel')
@@ -181,7 +200,7 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
         if not state_file:
             if rank==0: print("Restart requested, but no state file provided, aborting")
             sys.exit()
-        start_iteration = load_checkpoint(encoder, optimizer, state_file)
+        start_iteration = load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file)
         if rank==0: print("Restarting from iteration", start_iteration)
 
     ## Load the pretrained autoencoder if given
@@ -199,7 +218,10 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
         # Ensure shuffling with the sampler each epoch
         train_loader.sampler.set_epoch(iteration)
         
-        tot_loss_tensor = torch.tensor(0.0, device=device)        
+        tot_loss_tensor = torch.tensor(0.0, device=device)  
+        proj_loss_tensor = torch.tensor(0.0, device=device)        
+        clust_loss_tensor = torch.tensor(0.0, device=device)        
+
         nbatches   = len(train_loader)
         
         # Set train mode for both the encoder and the decoder
@@ -215,10 +237,12 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
 
             ## Now do the forward passes
             encoded_batch = encoder(cat_batch, this_batch_size)
-            
-            # Evaluate losses
-            if hasattr(encoded_batch, 'F'): tot_loss = loss_fn(encoded_batch.F)
-            else: tot_loss = loss_fn(encoded_batch) 
+            proj_batch = proj_head(encoded_batch.F)
+            clust_batch = clust_head(encoded_batch.F)
+
+            proj_loss = proj_loss_fn(proj_batch)
+            clust_loss = clust_loss_fn(clust_batch)
+            tot_loss = proj_loss + clust_loss
 
             # Backward pass
             optimizer.zero_grad()
@@ -227,13 +251,19 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
 
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
+            proj_loss_tensor += proj_loss.detach()
+            clust_loss_tensor += clust_loss.detach()
             
             # Manage CUDA memory for ME
             torch.cuda.empty_cache()
             
         dist.all_reduce(tot_loss_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(proj_loss_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(clust_loss_tensor, op=dist.ReduceOp.SUM)
         
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size) 
+        av_proj_loss = proj_loss_tensor.item() / (nbatches * world_size) 
+        av_clust_loss = clust_loss_tensor.item() / (nbatches * world_size) 
 
         ## See if we have an LR scheduler...
         if scheduler:
@@ -244,18 +274,20 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
         if rank==0:
             if log_dir: 
                 writer.add_scalar('loss/total', av_tot_loss, iteration)              
+                writer.add_scalar('loss/proj', av_proj_loss, iteration)              
+                writer.add_scalar('loss/clust', av_clust_loss, iteration)              
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
-            print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss)
+            print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss, "(",av_proj_loss,"+", av_clust_loss,")")
             print("Time taken:", time.time() - tstart)
 
         ## For checkpointing
-        if rank==0 and iteration%50 == 0 and iteration != 0:
-            save_checkpoint(encoder, optimizer, state_file+".check"+str(iteration), iteration, av_tot_loss)
+        if rank==0 and iteration%10 == 0 and iteration != 0:
+            save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file+".check"+str(iteration), iteration, av_tot_loss)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, optimizer, state_file, iteration, av_tot_loss)
+        save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file, iteration, av_tot_loss)
         if log_dir: writer.close()
 
     ## Clear things up
@@ -280,19 +312,22 @@ if __name__ == '__main__':
     
     ## Optional
     parser.add_argument('--pretrained', type=str, default=None, nargs='?')
-    parser.add_argument('--latent', type=int, default=8, nargs='?')
+    parser.add_argument('--latent', type=int, default=128, nargs='?')
+    parser.add_argument('--nclusters', type=int, default=20, nargs='?')
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
     parser.add_argument('--scheduler', type=str, default=None, nargs='?')
-    parser.add_argument('--latent_act', type=str, default="relu", nargs='?')
-    parser.add_argument('--hidden_act', type=str, default="tanh", nargs='?')
+    parser.add_argument('--enc_act', type=str, default="silu", nargs='?')
     parser.add_argument('--dropout', type=float, default=0, nargs='?')
-    parser.add_argument('--latent_loss', type=str, default=None, nargs='?')
-    parser.add_argument('--ntx_temp', type=float, default=0.5, nargs='?')
+    parser.add_argument('--proj_loss', type=str, default=None, nargs='?')
+    parser.add_argument('--proj_temp', type=float, default=0.5, nargs='?')
     parser.add_argument('--aug_type', type=str, default=None, nargs='?')
     parser.add_argument('--batch_size', type=int, default=512, nargs='?')
     parser.add_argument('--weight_decay', type=float, default=0, nargs='?')
 
+    ## With the new clustering loss
+    parser.add_argument('--clust_temp', type=float, default=0.5, nargs='?')    
+    
     ## This changes the architecture
     parser.add_argument('--arch', type=str, default=None, nargs='?')
 
@@ -334,29 +369,34 @@ if __name__ == '__main__':
         train_dataset = data_dataset
 
     ## Only one architecture for now
-    enc = ContrastiveEncoderFSD
+    enc = CCEncoderFSD
 
-    if args.arch == "shallow":
-        enc = ContrastiveEncoderShallowFSD
+    #if args.arch == "shallow":
+    #    enc = ContrastiveEncoderShallowFSD
 
-    latent_loss = NTXentMerged
-    if args.latent_loss == 'NTXentMergedTopTenNeg':
-        latent_loss = NTXentMergedTopTenNeg
+    ## Sort out the loss functions
+    proj_loss = NTXentMerged
+    if args.proj_loss == 'NTXentMergedTopTenNeg':
+        proj_loss = NTXentMergedTopTenNeg
+
+    clust_loss = ClusteringLossMerged
         
     mp.spawn(run_training,
              args=(args.world_size,
                    args.nstep,
                    args.log,
                    enc,
-                   args.hidden_act,
-                   args.latent_act,
+                   args.enc_act,
                    args.nchan,
                    args.latent,
+                   args.nclusters,
                    args.lr,
                    args.weight_decay,
                    args.dropout,
-                   latent_loss,
-                   args.ntx_temp,
+                   proj_loss,
+                   args.proj_temp,
+                   clust_loss,
+                   args.clust_temp,
                    train_dataset,
                    args.batch_size,
                    args.scheduler,
