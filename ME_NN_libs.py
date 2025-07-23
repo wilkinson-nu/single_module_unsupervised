@@ -1,88 +1,47 @@
 from torch import nn
 import torch
 import MinkowskiEngine as ME
+import math
 
-## Calculate the average distance between pairs in the latent space
-class EuclideanDistLoss(torch.nn.Module):
-    def __init__(self):
-        super(EuclideanDistLoss, self).__init__()
-        
-    def forward(self, latent1, latent2):
-        # Compute the Euclidean distance between each pair of corresponding tensors in the batch
-        norm_lat1 = nn.functional.normalize(latent1, p=2, dim=1)
-        norm_lat2 = nn.functional.normalize(latent2, p=2, dim=1)
-        distances = torch.norm(norm_lat1 - norm_lat2, p=2, dim=1)
-
-        mod_penalty = torch.stack([item**2 for item in distances])
-        loss = mod_penalty.mean()
-        return loss
-    
-class CosDistLoss(torch.nn.Module):
-    def __init__(self):
-        super(CosDistLoss, self).__init__()
-        
-    def forward(self, latent1, latent2):
-        norm_lat1 = nn.functional.normalize(latent1, p=2, dim=1)
-        norm_lat2 = nn.functional.normalize(latent2, p=2, dim=1)
-                
-        sim = nn.functional.cosine_similarity(norm_lat1, norm_lat2, dim=1)
-        loss = 1 - sim.mean()
-        return loss
-
-## class NTXent(torch.nn.Module):
-##     def __init__(self, temperature=0.5):
-##         super(NTXent, self).__init__()
-##         self.temperature = temperature
-##         
-##     def forward(self, latent1, latent2):
-##         batch_size = latent1.shape[0]
-##         z_i = nn.functional.normalize(latent1, p=2, dim=1)
-##         z_j = nn.functional.normalize(latent2, p=2, dim=1)
-##         
-##         similarity_matrix = self.calc_similarity_batch(z_i, z_j)
-##         mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool)).float().to(similarity_matrix.device)
-## 
-##         sim_ij = torch.diag(similarity_matrix, batch_size)
-##         sim_ji = torch.diag(similarity_matrix, -batch_size)
-## 
-##         positives = torch.cat([sim_ij, sim_ji], dim=0)
-## 
-##         nominator = torch.exp(positives / self.temperature)
-##         denominator = mask*torch.exp(similarity_matrix / self.temperature)
-## 
-##         all_losses = -torch.log(nominator / torch.sum(denominator, dim=1))
-##         loss = torch.sum(all_losses) / (2 * self.batch_size)
-##         return loss
-    
-class NTXent(nn.Module):
-    def __init__(self, temperature=0.5):
+class ClusteringLossMerged(nn.Module):
+    def __init__(self, temperature=0.5, entropy_weight=1.0):
         super().__init__()
         self.temperature = temperature
+        self.entropy_weight = entropy_weight
 
-    def forward(self, emb_i, emb_j):
-        """
-        emb_i and emb_j are batches of embeddings, where corresponding indices are pairs
-        z_i, z_j as per SimCLR paper
-        """
-        batch_size = emb_i.shape[0]
-        z_i = nn.functional.normalize(emb_i, dim=1)
-        z_j = nn.functional.normalize(emb_j, dim=1)
-        
-        negatives_mask = (~torch.eye(batch_size * 2, batch_size * 2, dtype=bool, device=emb_i.device)).float()
-        representations = torch.cat([z_i, z_j], dim=0)
+    def forward(self, c_cat):
+        batch_size = c_cat.shape[0]//2
+        class_num = c_cat.shape[1]
+        c_i, c_j = c_cat[:batch_size], c_cat[batch_size:]
+
+        negatives_mask = (~torch.eye(batch_size*2, batch_size*2, dtype=bool, device=c_cat.device)).float()
+        representations = torch.cat([c_i, c_j], dim=0)
         similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
-        
+
         sim_ij = torch.diag(similarity_matrix, batch_size)
         sim_ji = torch.diag(similarity_matrix, -batch_size)
         positives = torch.cat([sim_ij, sim_ji], dim=0)
-        
+
         nominator = torch.exp(positives / self.temperature)
         denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
-    
+
         loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
-        loss = torch.sum(loss_partial) / (2 * batch_size)
+        loss = torch.sum(loss_partial) / (2*batch_size)
+
+        ## Now add the entropy term
+        p_i = c_i.mean(dim=0)
+        p_j = c_j.mean(dim=0)
+
+        # Compute entropy and normalize by log(K)
+        p_i = p_i/p_i.sum()
+        p_j = p_j/p_j.sum()
+
+        entropy_i = -torch.sum(p_i * torch.log(p_i + 1e-10))/math.log(class_num)
+        entropy_j = -torch.sum(p_j * torch.log(p_j + 1e-10))/math.log(class_num)
+
+        ne_loss = -0.5 * (entropy_i + entropy_j)
         
-        return loss
+        return loss + ne_loss
 
     
 class NTXentMerged(nn.Module):
@@ -154,87 +113,6 @@ class NTXentMergedTopTenNeg(nn.Module):
         loss = torch.sum(loss_partial) / (2*batch_size)
 
         return loss
-
-    
-## This is a loss function to deweight the penalty for getting blank pixels wrong
-class AsymmetricL2LossME(torch.nn.Module):
-    def __init__(self, nonzero_cost=2.0, zero_cost=1.0, batch_size=512):
-        super(AsymmetricL2LossME, self).__init__()
-        self.nonzero_cost = nonzero_cost
-        self.zero_cost = zero_cost
-        self.batch_size = batch_size
-    
-    def forward(self, pred, targ):
-        #diff = pred - targ
-        #loss = torch.sum(diff.F**2)
-        #return loss/512/128/256
-        
-        # Extract coordinates and features from both sparse tensors
-        pred_C = pred.C
-        pred_F = pred.F
-    
-        targ_C = targ.C
-        targ_F = targ.F
-        
-        _, idx, counts = torch.cat([pred_C, targ_C], dim=0).unique(dim=0, return_inverse=True, return_counts=True)
-        mask = torch.isin(idx, torch.where(counts.gt(1))[0])
-        
-        ## This is a safe alternative
-        gt_mask = counts.gt(1)
-        mask = gt_mask[idx]
-        pred_mask = mask[:pred_C.size(0)]
-        targ_mask = mask[pred_C.size(0):]
-               
-        indices_pred = torch.arange(pred_F.size(0), device='cuda')[pred_mask]
-        indices_targ = torch.arange(targ_F.size(0), device='cuda')[targ_mask]
-        
-        common_pred_F = pred_F.index_select(0, indices_pred)
-        common_targ_F = targ_F.index_select(0, indices_targ)
-        
-        ## These cause blocking synchronization calls
-        common_pred_F = pred_F[pred_mask]
-        common_targ_F = targ_F[targ_mask]
-        uncommon_pred_F = pred_F[~pred_mask]
-        uncommon_targ_F = targ_F[~targ_mask]
-       
-        common = torch.sum(self.nonzero_cost*(common_pred_F - common_targ_F)**2)
-        only_p = torch.sum(self.zero_cost*(uncommon_pred_F**2))
-        only_t = torch.sum(self.nonzero_cost*(uncommon_targ_F**2))
-        
-        return (common+only_p+only_t)/(self.batch_size*128*256)
-
-## This is a relic
-class ProjectionHead(nn.Module):
-    def __init__(self, dim, act_fn=ME.MinkowskiReLU):
-        super(ProjectionHead, self).__init__()
-
-        self.linear_proj = nn.Sequential(
-            ME.MinkowskiLinear(dim[0], dim[1], bias=False),
-            ME.MinkowskiBatchNorm(dim[1]),
-            act_fn(), 
-            ME.MinkowskiLinear(dim[1], dim[2], bias=False),
-            ME.MinkowskiBatchNorm(dim[2]),
-            act_fn(), 
-            ME.MinkowskiLinear(dim[2], dim[3], bias=False),
-            act_fn(), 
-        )
-        
-        self.initialize_weights()
-        
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, ME.MinkowskiLinear):
-                ## use xavier because it's a bounded activation function
-                # ME.utils.xavier_normal_(m.linear.weight)
-                ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity='relu')   
-            if isinstance(m, ME.MinkowskiBatchNorm):
-                nn.init.constant_(m.bn.weight, 1)
-                nn.init.constant_(m.bn.bias, 0)
-
-        
-    def forward(self, x):
-        x = self.linear_proj(x)
-        return x
 
 
 #### This is for contrastive only training
@@ -672,3 +550,158 @@ class ContrastiveEncoderShallowFSD(nn.Module):
         flat = dense.flatten(start_dim=1)     # [B, C * 8 * 4]
         out = self.encoder_lin(flat)          # Final embedding
         return out
+
+class CCEncoderFSD(nn.Module):
+    def __init__(self, 
+                 nchan : int,
+                 act_fn : object = ME.MinkowskiSiLU,
+                 drop_fract : float = 0):
+        super().__init__()
+        
+        self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16, nchan*32]
+        self.conv_kernel_size = 3
+        
+        ### Convolutional section
+        self.encoder_cnn = nn.Sequential(
+            ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 512x256 ==> 256x128
+            # ME.MinkowskiBatchNorm(self.ch[0]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            # ME.MinkowskiBatchNorm(self.ch[0]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            # ME.MinkowskiBatchNorm(self.ch[0]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 256x128 ==> 128x64
+            # ME.MinkowskiBatchNorm(self.ch[1]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            # ME.MinkowskiBatchNorm(self.ch[1]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            # ME.MinkowskiBatchNorm(self.ch[1]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 128x64 ==> 64x32
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 64x32 ==> 32x16
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 32x16 ==> 16x8
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[5], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 16x8 ==> 8x4
+            ME.MinkowskiBatchNorm(self.ch[5]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[5], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[5]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[5], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[5]),
+            act_fn(),
+            ME.MinkowskiGlobalMaxPooling()           
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, ME.MinkowskiConvolution):
+                ME.utils.kaiming_normal_(m.kernel, mode="fan_out", nonlinearity="linear")
+            if isinstance(m, ME.MinkowskiLinear):
+                ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity="linear")
+            if isinstance(m, ME.MinkowskiBatchNorm):
+                    nn.init.constant_(m.bn.weight, 1)
+                    nn.init.constant_(m.bn.bias, 0)
+                    m.track_running_stats = False
+                    
+    def forward(self, x, batch_size):
+        x = self.encoder_cnn(x)
+        return x
+
+# Instance-level
+class ProjectionHead(nn.Module):
+    def __init__(self,
+                 nchan : int,
+                 nlatent: int,
+                 hidden_act_fn : object = nn.ReLU,
+                 latent_act_fn : object = nn.Tanh):
+        super().__init__()
+        
+        self.proj = nn.Sequential(
+            nn.Linear(32*nchan, 8*nchan),
+            hidden_act_fn(),
+            nn.Linear(8*nchan, nlatent),
+            latent_act_fn(),
+        )
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        return self.proj(x)
+
+# Cluster assignment probabilities
+class ClusteringHead(nn.Module):
+    def __init__(self, 
+                 nchan : int, 
+                 nclusters : int,
+                 hidden_act_fn : object = nn.ReLU):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(32*nchan, 8*nchan),
+            hidden_act_fn(),
+            nn.Linear(8*nchan, nclusters),
+            nn.Softmax(dim=1),
+        )
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                nn.init.zeros_(m.bias)
+                
+    def forward(self, x):
+        x = self.proj(x)
+        return x
