@@ -752,7 +752,7 @@ class CCEncoderFSD12x4(nn.Module):
         x = self.encoder_cnn(x)
 
         # Convert sparse tensor to dense
-        dense,_,_ = x.dense(shape=torch.Size([batch_size, self.feature_channels, 12, 4]))
+        dense,_,_ = x.dense(shape=torch.Size([batch_size, self.ch[5], 12, 4]))
         #  dense = self.to_dense(x)
         flat = dense.flatten(start_dim=1)     # [B, C * 12 * 4]
         return flat    
@@ -814,18 +814,18 @@ class ClusteringHeadOneLayer(nn.Module):
     def __init__(self,
                  nchan : int,
                  nclusters : int):
-	super().__init__()
-	self.proj = nn.Sequential(
+        super().__init__()
+        self.proj = nn.Sequential(
             nn.Linear(nchan, nclusters),
             nn.Softmax(dim=1),
-	)
+        )
         self.initialize_weights()
 
     def initialize_weights(self):
-	for m in self.modules():
+        for m in self.modules():
             if isinstance(m, nn.Linear):
-		nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
-		nn.init.zeros_(m.bias)
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                nn.init.zeros_(m.bias)
 
     def forward(self, x):
         x = self.proj(x)
