@@ -551,7 +551,7 @@ class ContrastiveEncoderShallowFSD(nn.Module):
         out = self.encoder_lin(flat)          # Final embedding
         return out
 
-class CCEncoderFSD(nn.Module):
+class CCEncoderFSDGlobal(nn.Module):
     def __init__(self, 
                  nchan : int,
                  act_fn : object = ME.MinkowskiSiLU,
@@ -564,27 +564,21 @@ class CCEncoderFSD(nn.Module):
         ### Convolutional section
         self.encoder_cnn = nn.Sequential(
             ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 768x256 ==> 384x128
-            # ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
-            # ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
-            # ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 384x128 ==> 192x64
-            # ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
-            # ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
-            # ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 192x64 ==> 96x32
@@ -640,6 +634,9 @@ class CCEncoderFSD(nn.Module):
         # Initialize weights using Xavier initialization
         self.initialize_weights()
 
+    def get_nchan(self):
+        return self.ch[5]
+        
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, ME.MinkowskiConvolution):
@@ -653,8 +650,115 @@ class CCEncoderFSD(nn.Module):
                     
     def forward(self, x, batch_size):
         x = self.encoder_cnn(x)
-        return x
+        return x.F
 
+class CCEncoderFSD12x4(nn.Module):
+    def __init__(self, 
+                 nchan : int,
+                 act_fn : object = ME.MinkowskiSiLU,
+                 drop_fract : float = 0):
+        super().__init__()
+        
+        self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16, nchan*32]
+        self.conv_kernel_size = 3
+        
+        ### Convolutional section
+        self.encoder_cnn = nn.Sequential(
+            ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 768x256 ==> 384x128
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 384x128 ==> 192x64
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 192x64 ==> 96x32
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 96x32 ==> 48x16
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 48x16 ==> 24x8
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[5], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 24x8 ==> 12x4
+            ME.MinkowskiBatchNorm(self.ch[5]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[5], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[5]),
+            act_fn(),
+            ME.MinkowskiDropout(drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[5], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[5]),
+            act_fn(),
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def get_nchan(self):
+        return self.ch[5]*4*12
+        
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, ME.MinkowskiConvolution):
+                ME.utils.kaiming_normal_(m.kernel, mode="fan_out", nonlinearity="linear")
+            if isinstance(m, ME.MinkowskiLinear):
+                ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity="linear")
+            if isinstance(m, ME.MinkowskiBatchNorm):
+                    nn.init.constant_(m.bn.weight, 1)
+                    nn.init.constant_(m.bn.bias, 0)
+                    m.track_running_stats = False
+                    
+    def forward(self, x, batch_size):
+        x = self.encoder_cnn(x)
+
+        # Convert sparse tensor to dense
+        dense,_,_ = x.dense(shape=torch.Size([batch_size, self.feature_channels, 12, 4]))
+        #  dense = self.to_dense(x)
+        flat = dense.flatten(start_dim=1)     # [B, C * 12 * 4]
+        return flat    
+
+
+    
 # Instance-level
 class ProjectionHead(nn.Module):
     def __init__(self,
@@ -665,9 +769,9 @@ class ProjectionHead(nn.Module):
         super().__init__()
         
         self.proj = nn.Sequential(
-            nn.Linear(32*nchan, 8*nchan),
+            nn.Linear(nchan, nchan//4),
             hidden_act_fn(),
-            nn.Linear(8*nchan, nlatent),
+            nn.Linear(nchan//4, nlatent),
             latent_act_fn(),
         )
         self.initialize_weights()
@@ -682,16 +786,16 @@ class ProjectionHead(nn.Module):
         return self.proj(x)
 
 # Cluster assignment probabilities
-class ClusteringHead(nn.Module):
+class ClusteringHeadTwoLayer(nn.Module):
     def __init__(self, 
                  nchan : int, 
                  nclusters : int,
                  hidden_act_fn : object = nn.ReLU):
         super().__init__()
         self.proj = nn.Sequential(
-            nn.Linear(32*nchan, 8*nchan),
+            nn.Linear(nchan, nchan//4),
             hidden_act_fn(),
-            nn.Linear(8*nchan, nclusters),
+            nn.Linear(nchan//4, nclusters),
             nn.Softmax(dim=1),
         )
         self.initialize_weights()
