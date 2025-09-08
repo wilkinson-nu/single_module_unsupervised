@@ -117,7 +117,7 @@ def get_act_from_string(act_name):
     return None
 
 ## Function to deal with all of the dataset handling
-def get_dataset(args):
+def get_dataset(args, rank=0):
 
     ## Get the augmentation from the argument name
     aug_transform = get_transform('fsd', args.aug_type)
@@ -133,14 +133,14 @@ def get_dataset(args):
                                                      aug_transform=aug_transform, \
                                                      max_events=ndata)
     if nsim > 0:
-        print("Training with", ndata, "data and", nsim, "simulation events!")
+        if rank==0: print("Training with", ndata, "data and", nsim, "simulation events!")
         sim_dataset = SingleModuleImage2D_MultiHDF5_ME(args.sim_dir, \
                                                      nom_transform=DoNothing(), \
                                                      aug_transform=aug_transform, \
                                                      max_events=nsim)
         train_dataset = ConcatDataset([data_dataset, sim_dataset])
     else:
-        print("Training with", ndata, "data events!")
+        if rank==0: print("Training with", ndata, "data events!")
         train_dataset = data_dataset
         
     return train_dataset
@@ -160,7 +160,7 @@ def get_encoder(args):
 def get_projhead(enc_nchan, args):
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
-    proj_head = ProjectionHead(enc_nchan, args.nlatent, hidden_act_fn, latent_act_fn)
+    proj_head = ProjectionHead(enc_nchan, args.latent, hidden_act_fn, latent_act_fn)
     return proj_head
 
 def get_clusthead(enc_nchan, args):
@@ -170,14 +170,14 @@ def get_clusthead(enc_nchan, args):
     else:
         clust = ClusteringHeadTwoLayer
     
-    clust_head = clust(enc_nchan, arch.nclusters)
+    clust_head = clust(enc_nchan, args.nclusters)
     return clust_head
 
 def get_scheduler(args):
     return
 
 ## Wrapped training function
-def run_training(rank, world_size, args)
+def run_training(rank, world_size, args):
 
     torch.autograd.set_detect_anomaly(True)
     ## For timing
@@ -203,8 +203,13 @@ def run_training(rank, world_size, args)
     clust_head = get_clusthead(enc_output, args)
     
     ## Set up the distributed dataset
-    train_dataset = get_dataset(args)
-    train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
+    train_dataset = get_dataset(args, rank)
+    train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, 16)
+
+    ## So we don't constantly ask args
+    num_iterations = args.nstep
+    log_dir = args.log
+    sched = args.scheduler
     
     if rank==0:
         print("Training with", num_iterations, "iterations")
@@ -231,12 +236,12 @@ def run_training(rank, world_size, args)
         {'params': proj_head.parameters()},
         {'params': clust_head.parameters()},
     ]
-    optimizer = torch.optim.AdamW(params_to_optimize, lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(params_to_optimize, lr=args.lr, weight_decay=args.weight_decay)
 
     ## Deal with a scheduler
     scheduler = None
     if sched == "onecycle":
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr*1000, total_steps=num_iterations, cycle_momentum=False)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*1000, total_steps=num_iterations, cycle_momentum=False)
     if sched == "step":
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
                                                    milestones=[150,300,450],
@@ -255,21 +260,21 @@ def run_training(rank, world_size, args)
     
     ## Load the checkpoint if one has been given
     start_iteration = 0
-    if restart:
-        if not state_file:
+    if args.restart:
+        if not args.state_file:
             if rank==0: print("Restart requested, but no state file provided, aborting")
             sys.exit()
-        start_iteration = load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file)
+        start_iteration = load_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file)
         if rank==0: print("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
-    if pretrained:
-        if restart:
+    if args.pretrained:
+        if args.restart:
             print("Restart requested along with a pretraining file, abort!")
             sys.exit()
-        load_pretrained(encoder, proj_head, clust_head, pretrained)
+        load_pretrained(encoder, proj_head, clust_head, args.pretrained)
         
-    if rank==0 and log_dir: writer = SummaryWriter(log_dir=log_dir)
+    if rank==0 and args.log: writer = SummaryWriter(log_dir=log_dir)
 
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
@@ -342,11 +347,11 @@ def run_training(rank, world_size, args)
 
         ## For checkpointing
         if rank==0 and iteration%10 == 0 and iteration != 0:
-            save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file+".check"+str(iteration), iteration, av_tot_loss)
+            save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file, iteration, av_tot_loss)
+        save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file, iteration, av_tot_loss)
         if log_dir: writer.close()
 
     ## Clear things up
@@ -405,6 +410,6 @@ if __name__ == '__main__':
     for arg in vars(args): print(arg, getattr(args, arg))
     
     mp.spawn(run_training,
-             args=(args,)
+             args=(args.world_size, args),
              nprocs=args.world_size,
              join=True)
