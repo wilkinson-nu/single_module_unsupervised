@@ -19,7 +19,7 @@ from torch import nn
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
 from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
-from ME_NN_libs import CCEncoderFSD, ProjectionHead, ClusteringHead
+from ME_NN_libs import CCEncoderFSDGlobal, CCEncoderFSD12x4, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -99,8 +99,6 @@ def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, 
     }, state_file_name)
 
 def get_act_from_string(act_name):
-
-    ## For the hidden layers
     if act_name == "relu":
         return ME.MinkowskiReLU
     if act_name == "leakyrelu":
@@ -111,8 +109,6 @@ def get_act_from_string(act_name):
         return ME.MinkowskiSiLU
     if act_name == "selu":
         return ME.MinkowskiSELU
-
-    ## For the bottleneck
     if act_name == "tanh":
         return ME.MinkowskiTanh
     if act_name == "softsign":
@@ -120,11 +116,69 @@ def get_act_from_string(act_name):
 
     return None
 
+## Function to deal with all of the dataset handling
+def get_dataset(args):
+
+    ## Get the augmentation from the argument name
+    aug_transform = get_transform('fsd', args.aug_type)
     
+    ## Get the concrete dataset
+    ## train_dataset now has a mix of simulation and data, with a controllable fraction
+    nsim = 0
+    ndata = int(args.nevents*args.frac_data)
+    nsim = args.nevents - ndata
+
+    data_dataset = SingleModuleImage2D_MultiHDF5_ME(args.data_dir, \
+                                                     nom_transform=DoNothing(), \
+                                                     aug_transform=aug_transform, \
+                                                     max_events=ndata)
+    if nsim > 0:
+        print("Training with", ndata, "data and", nsim, "simulation events!")
+        sim_dataset = SingleModuleImage2D_MultiHDF5_ME(args.sim_dir, \
+                                                     nom_transform=DoNothing(), \
+                                                     aug_transform=aug_transform, \
+                                                     max_events=nsim)
+        train_dataset = ConcatDataset([data_dataset, sim_dataset])
+    else:
+        print("Training with", ndata, "data events!")
+        train_dataset = data_dataset
+        
+    return train_dataset
+
+def get_encoder(args):
+    
+    ## Only one architecture for now
+    if args.enc_arch == "12x4":
+        enc = CCEncoderFSD12x4
+    else:
+        enc = CCEncoderFSDGlobal
+        
+    enc_act_fn=get_act_from_string(args.enc_act)
+    encoder = enc(args.nchan, enc_act_fn, args.dropout)
+    return encoder
+
+def get_projhead(enc_nchan, args):
+    hidden_act_fn = nn.SiLU
+    latent_act_fn=nn.Tanh
+    proj_head = ProjectionHead(enc_nchan, args.nlatent, hidden_act_fn, latent_act_fn)
+    return proj_head
+
+def get_clusthead(enc_nchan, args):
+
+    if args.clust_arch == "one":
+        clust = ClusteringHeadOneLayer
+    else:
+        clust = ClusteringHeadTwoLayer
+    
+    clust_head = clust(enc_nchan, arch.nclusters)
+    return clust_head
+
+def get_scheduler(args):
+    return
+
 ## Wrapped training function
-def run_training(rank, world_size, num_iterations, log_dir, enc, enc_act_name, \
-                 nchan, nlatent, nclusters, lr, weight_decay, dropout, proj_loss, proj_temp, clust_loss, clust_temp, train_dataset, \
-                 batch_size, sched, state_file=None, pretrained=None, restart=False):
+def run_training(rank, world_size, args)
+
     torch.autograd.set_detect_anomaly(True)
     ## For timing
     tstart = time.time()
@@ -135,18 +189,21 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, enc_act_name, \
     torch.cuda.set_device(rank)
     device = torch.device(f'cuda:{rank}')
 
+    ## Setup the encoder
+    encoder = get_encoder(args)
+    encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
+
+    ## what are the dimensions of the encoder output (per image in batch)
+    enc_output = encoder.get_nchan()
+    
     ## Set up the heads
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
-    proj_head = ProjectionHead(nchan, nlatent, hidden_act_fn, latent_act_fn)
-    clust_head = ClusteringHead(nchan, nclusters, hidden_act_fn)
-
-    ## Setup the encoder
-    enc_act_fn=get_act_from_string(enc_act_name)
-    encoder = enc(nchan, enc_act_fn, dropout)
-    encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
+    proj_head = get_projhead(enc_output, args)
+    clust_head = get_clusthead(enc_output, args)
     
     ## Set up the distributed dataset
+    train_dataset = get_dataset(args)
     train_loader = get_dataloader(rank, world_size, train_dataset, batch_size, 16)
     
     if rank==0:
@@ -154,8 +211,10 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, enc_act_name, \
         if log_dir: writer = SummaryWriter(log_dir=log_dir)
 
     ## Set up the loss functions
-    proj_loss_fn = proj_loss(proj_temp)
-    clust_loss_fn = clust_loss(clust_temp, 0.1)
+    proj_loss = NTXentMerged
+    clust_loss = ClusteringLossMerged
+    proj_loss_fn = proj_loss(args.proj_temp)
+    clust_loss_fn = clust_loss(args.clust_temp, 0.1)
     
     encoder.to(device)
     proj_head.to(device)
@@ -203,12 +262,12 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, enc_act_name, \
         start_iteration = load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file)
         if rank==0: print("Restarting from iteration", start_iteration)
 
-    ## Load the pretrained autoencoder if given
+    ## Load the pretrained model if given
     if pretrained:
         if restart:
             print("Restart requested along with a pretraining file, abort!")
             sys.exit()
-        load_pretrained(encoder, pretrained)
+        load_pretrained(encoder, proj_head, clust_head, pretrained)
         
     if rank==0 and log_dir: writer = SummaryWriter(log_dir=log_dir)
 
@@ -237,8 +296,8 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, enc_act_name, \
 
             ## Now do the forward passes
             encoded_batch = encoder(cat_batch, this_batch_size)
-            proj_batch = proj_head(encoded_batch.F)
-            clust_batch = clust_head(encoded_batch.F)
+            proj_batch = proj_head(encoded_batch)
+            clust_batch = clust_head(encoded_batch)
 
             proj_loss = proj_loss_fn(proj_batch)
             clust_loss = clust_loss_fn(clust_batch)
@@ -329,8 +388,9 @@ if __name__ == '__main__':
     parser.add_argument('--clust_temp', type=float, default=0.5, nargs='?')    
     
     ## This changes the architecture
-    parser.add_argument('--arch', type=str, default=None, nargs='?')
-
+    parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
+    parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
+    
     ## For adding simulation files, frac_data is the fraction of nevents which should be simulation
     parser.add_argument('--sim_dir', type=str, default=None, nargs='?')    
     parser.add_argument('--frac_data', type=float, default=1.0, nargs='?')
@@ -343,65 +403,8 @@ if __name__ == '__main__':
 
     ## Report arguments
     for arg in vars(args): print(arg, getattr(args, arg))
-
-    ## Get the augmentation from the argument name
-    aug_transform = get_transform('fsd', args.aug_type)
     
-    ## Get the concrete dataset
-    ## train_dataset now has a mix of simulation and data, with a controllable fraction
-    nsim = 0
-    ndata = int(args.nevents*args.frac_data)
-    nsim = args.nevents - ndata
-
-    data_dataset = SingleModuleImage2D_MultiHDF5_ME(args.data_dir, \
-                                                     nom_transform=DoNothing(), \
-                                                     aug_transform=aug_transform, \
-                                                     max_events=ndata)
-    if nsim > 0:
-        print("Training with", ndata, "data and", nsim, "simulation events!")
-        sim_dataset = SingleModuleImage2D_MultiHDF5_ME(args.sim_dir, \
-                                                     nom_transform=DoNothing(), \
-                                                     aug_transform=aug_transform, \
-                                                     max_events=nsim)
-        train_dataset = ConcatDataset([data_dataset, sim_dataset])
-    else:
-        print("Training with", ndata, "data events!")
-        train_dataset = data_dataset
-
-    ## Only one architecture for now
-    enc = CCEncoderFSD
-
-    #if args.arch == "shallow":
-    #    enc = ContrastiveEncoderShallowFSD
-
-    ## Sort out the loss functions
-    proj_loss = NTXentMerged
-    if args.proj_loss == 'NTXentMergedTopTenNeg':
-        proj_loss = NTXentMergedTopTenNeg
-
-    clust_loss = ClusteringLossMerged
-        
     mp.spawn(run_training,
-             args=(args.world_size,
-                   args.nstep,
-                   args.log,
-                   enc,
-                   args.enc_act,
-                   args.nchan,
-                   args.latent,
-                   args.nclusters,
-                   args.lr,
-                   args.weight_decay,
-                   args.dropout,
-                   proj_loss,
-                   args.proj_temp,
-                   clust_loss,
-                   args.clust_temp,
-                   train_dataset,
-                   args.batch_size,
-                   args.scheduler,
-                   args.state_file,
-                   args.pretrained,
-                   args.restart),
+             args=(args,)
              nprocs=args.world_size,
              join=True)
