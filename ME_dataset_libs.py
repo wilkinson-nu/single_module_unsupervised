@@ -17,7 +17,7 @@ from enum import Enum, auto
 class Label(Enum):
 
     ## Default
-    NOLABEL = -1
+    DATA = -1
     
     ## e+/- or photon induced
     EM = auto()
@@ -182,9 +182,59 @@ class MaxRegionCrop:
 
         return cropped_coords, cropped_feats
 
-## This just takes a 256x128 subimage from the transformed block
+class FirstRegionCrop:
+    def __init__(self, orig_size=(140,280), new_size=(128,256)):
+        self.orig_x = orig_size[0]
+        self.orig_y = orig_size[1]
+        self.new_x = new_size[0]
+        self.new_y = new_size[1]
+
+        # Predefined regions (center, corners)
+        self.regions = {
+            "center": ((self.orig_y - self.new_y) // 2, (self.orig_x - self.new_x) // 2),
+            "top_left": (0, 0),
+            "top_right": (0, self.orig_x - self.new_x),
+            "bottom_left": (self.orig_y - self.new_y, 0),
+            "bottom_right": (self.orig_y - self.new_y, self.orig_x - self.new_x),
+        }
+
+    def __call__(self, coords, feats):
+
+        use_region = None
+
+        # Iterate through predefined regions
+        for region, (start_y, start_x) in self.regions.items():
+            crop_min_y, crop_max_y = start_y, start_y + self.new_y
+            crop_min_x, crop_max_x = start_x, start_x + self.new_x
+
+            # Mask for the region
+            mask = (coords[:, 0] >= crop_min_y) & (coords[:, 0] < crop_max_y) & \
+                   (coords[:, 1] >= crop_min_x) & (coords[:, 1] < crop_max_x)
+
+            # Count the number of non-zero elements in this region
+            count = np.sum(mask)
+
+            # Update the best region if this one has more hits
+            if count > 0: use_region = (start_y, start_x)
+
+        # Apply the best region crop
+        crop_min_y, crop_max_y = use_region[0], use_region[0] + self.new_y
+        crop_min_x, crop_max_x = use_region[1], use_region[1] + self.new_x
+
+        # Mask for the best region
+        mask = (coords[:, 0] >= crop_min_y) & (coords[:, 0] < crop_max_y) & \
+               (coords[:, 1] >= crop_min_x) & (coords[:, 1] < crop_max_x)
+
+        # Adjust the coordinates and filter the features
+        cropped_coords = coords[mask] - np.array([crop_min_y, crop_min_x])
+        cropped_feats = feats[mask]
+
+        return cropped_coords, cropped_feats
+
+
+## This just takes a transformed image from the transformed block
 class RandomCrop:
-    def __init__(self, new_x, new_y, clip=5):
+    def __init__(self, new_x, new_y, clip=10):
         self.new_y = new_y
         self.new_x = new_x
         self.clip = clip
@@ -195,24 +245,13 @@ class RandomCrop:
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
         
-        y_max = np.max(y_round)
-        y_min = np.min(y_round)
-        x_max = np.max(x_round)
-        x_min = np.min(x_round)
-        
-        shift_x, shift_y = 0, 0
-            
-        if x_max - x_min >= self.new_x:
-            ## If the transformed image is wider than the cropped image, ensure it's "through-going"
-            shift_x = random.randint(self.new_x-x_max, -1*x_min)
-        else: 
-            ## If not, randomly place it in the image, with a small region "clipped"
-            shift_x = random.randint(-x_min -self.clip, self.new_x-x_max + self.clip)
-            
-        if y_max - y_min >= self.new_y:
-            shift_y = random.randint(self.new_y-y_max, -1*y_min)
-        else: 
-            shift_y = random.randint(-y_min -self.clip, self.new_y-y_max + self.clip)
+        y_max = np.maximum(np.max(y_round), self.new_y)
+        y_min = np.minimum(np.min(y_round), 0)
+        x_max = np.maximum(np.max(x_round), self.new_x)
+        x_min = np.minimum(np.min(x_round), 0)
+
+        shift_x = random.randint(x_min-self.clip, (x_max+self.clip) - self.new_x)
+        shift_y = random.randint(y_min-self.clip, (y_max+self.clip) - self.new_y)
 
         new_coords = new_coords + np.array([shift_y, shift_x])        
         mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_y)) \
@@ -229,17 +268,20 @@ class RandomHorizontalFlip:
     def __call__(self, coords, feats):
         new_coords = np.round(coords).astype(np.int32)
 
-        if torch.rand(1) < self.p:
+        if np.random.rand() < self.p:
             min_col = new_coords[:,1].min()
             max_col = new_coords[:,1].max()
             new_coords[:,1] = max_col - (new_coords[:,1] - min_col)
+
         return new_coords,feats
 
 ## Need to define a fairly standard functions that work for ME tensors
 class RandomRotation2D:
-    def __init__(self, min_angle, max_angle):
+    def __init__(self, min_angle, max_angle, max_y, max_x):
         self.min_angle = min_angle
         self.max_angle = max_angle
+        self.max_y = max_y
+        self.max_x = max_x
 
     def _M(self, theta):
         # Generate a 2D rotation matrix for a given angle theta
@@ -250,18 +292,28 @@ class RandomRotation2D:
 
     def __call__(self, coords, feats):
     	# Generate a random rotation angle
-        angle = np.deg2rad(torch.FloatTensor(1).uniform_(self.min_angle, self.max_angle).item())
+        angle = np.deg2rad(np.random.uniform(self.min_angle, self.max_angle))
 
+        # Pick a random central-ish point
+        cx = np.random.uniform(self.max_x/4, 3*self.max_y/4)
+        cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
+        center = np.array([cy, cx])
+        
     	# Get the 2D rotation matrix
         R = self._M(angle)
-        # Apply the rotation
-        rotated_coords = coords @ R
+        
+        # Shift and apply the rotation
+        shifted = coords - center
+        rotated = shifted @ R
+        rotated_coords = rotated + center
         return rotated_coords, feats
 
 class RandomShear2D:
-    def __init__(self, max_shear_x, max_shear_y):
+    def __init__(self, max_shear_y, max_shear_x, max_y, max_x):
         self.max_shear_x = max_shear_x
         self.max_shear_y = max_shear_y
+        self.max_x = max_x
+        self.max_y = max_y
 
     def __call__(self, coords, feats):
         shear_x = np.random.uniform(-self.max_shear_x, self.max_shear_x)
@@ -272,7 +324,14 @@ class RandomShear2D:
             [shear_y, 1]
         ])
 
-        rotated_coords = coords @ shear_matrix
+        # Pick a random central-ish point
+        cx = np.random.uniform(self.max_x/4, 3*self.max_y/4)
+        cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
+        center = np.array([cy, cx])
+        
+        shifted = coords - center
+        rotated = shifted @ shear_matrix
+        rotated_coords = rotated + center
         return rotated_coords, feats
 
 class RandomPixelNoise2D:
@@ -790,16 +849,16 @@ def get_transform(det="single", aug_type=None):
     y_max = 256
     
     if det == "fsd":
-        ThisCrop = SemiRandomCrop
+        ThisCrop = RandomCrop
         x_max=256
-        y_max=512
+        y_max=768
         
     if aug_type == "block10x10":
         return transforms.Compose([
             RandomGridDistortion2D(),
-            RandomShear2D(0.1, 0.1),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
     	    RandomHorizontalFlip(),
-    	    RandomRotation2D(-10,10),
+    	    RandomRotation2D(-10,10, y_max, x_max),
     	    RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             RandomScaleCharge(0.02),
             RandomJitterCharge(0.02),
@@ -808,9 +867,9 @@ def get_transform(det="single", aug_type=None):
     if aug_type == "bigmodblock10x10":
         return transforms.Compose([
     	    RandomGridDistortion2D(),
-            RandomShear2D(0.2, 0.2),
+            RandomShear2D(0.2, 0.2, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-30,30),
+            RandomRotation2D(-30,30, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             RandomScaleCharge(0.1),
             RandomJitterCharge(0.1),
@@ -819,9 +878,9 @@ def get_transform(det="single", aug_type=None):
     if aug_type == "unitcharge":
         return transforms.Compose([
             RandomGridDistortion2D(),
-            RandomShear2D(0.1, 0.1),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10),
+            RandomRotation2D(-10,10, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge()
@@ -829,9 +888,9 @@ def get_transform(det="single", aug_type=None):
     if aug_type == "unitnoise10":
         return transforms.Compose([
             RandomGridDistortion2D(),
-            RandomShear2D(0.1, 0.1),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10),
+            RandomRotation2D(-10,10, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge(),
@@ -840,9 +899,9 @@ def get_transform(det="single", aug_type=None):
     if aug_type == "unitnoise30":
         return transforms.Compose([
             RandomGridDistortion2D(),
-            RandomShear2D(0.1, 0.1),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10),
+            RandomRotation2D(-10,10, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge(),
@@ -852,9 +911,9 @@ def get_transform(det="single", aug_type=None):
     if aug_type == "bigunit":
         return transforms.Compose([
             RandomGridDistortion2D(),
-            RandomShear2D(0.2, 0.2),
+            RandomShear2D(0.2, 0.2, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-30,30),
+            RandomRotation2D(-30,30, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge()
@@ -864,9 +923,9 @@ def get_transform(det="single", aug_type=None):
     ## If not, return the default
     return transforms.Compose([
     	RandomGridDistortion2D(),
-    	RandomShear2D(0.1, 0.1),
+    	RandomShear2D(0.1, 0.1, y_max, x_max),
     	RandomHorizontalFlip(),
-    	RandomRotation2D(-10,10),
+    	RandomRotation2D(-10,10, y_max, x_max),
     	RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
     	RandomScaleCharge(0.02),
     	RandomJitterCharge(0.02),
