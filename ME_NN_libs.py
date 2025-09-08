@@ -563,7 +563,7 @@ class CCEncoderFSD(nn.Module):
         
         ### Convolutional section
         self.encoder_cnn = nn.Sequential(
-            ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 512x256 ==> 256x128
+            ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 768x256 ==> 384x128
             # ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
@@ -575,7 +575,7 @@ class CCEncoderFSD(nn.Module):
             # ME.MinkowskiBatchNorm(self.ch[0]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 256x128 ==> 128x64
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 384x128 ==> 192x64
             # ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
@@ -587,7 +587,7 @@ class CCEncoderFSD(nn.Module):
             # ME.MinkowskiBatchNorm(self.ch[1]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 128x64 ==> 64x32
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 192x64 ==> 96x32
             ME.MinkowskiBatchNorm(self.ch[2]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
@@ -599,7 +599,7 @@ class CCEncoderFSD(nn.Module):
             ME.MinkowskiBatchNorm(self.ch[2]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 64x32 ==> 32x16
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 96x32 ==> 48x16
             ME.MinkowskiBatchNorm(self.ch[3]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
@@ -611,7 +611,7 @@ class CCEncoderFSD(nn.Module):
             ME.MinkowskiBatchNorm(self.ch[3]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 32x16 ==> 16x8
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 48x16 ==> 24x8
             ME.MinkowskiBatchNorm(self.ch[4]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
@@ -623,7 +623,7 @@ class CCEncoderFSD(nn.Module):
             ME.MinkowskiBatchNorm(self.ch[4]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[5], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 16x8 ==> 8x4
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[5], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 24x8 ==> 12x4
             ME.MinkowskiBatchNorm(self.ch[5]),
             act_fn(),
             ME.MinkowskiDropout(drop_fract),
@@ -702,6 +702,27 @@ class ClusteringHead(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
                 nn.init.zeros_(m.bias)
                 
+    def forward(self, x):
+        x = self.proj(x)
+        return x
+
+class ClusteringHeadOneLayer(nn.Module):
+    def __init__(self,
+                 nchan : int,
+                 nclusters : int):
+	super().__init__()
+	self.proj = nn.Sequential(
+            nn.Linear(nchan, nclusters),
+            nn.Softmax(dim=1),
+	)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+	for m in self.modules():
+            if isinstance(m, nn.Linear):
+		nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+		nn.init.zeros_(m.bias)
+
     def forward(self, x):
         x = self.proj(x)
         return x
