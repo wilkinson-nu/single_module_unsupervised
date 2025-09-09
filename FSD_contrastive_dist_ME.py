@@ -19,7 +19,7 @@ from torch import nn
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
 from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
-from ME_NN_libs import CCEncoderFSDGlobal, CCEncoderFSD12x4, CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer
+from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -150,7 +150,7 @@ def get_encoder(args):
     ## parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
     ## parser.add_argument('--enc_arch_pool', type=str, default=None, nargs='?')
     ## parser.add_argument('--enc_arch_flatten', type=bool, default=False, nargs='?')
-    ## parser.add_argument('--enc_arch_growth', type=bool, default=False, nargs='?')
+    ## parser.add_argument('--enc_arch_slow_growth', type=bool, default=False, nargs='?')
     ## parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
     
     ## Only one architecture for now
@@ -163,9 +163,9 @@ def get_encoder(args):
     encoder = enc(nchan=args.nchan, \
                   act_fn=enc_act_fn, \
                   first_kernel=args.enc_arch_first_kernel, \
-                  flatten=args.enc_arch_flatten, \
+                  flatten=bool(args.enc_arch_flatten), \
                   pool=args.enc_arch_pool, \
-                  slow_growth=args.enc_arch_growth)
+                  slow_growth=bool(args.enc_arch_slow_growth))
     return encoder
 
 def get_projhead(enc_nchan, args):
@@ -252,7 +252,7 @@ def run_training(rank, world_size, args):
     ## Deal with a scheduler
     scheduler = None
     if sched == "onecycle":
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*1000, total_steps=num_iterations, cycle_momentum=False)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=num_iterations, cycle_momentum=False)
     if sched == "step":
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
                                                    milestones=[150,300,450],
@@ -406,8 +406,8 @@ if __name__ == '__main__':
     ## This changes the architecture
     parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
     parser.add_argument('--enc_arch_pool', type=str, default=None, nargs='?')
-    parser.add_argument('--enc_arch_flatten', type=bool, default=False, nargs='?')
-    parser.add_argument('--enc_arch_growth', type=bool, default=False, nargs='?')
+    parser.add_argument('--enc_arch_flatten', type=int, choices=[0,1], default=0, nargs='?')
+    parser.add_argument('--enc_arch_slow_growth', type=int, choices=[0,1], default=0, nargs='?')
     parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
     
     parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
