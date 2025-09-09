@@ -19,7 +19,7 @@ from torch import nn
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
 from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
-from ME_NN_libs import CCEncoderFSDGlobal, CCEncoderFSD12x4, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer
+from ME_NN_libs import CCEncoderFSDGlobal, CCEncoderFSD12x4, CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -147,14 +147,25 @@ def get_dataset(args, rank=0):
 
 def get_encoder(args):
     
+    ## parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
+    ## parser.add_argument('--enc_arch_pool', type=str, default=None, nargs='?')
+    ## parser.add_argument('--enc_arch_flatten', type=bool, default=False, nargs='?')
+    ## parser.add_argument('--enc_arch_growth', type=bool, default=False, nargs='?')
+    ## parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
+    
     ## Only one architecture for now
-    if args.enc_arch == "12x4":
-        enc = CCEncoderFSD12x4
-    else:
-        enc = CCEncoderFSDGlobal
+    #if args.enc_arch == "12x4":
+    enc = CCEncoderFSD12x4Opt
+    #else:
+    #    enc = CCEncoderFSDGlobal
         
     enc_act_fn=get_act_from_string(args.enc_act)
-    encoder = enc(args.nchan, enc_act_fn, args.dropout)
+    encoder = enc(nchan=args.nchan, \
+                  act_fn=enc_act_fn, \
+                  first_kernel=args.enc_arch_first_kernel, \
+                  flatten=args.enc_arch_flatten, \
+                  pool=args.enc_arch_pool, \
+                  slow_growth=args.enc_arch_growth)
     return encoder
 
 def get_projhead(enc_nchan, args):
@@ -394,6 +405,11 @@ if __name__ == '__main__':
     
     ## This changes the architecture
     parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
+    parser.add_argument('--enc_arch_pool', type=str, default=None, nargs='?')
+    parser.add_argument('--enc_arch_flatten', type=bool, default=False, nargs='?')
+    parser.add_argument('--enc_arch_growth', type=bool, default=False, nargs='?')
+    parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
+    
     parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
     
     ## For adding simulation files, frac_data is the fraction of nevents which should be simulation
