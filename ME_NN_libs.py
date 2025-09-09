@@ -643,9 +643,11 @@ class CCEncoderFSD12x4Opt(nn.Module):
         )
 
         ## Optional pooling
-        if self.pool = "max":
+        if self.pool == "max":
             self.global_pool = ME.MinkowskiAvgPooling()
-        elif self.pool = "avg":
+        if self.pool == "newavg":
+            self.global_pool = ME.MinkowskiGlobalAvgPooling()
+        elif self.pool == "avg":
             self.global_pool = ME.MinkowskiGlobalMaxPooling()
         else:
             self.global_pool = None
@@ -656,8 +658,8 @@ class CCEncoderFSD12x4Opt(nn.Module):
     def get_nchan(self):
         nout = 0
         if self.flatten:
-            nout += self.ch[5]*12*4)
-        if self.pool:
+            nout += self.ch[5]*12*4
+        if self.global_pool is not None:
             nout += self.ch[5]
         return nout
         
@@ -932,11 +934,13 @@ class ProjectionHead(nn.Module):
                  hidden_act_fn : object = nn.ReLU,
                  latent_act_fn : object = nn.Tanh):
         super().__init__()
+
+        self.middle_layer = max(nchan//4, nlatent)
         
         self.proj = nn.Sequential(
-            nn.Linear(nchan, nchan//4),
+            nn.Linear(nchan, self.middle_layer),
             hidden_act_fn(),
-            nn.Linear(nchan//4, nlatent),
+            nn.Linear(self.middle_layer, nlatent),
             latent_act_fn(),
         )
         self.initialize_weights()
@@ -958,10 +962,13 @@ class ClusteringHeadTwoLayer(nn.Module):
                  nclusters : int,
                  hidden_act_fn : object = nn.ReLU):
         super().__init__()
+
+        self.middle_layer = max(nchan//4, nclusters*2)
+        
         self.proj = nn.Sequential(
-            nn.Linear(nchan, nchan//4),
+            nn.Linear(nchan, self.middle_layer),
             hidden_act_fn(),
-            nn.Linear(nchan//4, nclusters),
+            nn.Linear(self.middle_layer, nclusters),
             nn.Softmax(dim=1),
         )
         self.initialize_weights()
