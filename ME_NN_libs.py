@@ -955,6 +955,31 @@ class ProjectionHead(nn.Module):
     def forward(self, x):
         return self.proj(x)
 
+class ProjectionHeadLogits(nn.Module):
+    def __init__(self,
+                 nchan : int,
+                 nlatent: int,
+                 hidden_act_fn : object = nn.ReLU):
+        super().__init__()
+
+        self.middle_layer = max(nchan//4, nlatent)
+        
+        self.proj = nn.Sequential(
+            nn.Linear(nchan, self.middle_layer),
+            hidden_act_fn(),
+            nn.Linear(self.middle_layer, nlatent),
+        )
+        self.initialize_weights()
+    
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        return self.proj(x)
+    
     
 # Cluster assignment probabilities
 class ClusteringHeadTwoLayer(nn.Module):
