@@ -645,11 +645,9 @@ class CCEncoderFSD12x4Opt(nn.Module):
 
         ## Optional pooling
         if self.pool == "max":
-            self.global_pool = ME.MinkowskiAvgPooling()
-        if self.pool == "newavg":
-            self.global_pool = ME.MinkowskiGlobalAvgPooling()
-        elif self.pool == "avg":
             self.global_pool = ME.MinkowskiGlobalMaxPooling()
+        elif self.pool == "avg":
+            self.global_pool = ME.MinkowskiGlobalAvgPooling()
         else:
             self.global_pool = None
 
