@@ -233,7 +233,7 @@ def run_training(rank, world_size, args):
     proj_loss = NTXentMerged
     clust_loss = ClusteringLossMerged
     proj_loss_fn = proj_loss(args.proj_temp)
-    clust_loss_fn = clust_loss(args.clust_temp, 0.1)
+    clust_loss_fn = clust_loss(args.clust_temp, 1.0)
     
     encoder.to(device)
     proj_head.to(device)
