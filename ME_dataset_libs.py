@@ -575,9 +575,9 @@ class SemiRandomCrop:
         
 
 class BilinearInterpolation:
-    def __init__(self, threshold=0.04):
-        self.height=280
-        self.width=140
+    def __init__(self, threshold=0.04, height=height, width=width):
+        self.height=height
+        self.width=width
         self.threshold=threshold
         
     def __call__(self, coords, feats):
