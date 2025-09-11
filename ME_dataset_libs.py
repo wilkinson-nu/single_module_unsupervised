@@ -381,26 +381,55 @@ class RandomBlockZeroImproved:
         self.yrange = yrange
 
     def __call__(self, coords, feats):
-
         coords = np.round(coords).astype(np.int32)
-        combined_mask = np.full(feats.size, True, dtype=bool)
 
         # Dynamically determine extent
-        y_min, y_max = min(self.yrange[0], coords[:, 0].min()), max(self.yrange[1], coords[:, 0].max())
-        x_min, x_max = min(self.xrange[0], coords[:, 1].min()), max(self.xrange[1], coords[:, 1].max())
-        
-        num_blocks_removed = random.randint(*self.nblocks)
-        for _ in range(num_blocks_removed):
-            
-            block_size = random.randint(*self.rblocks)
-            block_x = random.randint(x_min, x_max - block_size)
-            block_y = random.randint(y_min, y_max - block_size)
+        y_min = min(self.yrange[0], coords[:, 0].min())
+        y_max = max(self.yrange[1], coords[:, 0].max())
+        x_min = min(self.xrange[0], coords[:, 1].min())
+        x_max = max(self.xrange[1], coords[:, 1].max())
 
-            mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+block_size)) \
-                     & (coords[:,1] > block_x) & (coords[:,1] < (block_x+block_size)))
-            combined_mask &= mask
-            
-        return coords[combined_mask].copy(), feats[combined_mask].copy()
+        num_blocks_removed = random.randint(*self.nblocks)
+        if num_blocks_removed == 0:
+            return coords.copy(), feats.copy()
+
+        # Sample all blocks at once
+        block_sizes = np.random.randint(self.rblocks[0], self.rblocks[1]+1, size=num_blocks_removed)
+        block_xs = np.random.randint(x_min, x_max - block_sizes, size=num_blocks_removed)
+        block_ys = np.random.randint(y_min, y_max - block_sizes, size=num_blocks_removed)
+
+        # For each point, check whether it lies inside any block
+        cx, cy = coords[:,1][:,None], coords[:,0][:,None]  # shape (N,1)
+        inside_x = (cx > block_xs) & (cx < (block_xs + block_sizes))
+        inside_y = (cy > block_ys) & (cy < (block_ys + block_sizes))
+        inside_any = np.any(inside_x & inside_y, axis=1)
+
+        keep_mask = ~inside_any
+        return coords[keep_mask].copy(), feats[keep_mask].copy()
+
+## 
+##     
+##         def __call__(self, coords, feats):
+## 
+##         coords = np.round(coords).astype(np.int32)
+##         combined_mask = np.full(feats.size, True, dtype=bool)
+## 
+##         # Dynamically determine extent
+##         y_min, y_max = min(self.yrange[0], coords[:, 0].min()), max(self.yrange[1], coords[:, 0].max())
+##         x_min, x_max = min(self.xrange[0], coords[:, 1].min()), max(self.xrange[1], coords[:, 1].max())
+##         
+##         num_blocks_removed = random.randint(*self.nblocks)
+##         for _ in range(num_blocks_removed):
+##             
+##             block_size = random.randint(*self.rblocks)
+##             block_x = random.randint(x_min, x_max - block_size)
+##             block_y = random.randint(y_min, y_max - block_size)
+## 
+##             mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+block_size)) \
+##                      & (coords[:,1] > block_x) & (coords[:,1] < (block_x+block_size)))
+##             combined_mask &= mask
+##             
+##         return coords[combined_mask].copy(), feats[combined_mask].copy()
         
     
 ## Apply a Gaussian jitter to all values
@@ -575,7 +604,7 @@ class SemiRandomCrop:
         
 
 class BilinearInterpolation:
-    def __init__(self, threshold=0.04, height=height, width=width):
+    def __init__(self, threshold=0.04, height=280, width=140):
         self.height=height
         self.width=width
         self.threshold=threshold
@@ -908,6 +937,19 @@ def get_transform(det="single", aug_type=None):
             RandomPixelNoise2D(30)
 	])
 
+    if aug_type == "bigunitnoiseblock":
+        return transforms.Compose([
+            RandomGridDistortion2D(),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10, y_max, x_max),
+            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
+            ThisCrop(x_max, y_max),
+            ConstantCharge(),
+            RandomPixelNoise2D(20, (0, x_max, 0, y_max))
+        ])
+    
     if aug_type == "bigunit":
         return transforms.Compose([
             RandomGridDistortion2D(),
