@@ -156,8 +156,6 @@ def get_encoder(args):
     ## Only one architecture for now
     #if args.enc_arch == "12x4":
     enc = CCEncoderFSD12x4Opt
-    #else:
-    #    enc = CCEncoderFSDGlobal
         
     enc_act_fn=get_act_from_string(args.enc_act)
     encoder = enc(nchan=args.nchan, \
@@ -165,26 +163,27 @@ def get_encoder(args):
                   first_kernel=args.enc_arch_first_kernel, \
                   flatten=bool(args.enc_arch_flatten), \
                   pool=args.enc_arch_pool, \
-                  slow_growth=bool(args.enc_arch_slow_growth))
+                  slow_growth=bool(args.enc_arch_slow_growth),
+                  sep_heads=bool(args.enc_arch_sep_heads))
     return encoder
 
-def get_projhead(enc_nchan, args):
+def get_projhead(nchan, args):
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
     if args.proj_arch == "logits":
-        proj_head = ProjectionHeadLogits(enc_nchan, args.latent, hidden_act_fn)
+        proj_head = ProjectionHeadLogits(nchan, args.latent, hidden_act_fn)
     else:
-        proj_head = ProjectionHead(enc_nchan, args.latent, hidden_act_fn, latent_act_fn)
+        proj_head = ProjectionHead(nchan, args.latent, hidden_act_fn, latent_act_fn)
     return proj_head
 
-def get_clusthead(enc_nchan, args):
+def get_clusthead(nchan, args):
 
     if args.clust_arch == "one":
         clust = ClusteringHeadOneLayer
     else:
         clust = ClusteringHeadTwoLayer
     
-    clust_head = clust(enc_nchan, args.nclusters)
+    clust_head = clust(nchan, args.nclusters)
     return clust_head
 
 def get_scheduler(args):
@@ -213,8 +212,8 @@ def run_training(rank, world_size, args):
     ## Set up the heads
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
-    proj_head = get_projhead(enc_output, args)
-    clust_head = get_clusthead(enc_output, args)
+    proj_head = get_projhead(encoder.get_nchan_instance(), args)
+    clust_head = get_clusthead(encoder.get_nchan_cluster(), args)
     
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
@@ -314,9 +313,9 @@ def run_training(rank, world_size, args):
             cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
 
             ## Now do the forward passes
-            encoded_batch = encoder(cat_batch, this_batch_size)
-            proj_batch = proj_head(encoded_batch)
-            clust_batch = clust_head(encoded_batch)
+            encoded_instance_batch, encoded_cluster_batch = encoder(cat_batch, this_batch_size)
+            proj_batch = proj_head(encoded_instance_batch)
+            clust_batch = clust_head(encoded_cluster_batch)
 
             proj_loss = proj_loss_fn(proj_batch)
             clust_loss = clust_loss_fn(clust_batch)
@@ -412,6 +411,7 @@ if __name__ == '__main__':
     parser.add_argument('--enc_arch_flatten', type=int, choices=[0,1], default=0, nargs='?')
     parser.add_argument('--enc_arch_slow_growth', type=int, choices=[0,1], default=0, nargs='?')
     parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
+    parser.add_argument('--enc_arch_sep_heads', type=int, choices=[0,1], default=0, nargs='?')
     
     parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
     parser.add_argument('--proj_arch', type=str, default="logits", nargs='?')
