@@ -350,9 +350,18 @@ class CCEncoderFSD12x4Opt(nn.Module):
         self.drop_fract = 0
         self.sep_heads = sep_heads
 
+        
+        ## Optional pooling
+        if self.pool == "max":
+            self.global_pool = ME.MinkowskiGlobalMaxPooling()
+        elif self.pool == "avg":
+            self.global_pool = ME.MinkowskiGlobalAvgPooling()
+        else:
+            self.global_pool = None
+
         ## Error checking the config
         if self.sep_heads:
-            if self.pool == None or self.flatten == False:
+            if self.global_pool == None or self.flatten == False:
                 raise ValueError("To use sep_heads, you need to have both pooling and flattening enabled!")        
         
         ### Convolutional section
@@ -424,21 +433,13 @@ class CCEncoderFSD12x4Opt(nn.Module):
             act_fn(),
         )
 
-        ## Optional pooling
-        if self.pool == "max":
-            self.global_pool = ME.MinkowskiGlobalMaxPooling()
-        elif self.pool == "avg":
-            self.global_pool = ME.MinkowskiGlobalAvgPooling()
-        else:
-            self.global_pool = None
-
         # Initialize weights using Xavier initialization
         self.initialize_weights()
 
     def get_nchan_instance(self):
         nout = 0
         if self.sep_heads:
-            nout += self.ch[5]*12*4
+            nout += self.ch[5]*12*4 + self.ch[5]
         else:
             if self.flatten:
                 nout += self.ch[5]*12*4
@@ -487,7 +488,7 @@ class CCEncoderFSD12x4Opt(nn.Module):
 
         # Decide return type
         if self.sep_heads:
-            return output[0], output[1]
+            return torch.cat(outputs, dim=1), outputs[1]
         else:
             if len(outputs) == 1:
                 return outputs[0], outputs[0]
