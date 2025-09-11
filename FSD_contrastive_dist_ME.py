@@ -18,7 +18,6 @@ from torch import nn
 
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
-from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
 from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits
 
 ## For logging
@@ -206,9 +205,6 @@ def run_training(rank, world_size, args):
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
 
-    ## what are the dimensions of the encoder output (per image in batch)
-    enc_output = encoder.get_nchan()
-    
     ## Set up the heads
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
