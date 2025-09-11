@@ -19,7 +19,7 @@ from torch import nn
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
 from ME_NN_libs import ContrastiveEncoderFSD, ContrastiveEncoderShallowFSD
-from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer
+from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -171,7 +171,10 @@ def get_encoder(args):
 def get_projhead(enc_nchan, args):
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
-    proj_head = ProjectionHead(enc_nchan, args.latent, hidden_act_fn, latent_act_fn)
+    if args.proj_arch == "logits":
+        proj_head = ProjectionHeadLogits(enc_nchan, args.latent, hidden_act_fn)
+    else:
+        proj_head = ProjectionHead(enc_nchan, args.latent, hidden_act_fn, latent_act_fn)
     return proj_head
 
 def get_clusthead(enc_nchan, args):
@@ -411,6 +414,7 @@ if __name__ == '__main__':
     parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
     
     parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
+    parser.add_argument('--proj_arch', type=str, default="logits", nargs='?')
     
     ## For adding simulation files, frac_data is the fraction of nevents which should be simulation
     parser.add_argument('--sim_dir', type=str, default=None, nargs='?')    
