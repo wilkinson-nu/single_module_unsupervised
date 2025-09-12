@@ -68,11 +68,11 @@ class Label(Enum):
 
 ## This is a transformation for the nominal image
 class CenterCrop:
-    def __init__(self, orig_size=(140,280), new_size=(128,256)):
-        self.orig_x = orig_size[0]
-        self.orig_y = orig_size[1]
-        self.new_x = new_size[0]
-        self.new_y = new_size[1]
+    def __init__(self, orig_size=(280, 140), new_size=(256, 128)):
+        self.orig_y = orig_size[0]
+        self.orig_x = orig_size[1]
+        self.new_y = new_size[0]
+        self.new_x = new_size[1]
         self.pad_y = (self.orig_y - self.new_y)/2
         self.pad_x = (self.orig_x - self.new_x)/2
 
@@ -85,20 +85,17 @@ class CenterCrop:
         return coords[mask], feats[mask]
 
 class MaxNonZeroCrop:
-    def __init__(self):
-        self.orig_y = 280
-        self.orig_x = 140
-        self.new_y = 256
-        self.new_x = 128
+    def __init__(self, orig_size=(280, 140), new_size=(256, 128)):
+        self.orig_y = orig_size[0]
+        self.orig_x = orig_size[1]
+        self.new_y = new_size[0]
+        self.new_x = new_size[1]
 
     def __call__(self, coords, feats):
-        """
-        Crop to the region with the most non-zero values.
-        """
         # Create a 2D histogram to count nonzeros in each pixel
-        hist, xedges, yedges = np.histogram2d(coords[:, 0], coords[:, 1],
-                                              bins=(self.orig_y, self.orig_x),
-                                              range=[[0, self.orig_y], [0, self.orig_x]])
+        hist, xedges, yedges = np.histogram2d(coords[:, 1], coords[:, 0],
+                                              bins=(self.orig_x, self.orig_y),
+                                              range=[[0, self.orig_x], [0, self.orig_y]])
         # Compute the sliding window sum
         max_count = 0
         best_start_y = 0
@@ -129,11 +126,11 @@ class MaxNonZeroCrop:
         return cropped_coords, cropped_feats
 
 class MaxRegionCrop:
-    def __init__(self, orig_size=(140,280), new_size=(128,256)):
-        self.orig_x = orig_size[0]
-        self.orig_y = orig_size[1]
-        self.new_x = new_size[0]
-        self.new_y = new_size[1]
+    def __init__(self, orig_size=(280, 140), new_size=(256, 128)):
+        self.orig_y = orig_size[0]
+        self.orig_x = orig_size[1]
+        self.new_y = new_size[0]
+        self.new_x = new_size[1]
 
         # Predefined regions (center, corners)
         self.regions = {
@@ -183,11 +180,11 @@ class MaxRegionCrop:
         return cropped_coords, cropped_feats
 
 class FirstRegionCrop:
-    def __init__(self, orig_size=(140,280), new_size=(128,256)):
-        self.orig_x = orig_size[0]
-        self.orig_y = orig_size[1]
-        self.new_x = new_size[0]
-        self.new_y = new_size[1]
+    def __init__(self, orig_size=(280, 140), new_size=(256, 128)):
+        self.orig_y = orig_size[0]
+        self.orig_x = orig_size[1]
+        self.new_y = new_size[0]
+        self.new_x = new_size[1]
 
         # Predefined regions (center, corners)
         self.regions = {
@@ -406,6 +403,7 @@ class RandomBlockZeroImproved:
 
         keep_mask = ~inside_any
         return coords[keep_mask].copy(), feats[keep_mask].copy()        
+
     
 ## Apply a Gaussian jitter to all values
 class RandomJitterCharge:
@@ -416,6 +414,7 @@ class RandomJitterCharge:
         scale_factors = np.random.normal(loc=1.0, scale=self.width, size=feats.shape)
         new_feats = feats*scale_factors
         return coords, new_feats
+
     
 # Scale the entire feature vector by a single scaling factor
 class RandomScaleCharge:
@@ -427,6 +426,7 @@ class RandomScaleCharge:
         new_feats = feats*scale_factor
         return coords, new_feats
 
+    
 ## This is just used to check the performance when the charge scale is artificially removed
 class ConstantCharge:
     
@@ -436,7 +436,7 @@ class ConstantCharge:
     def __call__(self,  coords, feats):
         new_feats = np.ones_like(feats)
         return coords, new_feats
-    
+
     
 class RandomElasticDistortion2D:
     def __init__(self, alpha_range, sigma):
@@ -532,10 +532,12 @@ class RandomGridDistortion2D:
 
         return distorted_coords, feats
 
+    
 class DoNothing:
     def __call__(self, coords, feats):
         return coords, feats
 
+    
 class SemiRandomCrop:
     def __init__(self, new_x, new_y, clip_x=20, clip_y=40, offset_y=20):
         self.new_y = new_y
@@ -628,6 +630,7 @@ class BilinearSplat:
         summed_feats = summed_feats.reshape(-1, 1)
         
         return unique_coords, summed_feats
+
     
 class GaussianSmear:
     def __init__(self, sigma=0.8, threshold=0.04, y_max=280, x_max=140):
@@ -713,7 +716,35 @@ class GaussianSmear:
         summed_feats = summed_feats[mask_final].reshape(-1, 1)
 
         return unique_coords, summed_feats
-        
+
+class RandomStretch2D:
+    def __init__(self, max_stretch_y=0.1, max_stretch_x=0.1, max_y=280, max_x=140):
+        self.max_stretch_y = max_stretch_y
+        self.max_stretch_x = max_stretch_x
+        self.max_y = max_y
+        self.max_x = max_x
+
+    def __call__(self, coords, feats):
+        # Random scale factors
+        scale_y = 1.0 + np.random.uniform(-self.max_stretch_y, self.max_stretch_y)
+        scale_x = 1.0 + np.random.uniform(-self.max_stretch_x, self.max_stretch_x)
+
+        scale_matrix = np.array([
+            [scale_y, 0.0],
+            [0.0, scale_x]
+        ])
+
+        # Pick a random center point (so it's not always anchored at origin)
+        cx = np.random.uniform(self.max_x/4, 3 * self.max_x/4)
+        cy = np.random.uniform(self.max_y/4, 3 * self.max_y/4)
+        center = np.array([cy, cx])
+
+        shifted = coords - center
+        stretched = shifted @ scale_matrix
+        stretched_coords = stretched + center
+
+        return stretched_coords, feats
+    
     
 class SingleModuleImage2D_MultiHDF5_ME(Dataset):
 
@@ -983,30 +1014,31 @@ def get_transform(det="single", aug_type=None):
             RandomPixelNoise2D(20, (0, x_max, 0, y_max))
         ])
 
-    if aug_type == "bigblockbilingaus":
+    if aug_type == "bilingaus":
         return transforms.Compose([
-            RandomGridDistortion2D(),
+            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
             RandomRotation2D(-10,10, y_max, x_max),
-            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
+            RandomStretch2D(y_max=y_max, x_max=x_max),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
-    	    RandomScaleCharge(0.02),
-    	    RandomJitterCharge(0.02),
+            RandomGridDistortion2D(),
+            RandomScaleCharge(0.02),
+            RandomJitterCharge(0.02),
             BilinearSplat(0.04),
-            ThisCrop(x_max, y_max),
-            # RandomPixelNoise2D(50, (0, x_max, 0, y_max)),
+            ThisCrop(x_max, y_max)
             GaussianSmear(0.8, 0.02, y_max, x_max)
         ])
 
-    if aug_type == "bigblockbilin":
+    if aug_type == "bilin":
         return transforms.Compose([
-            RandomGridDistortion2D(),
+            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
             RandomRotation2D(-10,10, y_max, x_max),
-            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
+            RandomStretch2D(y_max=y_max, x_max=x_max),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
+            RandomGridDistortion2D(),
             RandomScaleCharge(0.02),
             RandomJitterCharge(0.02),
             BilinearSplat(0.04),
