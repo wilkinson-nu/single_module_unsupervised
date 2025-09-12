@@ -295,7 +295,7 @@ class RandomRotation2D:
         angle = np.deg2rad(np.random.uniform(self.min_angle, self.max_angle))
 
         # Pick a random central-ish point
-        cx = np.random.uniform(self.max_x/4, 3*self.max_y/4)
+        cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
         cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
         center = np.array([cy, cx])
         
@@ -603,37 +603,24 @@ class SemiRandomCrop:
         return new_coords[mask], new_feats[mask]
         
 
-class BilinearInterpolation:
-    def __init__(self, threshold=0.04, height=280, width=140):
-        self.height=height
-        self.width=width
+class BilinearSplat:
+    def __init__(self, threshold=0.04): #, y_max=280, x_max=140):
+        # self.y_max=y_max
+        # self.x_max=x_max
         self.threshold=threshold
         
     def __call__(self, coords, feats):
-        """
-        Apply bilinear interpolation to sparse image data represented by coordinates and features.
-    
-        Arguments:
-        coords: Numpy array of shape (N, 2), where each row is (x, y) coordinate.
-        feats: Numpy array of shape (N,), containing feature values for each coordinate.
-        height: Integer, maximum height of the output grid.
-        width: Integer, maximum width of the output grid.
-
-        Returns:
-        interpolated_coords: Numpy array of shape (M, 2), with interpolated integer coordinates.
-        interpolated_feats: Numpy array of shape (M,), containing interpolated feature values.
-        """
         
         feats = np.squeeze(feats)  # Remove single-dimensional entries from shape
         
         # Floor and ceil coordinates for each point
-        x0, y0 = np.floor(coords[:, 0]).astype(int), np.floor(coords[:, 1]).astype(int)
-        x1, y1 = np.ceil(coords[:, 0]).astype(int), np.ceil(coords[:, 1]).astype(int)
+        x0, y0 = np.floor(coords[:, 1]).astype(int), np.floor(coords[:, 0]).astype(int)
+        x1, y1 = x0 + 1, y0 + 1
     
         # Calculate the weights for bilinear interpolation
-        wx1 = coords[:, 0] - x0
+        wx1 = coords[:, 1] - x0
         wx0 = 1 - wx1
-        wy1 = coords[:, 1] - y0
+        wy1 = coords[:, 0] - y0
         wy0 = 1 - wy1
     
         # Coordinates for the four corners
@@ -653,16 +640,14 @@ class BilinearInterpolation:
         features_combined = np.concatenate([f00, f01, f10, f11])
     
         # Round coordinates to nearest integers and clip them
-        coords_combined = np.round(coords_combined).astype(int)
-        # coords_combined = np.clip(coords_combined, [0, 0], [self.height-1, self.width-1])
+        # coords_combined = np.round(coords_combined).astype(int)
 
-        ## The clipping is wrong...
-        mask = (coords_combined[:,0] > 0) \
-             & (coords_combined[:,0] < (self.height-1)) \
-             & (coords_combined[:,1] > 0) \
-             & (coords_combined[:,1] < (self.width-1))
-        coords_combined = coords_combined[mask]
-        features_combined = features_combined[mask]
+        #mask = (coords_combined[:,0] >= 0) \
+        #     & (coords_combined[:,0] < (self.y_max)) \
+        #     & (coords_combined[:,1] >= 0) \
+        #     & (coords_combined[:,1] < (self.x_max))
+        #coords_combined = coords_combined[mask]
+        #features_combined = features_combined[mask]
         
         # Consolidate features at unique coordinates
         unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
@@ -681,7 +666,78 @@ class BilinearInterpolation:
         
         return unique_coords, summed_feats
     
+class GaussianSmear:
+    def __init__(self, sigma=0.8, threshold=0.04, y_max=280, x_max=140):
+        self.sigma = sigma
+        self.threshold = threshold
+        self.y_max = y_max
+        self.x_max = x_max
 
+    def __call__(self, coords, feats):
+        feats = np.squeeze(feats)
+
+        # Truncate the kernel at 2*sigma for sparsity
+        radius = int(np.ceil(2 * self.sigma))
+        y_offsets, x_offsets = np.meshgrid(
+            np.arange(-radius, radius+1),
+            np.arange(-radius, radius+1),
+            indexing='ij'
+        )
+
+        # Gaussian kernel
+        gaussian_kernel = np.exp(-(x_offsets**2 + y_offsets**2) / (2 * self.sigma**2))
+        gaussian_kernel /= gaussian_kernel.sum()
+
+        # Prepare lists to accumulate smeared coordinates and features
+        all_coords = []
+        all_feats = []
+
+        for (y, x), f in zip(coords, feats):
+            # Shift the kernel to the current point
+            new_y = y + y_offsets.ravel()
+            new_x = x + x_offsets.ravel()
+            new_coords = np.stack([new_y, new_x], axis=-1)
+            new_feats = f * gaussian_kernel.ravel()
+
+            # Only keep contributions above threshold
+            mask_kernel = new_feats >= self.threshold
+            new_coords = new_coords[mask_kernel]
+            new_feats = new_feats[mask_kernel]
+
+            all_coords.append(new_coords)
+            all_feats.append(new_feats)
+
+        if len(all_coords) == 0:
+            # If nothing survives thresholding
+            return np.zeros((0, 2), dtype=int), np.zeros((0, 1))
+
+        # Combine all points
+        all_coords = np.vstack(all_coords).astype(int)
+        all_feats = np.concatenate(all_feats)
+
+        # Clip coordinates to grid
+        mask = (all_coords[:,0] >= 0) & (all_coords[:,0] < self.y_max) & \
+               (all_coords[:,1] >= 0) & (all_coords[:,1] < self.x_max)
+        all_coords = all_coords[mask]
+        all_feats = all_feats[mask]
+
+        # Consolidate features at unique coordinates
+        unique_coords, indices = np.unique(all_coords, axis=0, return_inverse=True)
+        summed_feats = np.zeros(len(unique_coords))
+        np.add.at(summed_feats, indices, all_feats)
+
+        # Apply threshold again after summing
+        mask = summed_feats >= self.threshold
+        unique_coords = unique_coords[mask]
+        summed_feats = summed_feats[mask]
+
+        # Reshape summed_feats to (N, 1)
+        summed_feats = summed_feats.reshape(-1, 1)
+
+        return unique_coords, summed_feats
+
+
+    
 class SingleModuleImage2D_MultiHDF5_ME(Dataset):
 
     def __init__(self, infile_dir, nom_transform, aug_transform=None, max_events=None):
@@ -948,6 +1004,22 @@ def get_transform(det="single", aug_type=None):
             ThisCrop(x_max, y_max),
             ConstantCharge(),
             RandomPixelNoise2D(20, (0, x_max, 0, y_max))
+        ])
+
+    if aug_type == "bignoiseblockbilin":
+        return transforms.Compose([
+            RandomGridDistortion2D(),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10, y_max, x_max),
+            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
+    	    RandomScaleCharge(0.02),
+    	    RandomJitterCharge(0.02),
+            BilinearSplat(0.04),
+            ThisCrop(x_max, y_max),
+            RandomPixelNoise2D(50, (0, x_max, 0, y_max)),
+            GaussianSmear(0.8, 0.02, y_max, x_max)
         ])
     
     if aug_type == "bigunit":
