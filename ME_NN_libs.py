@@ -389,7 +389,7 @@ class CCEncoderFSD12x4Opt(nn.Module):
             ME.MinkowskiDropout(self.drop_fract),
             ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[5], kernel_size=3, bias=False, dimension=2), ## No change in size
             ME.MinkowskiBatchNorm(self.ch[5]),
-            act_fn(),
+            # act_fn(),
         )
 
         # Initialize weights using Xavier initialization
