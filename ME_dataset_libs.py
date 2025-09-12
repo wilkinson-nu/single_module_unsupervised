@@ -325,7 +325,7 @@ class RandomShear2D:
         ])
 
         # Pick a random central-ish point
-        cx = np.random.uniform(self.max_x/4, 3*self.max_y/4)
+        cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
         cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
         center = np.array([cy, cx])
         
@@ -405,32 +405,7 @@ class RandomBlockZeroImproved:
         inside_any = np.any(inside_x & inside_y, axis=1)
 
         keep_mask = ~inside_any
-        return coords[keep_mask].copy(), feats[keep_mask].copy()
-
-## 
-##     
-##         def __call__(self, coords, feats):
-## 
-##         coords = np.round(coords).astype(np.int32)
-##         combined_mask = np.full(feats.size, True, dtype=bool)
-## 
-##         # Dynamically determine extent
-##         y_min, y_max = min(self.yrange[0], coords[:, 0].min()), max(self.yrange[1], coords[:, 0].max())
-##         x_min, x_max = min(self.xrange[0], coords[:, 1].min()), max(self.xrange[1], coords[:, 1].max())
-##         
-##         num_blocks_removed = random.randint(*self.nblocks)
-##         for _ in range(num_blocks_removed):
-##             
-##             block_size = random.randint(*self.rblocks)
-##             block_x = random.randint(x_min, x_max - block_size)
-##             block_y = random.randint(y_min, y_max - block_size)
-## 
-##             mask = ~((coords[:,0] > block_y) & (coords[:,0] < (block_y+block_size)) \
-##                      & (coords[:,1] > block_x) & (coords[:,1] < (block_x+block_size)))
-##             combined_mask &= mask
-##             
-##         return coords[combined_mask].copy(), feats[combined_mask].copy()
-        
+        return coords[keep_mask].copy(), feats[keep_mask].copy()        
     
 ## Apply a Gaussian jitter to all values
 class RandomJitterCharge:
@@ -661,70 +636,84 @@ class GaussianSmear:
         self.y_max = y_max
         self.x_max = x_max
 
-    def __call__(self, coords, feats):
-        feats = np.squeeze(feats)
+    @staticmethod
+    def _safe_coords_feats(coords, feats):
+        coords = np.array(coords, dtype=float)
+        feats = np.array(feats, dtype=float)
 
-        # Truncate the kernel at 2*sigma for sparsity
+        # Ensure coords is (N,2)
+        if coords.ndim == 1 and coords.size == 2:
+            coords = coords.reshape(1, 2)
+        elif coords.ndim == 0:
+            coords = np.zeros((0, 2), dtype=float)
+
+        # Ensure feats is (N,)
+        if feats.ndim == 0:
+            feats = np.zeros((0,), dtype=float)
+        elif feats.ndim > 1:
+            feats = feats.ravel()
+
+        return coords, feats
+
+        
+    def __call__(self, coords, feats):
+
+        coords, feats = self._safe_coords_feats(coords, feats)
+        
+        # Early exit if empty
+        if coords.shape[0] == 0 or feats.shape[0] == 0:
+            return np.zeros((0, 2), dtype=int), np.zeros((0, 1))        
+
+        N = coords.shape[0]
+
+        # Full kernel offsets (truncated at 2*sigma)
         radius = int(np.ceil(2 * self.sigma))
         y_offsets, x_offsets = np.meshgrid(
-            np.arange(-radius, radius+1),
-            np.arange(-radius, radius+1),
+            np.arange(-radius, radius + 1),
+            np.arange(-radius, radius + 1),
             indexing='ij'
         )
+        kernel = np.exp(-(x_offsets**2 + y_offsets**2) / (2 * self.sigma**2))
+        kernel /= kernel.sum()  # normalize
 
-        # Gaussian kernel
-        gaussian_kernel = np.exp(-(x_offsets**2 + y_offsets**2) / (2 * self.sigma**2))
-        gaussian_kernel /= gaussian_kernel.sum()
+        kernel_offsets = np.stack([y_offsets.ravel(), x_offsets.ravel()], axis=1)
+        kernel_values = kernel.ravel()
 
-        # Prepare lists to accumulate smeared coordinates and features
-        all_coords = []
-        all_feats = []
+        K = kernel_offsets.shape[0]  # total points in kernel
 
-        for (y, x), f in zip(coords, feats):
-            # Shift the kernel to the current point
-            new_y = y + y_offsets.ravel()
-            new_x = x + x_offsets.ravel()
-            new_coords = np.stack([new_y, new_x], axis=-1)
-            new_feats = f * gaussian_kernel.ravel()
+        # Repeat for all points
+        coords_expanded = np.repeat(coords, K, axis=0) + np.tile(kernel_offsets, (N, 1))
+        feats_expanded = np.repeat(feats, K) * np.tile(kernel_values, N)
 
-            # Only keep contributions above threshold
-            mask_kernel = new_feats >= self.threshold
-            new_coords = new_coords[mask_kernel]
-            new_feats = new_feats[mask_kernel]
+        # Threshold contributions
+        mask = feats_expanded >= self.threshold
+        coords_expanded = coords_expanded[mask]
+        feats_expanded = feats_expanded[mask]
 
-            all_coords.append(new_coords)
-            all_feats.append(new_feats)
-
-        if len(all_coords) == 0:
-            # If nothing survives thresholding
+        if coords_expanded.shape[0] == 0:
             return np.zeros((0, 2), dtype=int), np.zeros((0, 1))
 
-        # Combine all points
-        all_coords = np.vstack(all_coords).astype(int)
-        all_feats = np.concatenate(all_feats)
+        # Clip coordinates
+        mask_grid = (coords_expanded[:, 0] >= 0) & (coords_expanded[:, 0] < self.y_max) & \
+                    (coords_expanded[:, 1] >= 0) & (coords_expanded[:, 1] < self.x_max)
+        coords_expanded = coords_expanded[mask_grid].astype(int)
+        feats_expanded = feats_expanded[mask_grid]
 
-        # Clip coordinates to grid
-        mask = (all_coords[:,0] >= 0) & (all_coords[:,0] < self.y_max) & \
-               (all_coords[:,1] >= 0) & (all_coords[:,1] < self.x_max)
-        all_coords = all_coords[mask]
-        all_feats = all_feats[mask]
+        if coords_expanded.shape[0] == 0:
+            return np.zeros((0, 2), dtype=int), np.zeros((0, 1))
 
         # Consolidate features at unique coordinates
-        unique_coords, indices = np.unique(all_coords, axis=0, return_inverse=True)
+        unique_coords, indices = np.unique(coords_expanded, axis=0, return_inverse=True)
         summed_feats = np.zeros(len(unique_coords))
-        np.add.at(summed_feats, indices, all_feats)
+        np.add.at(summed_feats, indices, feats_expanded)
 
-        # Apply threshold again after summing
-        mask = summed_feats >= self.threshold
-        unique_coords = unique_coords[mask]
-        summed_feats = summed_feats[mask]
-
-        # Reshape summed_feats to (N, 1)
-        summed_feats = summed_feats.reshape(-1, 1)
+        # Apply threshold again
+        mask_final = summed_feats >= self.threshold
+        unique_coords = unique_coords[mask_final]
+        summed_feats = summed_feats[mask_final].reshape(-1, 1)
 
         return unique_coords, summed_feats
-
-
+        
     
 class SingleModuleImage2D_MultiHDF5_ME(Dataset):
 
@@ -769,7 +758,7 @@ class SingleModuleImage2D_MultiHDF5_ME(Dataset):
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
         ## And this function is replicated * num_workers
-        raw_coords = np.vstack((row, col)).T #.copy()
+        raw_coords = np.vstack((row, col)).T
         raw_feats = data.reshape(-1, 1)  # Reshape data to be of shape (N, 1)
         
         ## Apply transforms to augment the data
@@ -863,7 +852,7 @@ class SingleModuleImage2D_solo_ME(Dataset):
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
         ## And this function is replicated * num_workers
-        coords = np.vstack((row, col)).T #.copy()
+        coords = np.vstack((row, col)).T 
         feats = data.reshape(-1, 1)  # Reshape data to be of shape (N, 1)            
         coords, feats = self.transform(coords, feats)
 
@@ -994,7 +983,7 @@ def get_transform(det="single", aug_type=None):
             RandomPixelNoise2D(20, (0, x_max, 0, y_max))
         ])
 
-    if aug_type == "bignoiseblockbilin":
+    if aug_type == "bigblockbilingaus":
         return transforms.Compose([
             RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1, y_max, x_max),
@@ -1006,8 +995,22 @@ def get_transform(det="single", aug_type=None):
     	    RandomJitterCharge(0.02),
             BilinearSplat(0.04),
             ThisCrop(x_max, y_max),
-            RandomPixelNoise2D(50, (0, x_max, 0, y_max)),
+            # RandomPixelNoise2D(50, (0, x_max, 0, y_max)),
             GaussianSmear(0.8, 0.02, y_max, x_max)
+        ])
+
+    if aug_type == "bigblockbilin":
+        return transforms.Compose([
+            RandomGridDistortion2D(),
+            RandomShear2D(0.1, 0.1, y_max, x_max),
+            RandomHorizontalFlip(),
+            RandomRotation2D(-10,10, y_max, x_max),
+            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
+            RandomScaleCharge(0.02),
+            RandomJitterCharge(0.02),
+            BilinearSplat(0.04),
+            ThisCrop(x_max, y_max)
         ])
     
     if aug_type == "bigunit":
