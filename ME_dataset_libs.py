@@ -604,9 +604,7 @@ class SemiRandomCrop:
         
 
 class BilinearSplat:
-    def __init__(self, threshold=0.04): #, y_max=280, x_max=140):
-        # self.y_max=y_max
-        # self.x_max=x_max
+    def __init__(self, threshold=0.04):
         self.threshold=threshold
         
     def __call__(self, coords, feats):
@@ -624,31 +622,21 @@ class BilinearSplat:
         wy0 = 1 - wy1
     
         # Coordinates for the four corners
-        coords00 = np.stack([x0, y0], axis=-1)
-        coords01 = np.stack([x0, y1], axis=-1)
-        coords10 = np.stack([x1, y0], axis=-1)
-        coords11 = np.stack([x1, y1], axis=-1)
-    
+        coords00 = np.stack([y0, x0], axis=-1)
+        coords10 = np.stack([y1, x0], axis=-1)
+        coords01 = np.stack([y0, x1], axis=-1)
+        coords11 = np.stack([y1, x1], axis=-1)
+        
         # Calculate interpolated feature values for each of the four corners
         f00 = feats * (wx0 * wy0)
-        f01 = feats * (wx0 * wy1)
-        f10 = feats * (wx1 * wy0)
+        f10 = feats * (wx0 * wy1)
+        f01 = feats * (wx1 * wy0)
         f11 = feats * (wx1 * wy1)
-    
+        
         # Combine coordinates and features
         coords_combined = np.vstack([coords00,coords01,coords10,coords11])
         features_combined = np.concatenate([f00, f01, f10, f11])
     
-        # Round coordinates to nearest integers and clip them
-        # coords_combined = np.round(coords_combined).astype(int)
-
-        #mask = (coords_combined[:,0] >= 0) \
-        #     & (coords_combined[:,0] < (self.y_max)) \
-        #     & (coords_combined[:,1] >= 0) \
-        #     & (coords_combined[:,1] < (self.x_max))
-        #coords_combined = coords_combined[mask]
-        #features_combined = features_combined[mask]
-        
         # Consolidate features at unique coordinates
         unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
         summed_feats = np.zeros(len(unique_coords))    
