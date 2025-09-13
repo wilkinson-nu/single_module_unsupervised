@@ -1083,7 +1083,7 @@ def get_transform(det="single", aug_type=None):
             RandomShear2D(0.06, 0.06, y_orig, x_orig),
             RandomRotation2D(8, y_orig, x_orig),
             RandomStretch2D(0.1, 0.06, y_max=y_orig, x_max=x_orig),
-    	    RandomGridDistortion2D(),
+    	    RandomGridDistortion2D(100, 5),
     	    RandomScaleCharge(0.05),
     	    RandomJitterCharge(0.05),
     	    BilinearSplat(0.04),
