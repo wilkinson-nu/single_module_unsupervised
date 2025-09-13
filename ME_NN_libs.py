@@ -42,7 +42,7 @@ class ClusteringLossMerged(nn.Module):
 
         ne_loss = -0.5 * (entropy_i + entropy_j)
         
-        return loss + ne_loss*self.entropy_weight
+        return loss, ne_loss*self.entropy_weight
 
     
 class NTXentMerged(nn.Module):
@@ -520,7 +520,7 @@ class ClusteringHeadTwoLayer(nn.Module):
                  hidden_act_fn : object = nn.ReLU):
         super().__init__()
 
-        self.middle_layer = max(nchan//4, nclusters*2)
+        self.middle_layer = nchan #max(nchan//4, nclusters*2)
         
         self.proj = nn.Sequential(
             nn.Linear(nchan, self.middle_layer),
