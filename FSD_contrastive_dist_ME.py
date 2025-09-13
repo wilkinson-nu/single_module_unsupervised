@@ -17,7 +17,7 @@ from torch.utils.data import ConcatDataset
 from torch import nn
 
 ## Includes from my libraries for this project
-from ME_NN_libs import NTXentMerged, NTXentMergedTopTenNeg, ClusteringLossMerged
+from ME_NN_libs import NTXentMerged, ClusteringLossMerged
 from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits
 
 ## For logging
@@ -355,7 +355,7 @@ def run_training(rank, world_size, args):
             print("Time taken:", time.time() - tstart)
 
         ## For checkpointing
-        if rank==0 and iteration%10 == 0 and iteration != 0:
+        if rank==0 and iteration%25 == 0 and iteration != 0:
             save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss)
         
     ## Final version of the model
