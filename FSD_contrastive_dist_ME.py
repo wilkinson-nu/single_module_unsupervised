@@ -7,6 +7,7 @@ import torchvision.transforms.v2 as transforms
 import MinkowskiEngine as ME
 import torch
 import time
+import math
 
 ## The parallelisation libraries
 import torch.distributed as dist
@@ -146,12 +147,6 @@ def get_dataset(args, rank=0):
 
 def get_encoder(args):
     
-    ## parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
-    ## parser.add_argument('--enc_arch_pool', type=str, default=None, nargs='?')
-    ## parser.add_argument('--enc_arch_flatten', type=bool, default=False, nargs='?')
-    ## parser.add_argument('--enc_arch_slow_growth', type=bool, default=False, nargs='?')
-    ## parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
-    
     ## Only one architecture for now
     #if args.enc_arch == "12x4":
     enc = CCEncoderFSD12x4Opt
@@ -228,7 +223,7 @@ def run_training(rank, world_size, args):
     proj_loss = NTXentMerged
     clust_loss = ClusteringLossMerged
     proj_loss_fn = proj_loss(args.proj_temp)
-    clust_loss_fn = clust_loss(args.clust_temp, 1.0)
+    clust_loss_fn = clust_loss(args.clust_temp, args.entropy_scale)
     
     encoder.to(device)
     proj_head.to(device)
@@ -294,7 +289,8 @@ def run_training(rank, world_size, args):
         tot_loss_tensor = torch.tensor(0.0, device=device)  
         proj_loss_tensor = torch.tensor(0.0, device=device)        
         clust_loss_tensor = torch.tensor(0.0, device=device)        
-
+        clust_entropy_tensor = torch.tensor(0.0, device=device)
+        
         nbatches   = len(train_loader)
         
         # Set train mode for both the encoder and the decoder
@@ -314,8 +310,8 @@ def run_training(rank, world_size, args):
             clust_batch = clust_head(encoded_cluster_batch)
 
             proj_loss = proj_loss_fn(proj_batch)
-            clust_loss = clust_loss_fn(clust_batch)
-            tot_loss = proj_loss + clust_loss
+            clust_loss, clust_entropy = clust_loss_fn(clust_batch)
+            tot_loss = proj_loss + clust_loss + clust_entropy
 
             # Backward pass
             optimizer.zero_grad()
@@ -326,6 +322,7 @@ def run_training(rank, world_size, args):
             tot_loss_tensor += tot_loss.detach()
             proj_loss_tensor += proj_loss.detach()
             clust_loss_tensor += clust_loss.detach()
+            clust_entropy_tensor += clust_entropy.detach()
             
             # Manage CUDA memory for ME
             torch.cuda.empty_cache()
@@ -333,11 +330,13 @@ def run_training(rank, world_size, args):
         dist.all_reduce(tot_loss_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(proj_loss_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(clust_loss_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(clust_entropy_tensor, op=dist.ReduceOp.SUM)
         
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size) 
         av_proj_loss = proj_loss_tensor.item() / (nbatches * world_size) 
         av_clust_loss = clust_loss_tensor.item() / (nbatches * world_size) 
-
+        av_clust_entropy = clust_entropy_tensor.item() / (nbatches * world_size)
+        
         ## See if we have an LR scheduler...
         if scheduler:
             if sched == "plateau": scheduler.step(av_tot_loss)
@@ -345,13 +344,22 @@ def run_training(rank, world_size, args):
 
         ## Reporting, but only for rank 0
         if rank==0:
-            if log_dir: 
+
+            ## Get the effective number of clusters:
+            av_neff = math.exp(-av_clust_entropy/args.entropy_scale*math.log(args.nclusters))
+            if log_dir:
                 writer.add_scalar('loss/total', av_tot_loss, iteration)              
                 writer.add_scalar('loss/proj', av_proj_loss, iteration)              
-                writer.add_scalar('loss/clust', av_clust_loss, iteration)              
+                writer.add_scalar('loss/clust', av_clust_loss+av_clust_entropy, iteration)
+                writer.add_scalar('loss/entropy', av_clust_entropy, iteration)
+                writer.add_scalar('loss/clust_only', av_clust_loss, iteration)
+
+                writer.add_scalar('monitor/neff', av_neff, iteration)
+                
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
-            print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss, "(",av_proj_loss,"+", av_clust_loss,")")
+            print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss, \
+                  "(",av_proj_loss,"+", av_clust_loss,'+', av_clust_entropy,"); neff =", av_neff)
             print("Time taken:", time.time() - tstart)
 
         ## For checkpointing
@@ -400,6 +408,7 @@ if __name__ == '__main__':
 
     ## With the new clustering loss
     parser.add_argument('--clust_temp', type=float, default=0.5, nargs='?')    
+    parser.add_argument('--entropy_scale', type=float, default=1.0, nargs='?')
     
     ## This changes the architecture
     parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
@@ -408,7 +417,7 @@ if __name__ == '__main__':
     parser.add_argument('--enc_arch_slow_growth', type=int, choices=[0,1], default=0, nargs='?')
     parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
     parser.add_argument('--enc_arch_sep_heads', type=int, choices=[0,1], default=0, nargs='?')
-    
+
     parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
     parser.add_argument('--proj_arch', type=str, default="logits", nargs='?')
     
