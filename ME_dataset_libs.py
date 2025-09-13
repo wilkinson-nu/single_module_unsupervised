@@ -257,26 +257,64 @@ class RandomCrop:
         return new_coords[mask], new_feats[mask]
 
 
-class RandomHorizontalFlip:
+class RandomInPlaceHorizontalFlip:
     def __init__(self, p=0.5):
         ## This is the probability to flip the image
         self.p = p
 
     def __call__(self, coords, feats):
-        new_coords = np.round(coords).astype(np.int32)
 
         if np.random.rand() < self.p:
-            min_col = new_coords[:,1].min()
-            max_col = new_coords[:,1].max()
-            new_coords[:,1] = max_col - (new_coords[:,1] - min_col)
+            min_h = coords[:,1].min()
+            max_h = coords[:,1].max()
+            coords[:,1] = max_h - (coords[:,1] - min_h)
 
-        return new_coords,feats
+        return coords,feats
 
+class RandomInPlaceVerticalFlip:
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, coords, feats):
+
+        if np.random.rand() < self.p:
+            min_v = coords[:,0].min()
+            max_v = coords[:,0].max()
+            coords[:,0] = max_v - (coords[:,0] - min_v)
+
+        return coords,feats
+
+class RandomHorizontalFlip:
+    def __init__(self, p=0.5, x_max=256):
+        self.p = p
+        self.x_max = x_max
+
+    def __call__(self, coords, feats):
+
+        if np.random.rand() < self.p:
+            coords[:,1] = self.x_max - coords[:,1]
+
+        return coords,feats
+
+    
+class RandomVerticalFlip:
+    def __init__(self, p=0.5, y_max=512):
+        self.p = p
+        self.y_max = y_max
+
+    def __call__(self, coords, feats):
+
+        if np.random.rand() < self.p:
+            coords[:,0] = self.y_max - coords[:,0]
+
+        return coords,feats
+
+    
+    
 ## Need to define a fairly standard functions that work for ME tensors
 class RandomRotation2D:
-    def __init__(self, min_angle, max_angle, max_y, max_x):
-        self.min_angle = min_angle
-        self.max_angle = max_angle
+    def __init__(self, angle, max_y, max_x):
+        self.angle = angle
         self.max_y = max_y
         self.max_x = max_x
 
@@ -289,7 +327,7 @@ class RandomRotation2D:
 
     def __call__(self, coords, feats):
     	# Generate a random rotation angle
-        angle = np.deg2rad(np.random.uniform(self.min_angle, self.max_angle))
+        angle = np.deg2rad(np.random.normal(loc=0, scale=self.angle))
 
         # Pick a random central-ish point
         cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
@@ -306,15 +344,15 @@ class RandomRotation2D:
         return rotated_coords, feats
 
 class RandomShear2D:
-    def __init__(self, max_shear_y, max_shear_x, max_y, max_x):
-        self.max_shear_x = max_shear_x
-        self.max_shear_y = max_shear_y
+    def __init__(self, sigma_y, sigma_x, max_y, max_x):
+        self.sigma_x = sigma_x
+        self.sigma_y = sigma_y
         self.max_x = max_x
         self.max_y = max_y
 
     def __call__(self, coords, feats):
-        shear_x = np.random.uniform(-self.max_shear_x, self.max_shear_x)
-        shear_y = np.random.uniform(-self.max_shear_y, self.max_shear_y)
+        shear_x = np.random.normal(loc=0, scale=self.sigma_x)
+        shear_y = np.random.normal(loc=0, scale=self.sigma_y)
 
         shear_matrix = np.array([
             [1, shear_x],
@@ -378,7 +416,6 @@ class RandomBlockZeroImproved:
         self.yrange = yrange
 
     def __call__(self, coords, feats):
-        coords = np.round(coords).astype(np.int32)
 
         # Dynamically determine extent
         y_min = min(self.yrange[0], coords[:, 0].min())
@@ -486,7 +523,6 @@ class RandomGridDistortion2D:
         self.padding_cells = padding_cells
 
     def __call__(self, coords, feats):
-        coords = np.round(coords).astype(np.int32)
         y_min, y_max = coords[:, 0].min(), coords[:, 0].max()
         x_min, x_max = coords[:, 1].min(), coords[:, 1].max()
         height = y_max - y_min + 1
@@ -718,16 +754,16 @@ class GaussianSmear:
         return unique_coords, summed_feats
 
 class RandomStretch2D:
-    def __init__(self, max_stretch_y=0.1, max_stretch_x=0.1, max_y=280, max_x=140):
-        self.max_stretch_y = max_stretch_y
-        self.max_stretch_x = max_stretch_x
-        self.max_y = max_y
-        self.max_x = max_x
+    def __init__(self, stretch_y=0.06, stretch_x=0.06, y_max=280, x_max=140):
+        self.stretch_y = stretch_y
+        self.stretch_x = stretch_x
+        self.y_max = y_max
+        self.x_max = x_max
 
     def __call__(self, coords, feats):
         # Random scale factors
-        scale_y = 1.0 + np.random.uniform(-self.max_stretch_y, self.max_stretch_y)
-        scale_x = 1.0 + np.random.uniform(-self.max_stretch_x, self.max_stretch_x)
+        scale_y = np.random.normal(loc=1.0, scale=self.stretch_y)
+        scale_x = np.random.normal(loc=1.0, scale=self.stretch_x)
 
         scale_matrix = np.array([
             [scale_y, 0.0],
@@ -735,8 +771,8 @@ class RandomStretch2D:
         ])
 
         # Pick a random center point (so it's not always anchored at origin)
-        cx = np.random.uniform(self.max_x/4, 3 * self.max_x/4)
-        cy = np.random.uniform(self.max_y/4, 3 * self.max_y/4)
+        cx = np.random.uniform(self.x_max/4, 3 * self.x_max/4)
+        cy = np.random.uniform(self.y_max/4, 3 * self.y_max/4)
         center = np.array([cy, cx])
 
         shifted = coords - center
@@ -935,23 +971,29 @@ def make_dense_array(coords, feats, max_i=256, max_j=128):
 
 
 ## Just a big function to return a set of transforms, to be returned by name
+## Have to very careful in the order. Some require integer points and so force everything on a grid
+## This introduces aliasing effects
 def get_transform(det="single", aug_type=None):
 
     ThisCrop = RandomCrop
     x_max = 128
     y_max = 256
+    x_orig = 140
+    y_orig = 280
     
     if det == "fsd":
         ThisCrop = RandomCrop
         x_max=256
         y_max=768
+        x_orig=256
+        y_orig=800
         
     if aug_type == "block10x10":
         return transforms.Compose([
             RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1, y_max, x_max),
     	    RandomHorizontalFlip(),
-    	    RandomRotation2D(-10,10, y_max, x_max),
+    	    RandomRotation2D(8, y_max, x_max),
     	    RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             RandomScaleCharge(0.02),
             RandomJitterCharge(0.02),
@@ -962,7 +1004,7 @@ def get_transform(det="single", aug_type=None):
     	    RandomGridDistortion2D(),
             RandomShear2D(0.2, 0.2, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-30,30, y_max, x_max),
+            RandomRotation2D(12, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             RandomScaleCharge(0.1),
             RandomJitterCharge(0.1),
@@ -973,7 +1015,7 @@ def get_transform(det="single", aug_type=None):
             RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10, y_max, x_max),
+            RandomRotation2D(8, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge()
@@ -983,7 +1025,7 @@ def get_transform(det="single", aug_type=None):
             RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10, y_max, x_max),
+            RandomRotation2D(8, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge(),
@@ -994,7 +1036,7 @@ def get_transform(det="single", aug_type=None):
             RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10, y_max, x_max),
+            RandomRotation2D(8, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge(),
@@ -1006,7 +1048,7 @@ def get_transform(det="single", aug_type=None):
             RandomGridDistortion2D(),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10, y_max, x_max),
+            RandomRotation2D(8, y_max, x_max),
             RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
@@ -1019,23 +1061,43 @@ def get_transform(det="single", aug_type=None):
             RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10, y_max, x_max),
+            RandomRotation2D(8, y_max, x_max),
             RandomStretch2D(y_max=y_max, x_max=x_max),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
             RandomGridDistortion2D(),
             RandomScaleCharge(0.02),
             RandomJitterCharge(0.02),
             BilinearSplat(0.04),
-            ThisCrop(x_max, y_max)
+            ThisCrop(x_max, y_max),
             GaussianSmear(0.8, 0.02, y_max, x_max)
         ])
 
+    if aug_type=="newbilin":
+        return transforms.Compose([
+    	    RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+    	    RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+    	    RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),    
+            RandomShear2D(0.06, 0.06, y_orig, x_orig),
+            RandomRotation2D(8, y_orig, x_orig),
+            RandomStretch2D(0.1, 0.06, y_max=y_orig, x_max=x_orig),
+    	    RandomGridDistortion2D(),
+    	    RandomScaleCharge(0.05),
+    	    RandomJitterCharge(0.05),
+    	    BilinearSplat(0.04),
+            RandomCrop(x_max, y_max),
+            GaussianSmear(0.8, 0.02, y_max, x_max)
+        ])
+        
     if aug_type == "bilin":
         return transforms.Compose([
             RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
+            
             RandomShear2D(0.1, 0.1, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-10,10, y_max, x_max),
+            RandomRotation2D(8, y_max, x_max),
             RandomStretch2D(y_max=y_max, x_max=x_max),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
             RandomGridDistortion2D(),
@@ -1050,7 +1112,7 @@ def get_transform(det="single", aug_type=None):
             RandomGridDistortion2D(),
             RandomShear2D(0.2, 0.2, y_max, x_max),
             RandomHorizontalFlip(),
-            RandomRotation2D(-30,30, y_max, x_max),
+            RandomRotation2D(12, y_max, x_max),
             RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
             ThisCrop(x_max, y_max),
             ConstantCharge()
@@ -1062,7 +1124,7 @@ def get_transform(det="single", aug_type=None):
     	RandomGridDistortion2D(),
     	RandomShear2D(0.1, 0.1, y_max, x_max),
     	RandomHorizontalFlip(),
-    	RandomRotation2D(-10,10, y_max, x_max),
+    	RandomRotation2D(8, y_max, x_max),
     	RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
     	RandomScaleCharge(0.02),
     	RandomJitterCharge(0.02),
