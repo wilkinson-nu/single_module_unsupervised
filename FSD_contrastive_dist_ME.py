@@ -86,7 +86,7 @@ def load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name):
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
     return checkpoint['epoch'] + 1
 
-def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, iteration, loss):
+def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, iteration, loss, args):
     torch.save({
         'epoch': iteration,
         'encoder_state_dict': encoder.module.state_dict(),
@@ -96,6 +96,7 @@ def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, 
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
         'loss': loss
+        'args':vars(args)
     }, state_file_name)
 
 def get_act_from_string(act_name):
@@ -364,11 +365,11 @@ def run_training(rank, world_size, args):
 
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
-            save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss)
+            save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss, args)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file, iteration, av_tot_loss)
+        save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file, iteration, av_tot_loss, args)
         if log_dir: writer.close()
 
     ## Clear things up
