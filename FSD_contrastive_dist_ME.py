@@ -95,7 +95,7 @@ def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, 
         'optimizer_state_dict': optimizer.state_dict(),
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
-        'loss': loss
+        'loss': loss,
         'args':vars(args)
     }, state_file_name)
 
