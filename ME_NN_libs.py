@@ -29,8 +29,8 @@ class ClusteringLossMerged(nn.Module):
         loss = torch.sum(loss_partial) / (2*batch_size)
 
         ## Now add the entropy term
-        p_i = c_i.mean(dim=0)
-        p_j = c_j.mean(dim=0)
+        p_i = c_i.sum(dim=0)
+        p_j = c_j.sum(dim=0)
 
         # Compute entropy and normalize by log(K)
         p_i = p_i/p_i.sum()

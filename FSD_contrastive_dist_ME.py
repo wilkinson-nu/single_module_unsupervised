@@ -347,7 +347,7 @@ def run_training(rank, world_size, args):
         if rank==0:
 
             ## Get the effective number of clusters:
-            av_neff = math.exp(-av_clust_entropy/args.entropy_scale*math.log(args.nclusters))
+            # av_neff = math.exp(-av_clust_entropy/args.entropy_scale*math.log(args.nclusters))
             if log_dir:
                 writer.add_scalar('loss/total', av_tot_loss, iteration)              
                 writer.add_scalar('loss/proj', av_proj_loss, iteration)              
@@ -355,12 +355,12 @@ def run_training(rank, world_size, args):
                 writer.add_scalar('loss/entropy', av_clust_entropy, iteration)
                 writer.add_scalar('loss/clust_only', av_clust_loss, iteration)
 
-                writer.add_scalar('monitor/neff', av_neff, iteration)
+                # writer.add_scalar('monitor/neff', av_neff, iteration)
                 
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
             
             print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss, \
-                  "(",av_proj_loss,"+", av_clust_loss,'+', av_clust_entropy,"); neff =", av_neff)
+                  "(",av_proj_loss,"+", av_clust_loss,'+', av_clust_entropy,")") #; neff =", av_neff)
             print("Time taken:", time.time() - tstart)
 
         ## For checkpointing
