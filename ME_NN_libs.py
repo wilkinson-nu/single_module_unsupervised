@@ -36,11 +36,23 @@ class ClusteringLossMerged(nn.Module):
         p_i = p_i/p_i.sum()
         p_j = p_j/p_j.sum()
 
-        ## Maybe don't divide by class_num?
-        entropy_i = -torch.sum(p_i * torch.log(p_i + 1e-10))/math.log(class_num)
-        entropy_j = -torch.sum(p_j * torch.log(p_j + 1e-10))/math.log(class_num)
-
-        ne_loss = -0.5 * (entropy_i + entropy_j)
+        ne_i = math.log(p_i.size(0)) + (p_i * torch.log(p_i)).sum()
+        ne_j = math.log(p_j.size(0)) + (p_j * torch.log(p_j)).sum()
+        ne_loss = ne_i + ne_j
+        
+        ## ## Now add the entropy term
+        ## p_i = c_i.sum(dim=0)
+        ## p_j = c_j.sum(dim=0)
+        ## 
+        ## # Compute entropy and normalize by log(K)
+        ## p_i = p_i/p_i.sum()
+        ## p_j = p_j/p_j.sum()
+        ## 
+        ## ## Maybe don't divide by class_num?
+        ## entropy_i = -torch.sum(p_i * torch.log(p_i + 1e-10))/math.log(class_num)
+        ## entropy_j = -torch.sum(p_j * torch.log(p_j + 1e-10))/math.log(class_num)
+        ## 
+        ## ne_loss = -0.5 * (entropy_i + entropy_j)
         
         return loss, ne_loss*self.entropy_weight
 
