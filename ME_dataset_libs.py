@@ -1085,7 +1085,7 @@ def get_transform(det="single", aug_type=None):
     	    BilinearSplat(0.04),
             RandomCrop(x_max, y_max)
         ])
-    if aug_type=="smallbilintretch":
+    if aug_type=="smallbilinstretch":
         return transforms.Compose([
     	    RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
@@ -1102,21 +1102,6 @@ def get_transform(det="single", aug_type=None):
     	    BilinearSplat(0.04),
             RandomCrop(x_max, y_max),
             GaussianSmear(0.8, 0.02, y_max, x_max)
-        ])
-    
-    if aug_type == "bilin":
-        return transforms.Compose([
-            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),            
-            RandomShear2D(0.1, 0.1, y_max, x_max),
-            RandomHorizontalFlip(),
-            RandomRotation2D(8, y_max, x_max),
-            RandomStretch2D(y_max=y_max, x_max=x_max),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
-            RandomGridDistortion2D(),
-            RandomScaleCharge(0.02),
-            RandomJitterCharge(0.02),
-            BilinearSplat(0.04),
-            ThisCrop(x_max, y_max)
         ])
     
     if aug_type == "bigunit":
