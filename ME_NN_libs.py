@@ -36,8 +36,8 @@ class ClusteringLossMerged(nn.Module):
         p_i = p_i/p_i.sum()
         p_j = p_j/p_j.sum()
 
-        ne_i = math.log(p_i.size(0)) + (p_i * torch.log(p_i)).sum()
-        ne_j = math.log(p_j.size(0)) + (p_j * torch.log(p_j)).sum()
+        ne_i = math.log(p_i.size(0)) + (p_i * torch.log(p_i + 1e-10)).sum()
+        ne_j = math.log(p_j.size(0)) + (p_j * torch.log(p_j + 1e-10)).sum()
         ne_loss = ne_i + ne_j
         
         ## ## Now add the entropy term
@@ -529,19 +529,21 @@ class ClusteringHeadTwoLayer(nn.Module):
     def __init__(self, 
                  nchan : int, 
                  nclusters : int,
+                 softmax_temp : float,
                  hidden_act_fn : object = nn.ReLU):
         super().__init__()
 
-        self.middle_layer = nchan #max(nchan//4, nclusters*2)
+        self.middle_layer = max(nchan//2, nclusters*2)
+        self.softmax_temp = softmax_temp
         
         self.proj = nn.Sequential(
             nn.Linear(nchan, self.middle_layer),
             hidden_act_fn(),
             nn.Linear(self.middle_layer, nclusters),
-            nn.Softmax(dim=1),
         )
         self.initialize_weights()
-
+        self.softmax = nn.Softmax(dim=1)
+        
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -550,6 +552,7 @@ class ClusteringHeadTwoLayer(nn.Module):
                 
     def forward(self, x):
         x = self.proj(x)
+        x = self.softmax(x/self.softmax_temp)
         return x
 
 
@@ -557,12 +560,13 @@ class ClusteringHeadTwoLayer(nn.Module):
 class ClusteringHeadOneLayer(nn.Module):
     def __init__(self,
                  nchan : int,
-                 nclusters : int):
+                 nclusters : int,
+                 softmax_temp : float):
         super().__init__()
-        self.proj = nn.Sequential(
-            nn.Linear(nchan, nclusters),
-            nn.Softmax(dim=1),
-        )
+
+        self.softmax_temp = softmax_temp
+        self.linear = nn.Linear(nchan, nclusters)
+        self.softmax = nn.Softmax(dim=1)        
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -572,5 +576,6 @@ class ClusteringHeadOneLayer(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        x = self.proj(x)
+        x = self.linear(x)
+        x = self.softmax(x/self.softmax_temp)
         return x

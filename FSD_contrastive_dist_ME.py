@@ -178,7 +178,7 @@ def get_clusthead(nchan, args):
     else:
         clust = ClusteringHeadTwoLayer
     
-    clust_head = clust(nchan, args.nclusters)
+    clust_head = clust(nchan, args.nclusters, args.softmax_temp)
     return clust_head
 
 def get_scheduler(args):
@@ -410,6 +410,7 @@ if __name__ == '__main__':
     ## With the new clustering loss
     parser.add_argument('--clust_temp', type=float, default=0.5, nargs='?')    
     parser.add_argument('--entropy_scale', type=float, default=1.0, nargs='?')
+    parser.add_argument('--softmax_temp', type=float, default=1.0, nargs='?')
     
     ## This changes the architecture
     parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
