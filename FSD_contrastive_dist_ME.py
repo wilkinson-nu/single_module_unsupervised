@@ -20,6 +20,7 @@ from torch import nn
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, ClusteringLossMerged
 from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits
+from ME_analysis_libs import argmax_consistency
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -86,7 +87,7 @@ def load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name):
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
     return checkpoint['epoch'] + 1
 
-def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, iteration, loss, args):
+def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, iteration, loss, acc, args):
     torch.save({
         'epoch': iteration,
         'encoder_state_dict': encoder.module.state_dict(),
@@ -96,6 +97,7 @@ def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, 
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
         'loss': loss,
+        'acc': acc,
         'args':vars(args)
     }, state_file_name)
 
@@ -224,7 +226,7 @@ def run_training(rank, world_size, args):
     proj_loss = NTXentMerged
     clust_loss = ClusteringLossMerged
     proj_loss_fn = proj_loss(args.proj_temp)
-    clust_loss_fn = clust_loss(args.clust_temp, args.entropy_scale)
+    clust_loss_fn = clust_loss(args.clust_temp, args.entropy_scale, args.match_weight)
     
     encoder.to(device)
     proj_head.to(device)
@@ -291,6 +293,8 @@ def run_training(rank, world_size, args):
         proj_loss_tensor = torch.tensor(0.0, device=device)        
         clust_loss_tensor = torch.tensor(0.0, device=device)        
         clust_entropy_tensor = torch.tensor(0.0, device=device)
+        match_loss_tensor = torch.tensor(0.0, device=device)
+        total_acc_tensor = torch.tensor(0.0, device=device)
         
         nbatches   = len(train_loader)
         
@@ -313,7 +317,7 @@ def run_training(rank, world_size, args):
             proj_loss = proj_loss_fn(proj_batch)
             clust_loss, clust_entropy = clust_loss_fn(clust_batch)
             tot_loss = proj_loss + clust_loss + clust_entropy
-
+            
             # Backward pass
             optimizer.zero_grad()
             tot_loss .backward()
@@ -324,6 +328,10 @@ def run_training(rank, world_size, args):
             proj_loss_tensor += proj_loss.detach()
             clust_loss_tensor += clust_loss.detach()
             clust_entropy_tensor += clust_entropy.detach()
+            # match_loss_tensor += match_loss.detach()
+            
+            ## Additional logging (already detached)
+            total_acc_tensor += argmax_consistency(clust_batch)
             
             # Manage CUDA memory for ME
             torch.cuda.empty_cache()
@@ -332,11 +340,15 @@ def run_training(rank, world_size, args):
         dist.all_reduce(proj_loss_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(clust_loss_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(clust_entropy_tensor, op=dist.ReduceOp.SUM)
-        
+        dist.all_reduce(match_loss_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_acc_tensor, op=dist.ReduceOp.SUM)
+
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size) 
         av_proj_loss = proj_loss_tensor.item() / (nbatches * world_size) 
         av_clust_loss = clust_loss_tensor.item() / (nbatches * world_size) 
         av_clust_entropy = clust_entropy_tensor.item() / (nbatches * world_size)
+        av_match_loss = match_loss_tensor.item() / (nbatches * world_size)
+        av_acc = total_acc_tensor.item() / (nbatches * world_size)
         
         ## See if we have an LR scheduler...
         if scheduler:
@@ -346,30 +358,29 @@ def run_training(rank, world_size, args):
         ## Reporting, but only for rank 0
         if rank==0:
 
-            ## Get the effective number of clusters:
-            # av_neff = math.exp(-av_clust_entropy/args.entropy_scale*math.log(args.nclusters))
             if log_dir:
                 writer.add_scalar('loss/total', av_tot_loss, iteration)              
                 writer.add_scalar('loss/proj', av_proj_loss, iteration)              
                 writer.add_scalar('loss/clust', av_clust_loss+av_clust_entropy, iteration)
                 writer.add_scalar('loss/entropy', av_clust_entropy, iteration)
                 writer.add_scalar('loss/clust_only', av_clust_loss, iteration)
-
-                # writer.add_scalar('monitor/neff', av_neff, iteration)
+                writer.add_scalar('loss/match_loss', av_match_loss, iteration)
+                writer.add_scalar('monitor/acc', av_acc, iteration)
                 
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
-            
-            print("Processed", iteration, "/", start_iteration + num_iterations, "; loss =", av_tot_loss, \
-                  "(",av_proj_loss,"+", av_clust_loss,'+', av_clust_entropy,")") #; neff =", av_neff)
-            print("Time taken:", time.time() - tstart)
+
+            print(f"Processed {iteration} / {start_iteration + num_iterations}; "
+                  f"loss = {av_tot_loss:.4f} ({av_proj_loss:.4f} + {av_clust_loss:.4f} + {av_clust_entropy:.4f} + {av_match_loss:.4f}); "
+                  f"acc = {av_acc:.4f}")
+            print(f"Time taken: {(time.time()-tstart):.2f}")
 
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
-            save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss, args)
+            save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss, av_acc, args)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file, iteration, av_tot_loss, args)
+        save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file, iteration, av_tot_loss, av_acc, args)
         if log_dir: writer.close()
 
     ## Clear things up
@@ -411,6 +422,7 @@ if __name__ == '__main__':
     parser.add_argument('--clust_temp', type=float, default=0.5, nargs='?')    
     parser.add_argument('--entropy_scale', type=float, default=1.0, nargs='?')
     parser.add_argument('--softmax_temp', type=float, default=1.0, nargs='?')
+    parser.add_argument('--match_weight', type=float, default=0.0, nargs='?')
     
     ## This changes the architecture
     parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
