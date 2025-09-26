@@ -11,7 +11,7 @@ from bisect import bisect
 import random
 import numpy as np
 from enum import Enum, auto
-
+from scipy.stats import truncnorm
 
 ## Class to define the truth labels, with some helper functions
 class Label(Enum):
@@ -256,33 +256,52 @@ class RandomCrop:
                 
         return new_coords[mask], new_feats[mask]
 
+class SimpleCrop:
+    def __init__(self, max_y, max_x):
+        self.max_y = max_y
+        self.max_x = max_x
 
+    def __call__(self, coords, feats):
+        new_feats = feats.copy()
+        y_round = np.round(coords[:, 0]).astype(np.int32)
+        x_round = np.round(coords[:, 1]).astype(np.int32)
+        new_coords = np.stack([y_round, x_round], axis=-1)
+
+        mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.max_y)) \
+	     & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.max_x))
+
+        return new_coords[mask], new_feats[mask]
+
+    
+    
 class RandomInPlaceHorizontalFlip:
     def __init__(self, p=0.5):
         ## This is the probability to flip the image
         self.p = p
 
     def __call__(self, coords, feats):
-
+        new_coords = coords.copy()
+        
         if np.random.rand() < self.p:
-            min_h = coords[:,1].min()
-            max_h = coords[:,1].max()
-            coords[:,1] = max_h - (coords[:,1] - min_h)
+            min_h = new_coords[:,1].min()
+            max_h = new_coords[:,1].max()
+            new_coords[:,1] = max_h - (new_coords[:,1] - min_h)
 
-        return coords,feats
+        return new_coords,feats
 
 class RandomInPlaceVerticalFlip:
     def __init__(self, p=0.5):
         self.p = p
 
     def __call__(self, coords, feats):
+        new_coords = coords.copy()
 
         if np.random.rand() < self.p:
-            min_v = coords[:,0].min()
-            max_v = coords[:,0].max()
-            coords[:,0] = max_v - (coords[:,0] - min_v)
+            min_v = new_coords[:,0].min()
+            max_v = new_coords[:,0].max()
+            new_coords[:,0] = max_v - (new_coords[:,0] - min_v)
 
-        return coords,feats
+        return new_coords,feats
 
 class RandomHorizontalFlip:
     def __init__(self, p=0.5, x_max=256):
@@ -290,11 +309,12 @@ class RandomHorizontalFlip:
         self.x_max = x_max
 
     def __call__(self, coords, feats):
+        new_coords = coords.copy()
 
         if np.random.rand() < self.p:
-            coords[:,1] = self.x_max - coords[:,1]
+            new_coords[:,1] = self.x_max - new_coords[:,1]
 
-        return coords,feats
+        return new_coords,feats
 
     
 class RandomVerticalFlip:
@@ -303,17 +323,18 @@ class RandomVerticalFlip:
         self.y_max = y_max
 
     def __call__(self, coords, feats):
-
+        new_coords = coords.copy()
+        
         if np.random.rand() < self.p:
-            coords[:,0] = self.y_max - coords[:,0]
+            new_coords[:,0] = self.y_max - new_coords[:,0]
 
-        return coords,feats
+        return new_coords,feats
 
     
     
 ## Need to define a fairly standard functions that work for ME tensors
 class RandomRotation2D:
-    def __init__(self, angle, max_y, max_x):
+    def __init__(self, angle, max_y=None, max_x=None):
         self.angle = angle
         self.max_y = max_y
         self.max_x = max_x
@@ -328,29 +349,42 @@ class RandomRotation2D:
     def __call__(self, coords, feats):
     	# Generate a random rotation angle
         angle = np.deg2rad(np.random.normal(loc=0, scale=self.angle))
-
-        # Pick a random central-ish point
-        cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
-        cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
-        center = np.array([cy, cx])
+        fcoords = coords.astype(float)
         
-    	# Get the 2D rotation matrix
+        ## Keep old default behaviour
+        if self.max_y is not None and self.max_x is not None:
+            # Pick a random central-ish point
+            cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
+            cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
+            center = np.array([cy, cx])
+        ## Add a new option to take a point within the image
+        else:
+            # centroid = coords.mean(axis=0)
+            # std = coords.std(axis=0)
+            # center = centroid + truncnorm.rvs(-2, 2, loc=0, scale=std)
+            temp_idx = np.random.randint(len(fcoords))
+            center = fcoords[temp_idx]
+
+        # Get the 2D rotation matrix
         R = self._M(angle)
         
         # Shift and apply the rotation
-        shifted = coords - center
+        shifted = fcoords - center
         rotated = shifted @ R
-        rotated_coords = rotated + center
+        rotated_coords = rotated + center        
         return rotated_coords, feats
 
+
 class RandomShear2D:
-    def __init__(self, sigma_y, sigma_x, max_y, max_x):
+    def __init__(self, sigma_y, sigma_x, max_y=None, max_x=None):
         self.sigma_x = sigma_x
         self.sigma_y = sigma_y
         self.max_x = max_x
         self.max_y = max_y
 
     def __call__(self, coords, feats):
+        fcoords = coords.astype(float)
+
         shear_x = np.random.normal(loc=0, scale=self.sigma_x)
         shear_y = np.random.normal(loc=0, scale=self.sigma_y)
 
@@ -358,13 +392,22 @@ class RandomShear2D:
             [1, shear_x],
             [shear_y, 1]
         ])
-
-        # Pick a random central-ish point
-        cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
-        cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
-        center = np.array([cy, cx])
         
-        shifted = coords - center
+        ## Keep old default behaviour
+        if self.max_y is not None and self.max_x is not None:
+            # Pick a random central-ish point
+            cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
+            cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
+            center = np.array([cy, cx])
+        ## Add a new option to take a point within the image
+        else:
+            #centroid = coords.mean(axis=0)
+            #std = coords.std(axis=0)
+            #center = centroid + truncnorm.rvs(-2, 2, loc=0, scale=std)
+            temp_idx = np.random.randint(len(fcoords))
+            center = fcoords[temp_idx]
+            
+        shifted = fcoords - center
         rotated = shifted @ shear_matrix
         rotated_coords = rotated + center
         return rotated_coords, feats
@@ -408,6 +451,7 @@ class RandomPixelNoise2D:
 ## Updated function to remove random blocks
 ## The x and y ranges can be extended if the other augmentations have extended the image
 ## These set limits prevent a small image from being entirely blocked out
+## A cheaper alternative might just be to drop some fraction of the hits?
 class RandomBlockZeroImproved:
     def __init__(self, nblocks=[0,6], block_range=[0,10], xrange=[0,140], yrange=[0,280]):
         self.nblocks = nblocks
@@ -441,6 +485,26 @@ class RandomBlockZeroImproved:
         keep_mask = ~inside_any
         return coords[keep_mask].copy(), feats[keep_mask].copy()        
 
+class RandomDropout:
+    def __init__(self, max_frac=0.1):
+        self.max_frac = max_frac
+
+    def __call__(self, coords, feats):
+        N = coords.shape[0]
+        if N == 0:
+            # Return copies to avoid modifying original
+            return coords.copy(), feats.copy()
+
+        # Determine how many points to keep
+        frac = np.random.uniform(0.0, self.max_frac)
+        k = int(N * (1.0 - frac))
+
+        # Randomly select indices to keep
+        idx = np.random.choice(N, size=k, replace=False)
+
+        # Return copies of selected coords and feats
+        return coords[idx].copy(), feats[idx].copy()
+    
     
 ## Apply a Gaussian jitter to all values
 class RandomJitterCharge:
@@ -667,7 +731,8 @@ class BilinearSplat:
         
         return unique_coords, summed_feats
 
-    
+
+## Warning: entirely broken, do not use    
 class GaussianSmear:
     def __init__(self, sigma=0.8, threshold=0.04, y_max=280, x_max=140):
         self.sigma = sigma
@@ -754,14 +819,15 @@ class GaussianSmear:
         return unique_coords, summed_feats
 
 class RandomStretch2D:
-    def __init__(self, stretch_y=0.06, stretch_x=0.06, y_max=280, x_max=140):
+    def __init__(self, stretch_y=0.06, stretch_x=0.06, max_y=None, max_x=None):
         self.stretch_y = stretch_y
         self.stretch_x = stretch_x
-        self.y_max = y_max
-        self.x_max = x_max
+        self.max_y = max_y
+        self.max_x = max_x
 
     def __call__(self, coords, feats):
         # Random scale factors
+        fcoords = coords.astype(float)
         scale_y = np.random.normal(loc=1.0, scale=self.stretch_y)
         scale_x = np.random.normal(loc=1.0, scale=self.stretch_x)
 
@@ -770,12 +836,21 @@ class RandomStretch2D:
             [0.0, scale_x]
         ])
 
-        # Pick a random center point (so it's not always anchored at origin)
-        cx = np.random.uniform(self.x_max/4, 3 * self.x_max/4)
-        cy = np.random.uniform(self.y_max/4, 3 * self.y_max/4)
-        center = np.array([cy, cx])
-
-        shifted = coords - center
+        ## Keep old default behaviour
+        if self.max_y is not None and self.max_x is not None:
+            # Pick a random central-ish point
+            cx = np.random.uniform(self.max_x/4, 3*self.max_x/4)
+            cy = np.random.uniform(self.max_y/4, 3*self.max_y/4)
+            center = np.array([cy, cx])
+        ## Add a new option to take a point within the image
+        else:
+            #centroid = coords.mean(axis=0)
+            #std = coords.std(axis=0)
+            #truncnorm.rvs(-2, 2, loc=0, scale=std)
+            temp_idx = np.random.randint(len(fcoords))
+            center = fcoords[temp_idx]
+            
+        shifted = fcoords - center
         stretched = shifted @ scale_matrix
         stretched_coords = stretched + center
 
@@ -998,28 +1073,6 @@ def get_transform(det="single", aug_type=None):
             ThisCrop(x_max, y_max),
             ConstantCharge()
         ])
-    if aug_type == "unitnoise10":
-        return transforms.Compose([
-            RandomGridDistortion2D(),
-            RandomShear2D(0.05, 0.05, y_max, x_max),
-            RandomInPlaceHorizontalFlip(),
-            RandomRotation2D(6, y_max, x_max),
-            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
-            ThisCrop(x_max, y_max),
-            ConstantCharge(),
-            RandomPixelNoise2D(10)
-	])
-    if aug_type == "unitnoise30":
-        return transforms.Compose([
-            RandomGridDistortion2D(),
-            RandomShear2D(0.05, 0.05, y_max, x_max),
-            RandomInPlaceHorizontalFlip(),
-            RandomRotation2D(6, y_max, x_max),
-            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
-            ThisCrop(x_max, y_max),
-            ConstantCharge(),
-            RandomPixelNoise2D(30)
-	])
 
     if aug_type == "bigunitnoiseblock":
         return transforms.Compose([
@@ -1065,7 +1118,7 @@ def get_transform(det="single", aug_type=None):
     	    RandomScaleCharge(0.05),
     	    RandomJitterCharge(0.05),
     	    BilinearSplat(0.04),
-            RandomCrop(x_max, y_max),
+            ThisCrop(x_max, y_max),
             GaussianSmear(0.8, 0.02, y_max, x_max)
         ])
 
@@ -1083,26 +1136,104 @@ def get_transform(det="single", aug_type=None):
     	    RandomScaleCharge(0.05),
     	    RandomJitterCharge(0.05),
     	    BilinearSplat(0.04),
-            RandomCrop(x_max, y_max)
+            ThisCrop(x_max, y_max)
         ])
-    if aug_type=="smallbilinstretch":
+
+    if aug_type=="smallbilinstretchnosmear":
         return transforms.Compose([
-    	    RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+            RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+            RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),
+            RandomShear2D(0.03, 0.03, y_orig, x_orig),
+            RandomRotation2D(3, y_orig, x_orig),
+            RandomStretch2D(0.05, 0.04, y_max=y_orig, x_max=x_orig),
+            RandomGridDistortion2D(100, 5),
+            RandomScaleCharge(0.05),
+            RandomJitterCharge(0.05),
+            BilinearSplat(0.04),
+            RandomCrop(x_max, y_max),
+            # GaussianSmear(0.8, 0.02, y_max, x_max)
+        ])
+
+    if aug_type=="newsmall":
+        return transforms.Compose([
+    	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig]),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
     	    RandomInPlaceHorizontalFlip(),
             RandomInPlaceVerticalFlip(),
     	    RandomHorizontalFlip(x_max=x_orig),
             RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.03, 0.03, y_orig, x_orig),
-            RandomRotation2D(3, y_orig, x_orig),
-            RandomStretch2D(0.05, 0.04, y_max=y_orig, x_max=x_orig),
+            RandomShear2D(0.03, 0.03),
+            RandomRotation2D(3),
+            RandomStretch2D(0.05, 0.04),
     	    RandomGridDistortion2D(100, 5),
     	    RandomScaleCharge(0.05),
     	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.04),
-            RandomCrop(x_max, y_max),
-            GaussianSmear(0.8, 0.02, y_max, x_max)
+    	    BilinearSplat(0.01),
+            RandomCrop(x_max, y_max, 20),
+            # GaussianSmear(0.8, 0.02, y_max, x_max)
         ])
+
+    if aug_type=="newbig":
+        return transforms.Compose([
+    	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+    	    RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+    	    RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),    
+            RandomShear2D(0.1, 0.1),
+            RandomRotation2D(6),
+            RandomStretch2D(0.1, 0.1),
+    	    RandomGridDistortion2D(100, 5),
+    	    RandomScaleCharge(0.05),
+    	    RandomJitterCharge(0.05),
+    	    BilinearSplat(0.01),
+            RandomCrop(x_max, y_max, 20),
+        ])
+
+    ## Is the worse performance here due to the dropout, the threshold change, or the smaller stretch?
+    if aug_type=="newvbig":
+        return transforms.Compose([
+            RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+            RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+            RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),
+            RandomShear2D(0.1, 0.1),
+            RandomRotation2D(6),
+            RandomStretch2D(0.15, 0.15),
+            RandomGridDistortion2D(100, 5),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.05),
+            BilinearSplat(0.5),
+            RandomDropout(0.1),
+            RandomCrop(x_max, y_max, 20)
+	])
+
+    if aug_type=="newvvbig":
+        return transforms.Compose([
+            RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+            RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+            RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),
+            RandomShear2D(0.2, 0.2),
+            RandomRotation2D(10),
+            RandomStretch2D(0.25, 0.25),
+            RandomGridDistortion2D(100, 8),
+            RandomScaleCharge(0.1),
+            RandomJitterCharge(0.05),
+            BilinearSplat(0.5),
+            RandomDropout(0.1),
+            RandomCrop(x_max, y_max, 20)
+        ])
+
     
     if aug_type == "bigunit":
         return transforms.Compose([
