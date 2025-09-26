@@ -4,56 +4,45 @@ import MinkowskiEngine as ME
 import math
 
 class ClusteringLossMerged(nn.Module):
-    def __init__(self, temperature=0.5, entropy_weight=1.0):
+    def __init__(self, temperature=0.5, entropy_weight=1.0, match_weight=1.0):
         super().__init__()
         self.temperature = temperature
         self.entropy_weight = entropy_weight
+        self.match_weight = match_weight
 
     def forward(self, c_cat):
+
         batch_size = c_cat.shape[0]//2
         class_num = c_cat.shape[1]
         c_i, c_j = c_cat[:batch_size], c_cat[batch_size:]
 
-        negatives_mask = (~torch.eye(batch_size*2, batch_size*2, dtype=bool, device=c_cat.device)).float()
-        representations = torch.cat([c_i, c_j], dim=0)
-        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
-
-        sim_ij = torch.diag(similarity_matrix, batch_size)
-        sim_ji = torch.diag(similarity_matrix, -batch_size)
-        positives = torch.cat([sim_ij, sim_ji], dim=0)
-
-        nominator = torch.exp(positives / self.temperature)
-        denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
-
-        loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
-        loss = torch.sum(loss_partial) / (2*batch_size)
-
-        ## Now add the entropy term
+        ## Start with the entropy term
         p_i = c_i.sum(dim=0)
         p_j = c_j.sum(dim=0)
-
-        # Compute entropy and normalize by log(K)
         p_i = p_i/p_i.sum()
         p_j = p_j/p_j.sum()
 
         ne_i = math.log(p_i.size(0)) + (p_i * torch.log(p_i + 1e-10)).sum()
         ne_j = math.log(p_j.size(0)) + (p_j * torch.log(p_j + 1e-10)).sum()
         ne_loss = ne_i + ne_j
+
+        c_i = c_i.t()
+        c_j = c_j.t()
         
-        ## ## Now add the entropy term
-        ## p_i = c_i.sum(dim=0)
-        ## p_j = c_j.sum(dim=0)
-        ## 
-        ## # Compute entropy and normalize by log(K)
-        ## p_i = p_i/p_i.sum()
-        ## p_j = p_j/p_j.sum()
-        ## 
-        ## ## Maybe don't divide by class_num?
-        ## entropy_i = -torch.sum(p_i * torch.log(p_i + 1e-10))/math.log(class_num)
-        ## entropy_j = -torch.sum(p_j * torch.log(p_j + 1e-10))/math.log(class_num)
-        ## 
-        ## ne_loss = -0.5 * (entropy_i + entropy_j)
-        
+        negatives_mask = (~torch.eye(class_num*2, class_num*2, dtype=bool, device=c_cat.device)).float()
+        representations = torch.cat([c_i, c_j], dim=0)
+        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+
+        sim_ij = torch.diag(similarity_matrix, class_num)
+        sim_ji = torch.diag(similarity_matrix, -class_num)
+        positives = torch.cat([sim_ij, sim_ji], dim=0)
+
+        nominator = torch.exp(positives / self.temperature)
+        denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
+
+        loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
+        loss = torch.sum(loss_partial) / (2*class_num)
+
         return loss, ne_loss*self.entropy_weight
 
     
