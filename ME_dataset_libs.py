@@ -639,20 +639,18 @@ class DoNothing:
 
     
 class SemiRandomCrop:
-    def __init__(self, new_x, new_y, clip_x=20, clip_y=40, offset_y=20):
+    def __init__(self, new_x, new_y, clip_x=10, clip_y=10):
         self.new_y = new_y
         self.new_x = new_x
         self.clip_x = clip_x
         self.clip_y = clip_y
-        self.offset_y = offset_y
-        
 
     def __call__(self, coords, feats):
         new_feats = feats.copy()
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
-                
+        
         y_max = np.ceil(np.percentile(y_round,95))
         y_min = np.floor(np.percentile(y_round,5))
         x_max = np.max(x_round)
@@ -661,23 +659,20 @@ class SemiRandomCrop:
         shift_x, shift_y = 0, 0
         
         if x_max - x_min >= self.new_x:
-            ## If the transformed image is wider than the cropped image, ensure it's "through-going"
             shift_x = random.randint(self.new_x-x_max, -1*x_min)
-        else: 
-            ## If not, randomly place it in the image, with a small region "clipped"
+        else:
             shift_x = random.randint(-x_min -self.clip_x, self.new_x-x_max + self.clip_x)
-        ## y has to be treated differently, because the bottom is far more important
         if y_max - y_min >= self.new_y:
-            shift_y = random.randint(-y_min-self.clip_y+self.offset_y, -y_min+self.clip_y+self.offset_y)
-        else: 
-            ## 
-            shift_y = random.randint(-y_min-self.clip_y+self.offset_y, self.new_y-y_max+self.clip_y+self.offset_y)
-
-        new_coords = new_coords + np.array([shift_y, shift_x])        
+            shift_y = random.randint(-y_min-self.clip_y, -y_min+self.clip_y)
+        else:
+            shift_y = random.randint(-y_min-self.clip_y, self.new_y-y_max+self.clip_y)
+            
+        new_coords = new_coords + np.array([shift_y, shift_x])
         mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_y)) \
-             & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_x))
-                
+        & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_x))
+        
         return new_coords[mask], new_feats[mask]
+    
         
 
 class BilinearSplat:
@@ -1062,105 +1057,12 @@ def get_transform(det="single", aug_type=None):
         y_max=768
         x_orig=256
         y_orig=800
-        
-    if aug_type == "unitcharge":
-        return transforms.Compose([
-            RandomGridDistortion2D(),
-            RandomShear2D(0.05, 0.05, y_max, x_max),
-            RandomInPlaceHorizontalFlip(),
-            RandomRotation2D(6, y_max, x_max),
-            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
-            ThisCrop(x_max, y_max),
-            ConstantCharge()
-        ])
 
-    if aug_type == "bigunitnoiseblock":
-        return transforms.Compose([
-            RandomGridDistortion2D(),
-            RandomShear2D(0.05, 0.05, y_max, x_max),
-            RandomInPlaceHorizontalFlip(),
-            RandomRotation2D(6, y_max, x_max),
-            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
-            ThisCrop(x_max, y_max),
-            ConstantCharge(),
-            RandomPixelNoise2D(20, (0, x_max, 0, y_max))
-        ])
 
-    if aug_type == "bilingaus":
+    # small
+    if aug_type=="smallaug":
         return transforms.Compose([
-            RandomBlockZeroImproved([0,50], [5,10], [0,x_max], [0,y_max]),
-            RandomShear2D(0.05, 0.05, y_max, x_max),
-            RandomHorizontalFlip(),
-            RandomRotation2D(6, y_max, x_max),
-            RandomStretch2D(y_max=y_max, x_max=x_max),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_max], [0,y_max]),
-            RandomGridDistortion2D(),
-            RandomScaleCharge(0.02),
-            RandomJitterCharge(0.02),
-            BilinearSplat(0.04),
-            ThisCrop(x_max, y_max),
-            GaussianSmear(0.8, 0.02, y_max, x_max)
-        ])
-
-    if aug_type=="newbilin":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.06, 0.06, y_orig, x_orig),
-            RandomRotation2D(8, y_orig, x_orig),
-            RandomStretch2D(0.1, 0.06, y_max=y_orig, x_max=x_orig),
-    	    RandomGridDistortion2D(100, 5),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.04),
-            ThisCrop(x_max, y_max),
-            GaussianSmear(0.8, 0.02, y_max, x_max)
-        ])
-
-    if aug_type=="smallbilin":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.03, 0.03, y_orig, x_orig),
-            RandomRotation2D(3, y_orig, x_orig),
-    	    RandomGridDistortion2D(100, 5),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.04),
-            ThisCrop(x_max, y_max)
-        ])
-
-    if aug_type=="smallbilinstretchnosmear":
-        return transforms.Compose([
-            RandomBlockZeroImproved([0,50], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-            RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-            RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),
-            RandomShear2D(0.03, 0.03, y_orig, x_orig),
-            RandomRotation2D(3, y_orig, x_orig),
-            RandomStretch2D(0.05, 0.04, y_max=y_orig, x_max=x_orig),
-            RandomGridDistortion2D(100, 5),
-            RandomScaleCharge(0.05),
-            RandomJitterCharge(0.05),
-            BilinearSplat(0.04),
-            RandomCrop(x_max, y_max),
-            # GaussianSmear(0.8, 0.02, y_max, x_max)
-        ])
-
-    if aug_type=="newsmall":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig]),
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig]),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
     	    RandomInPlaceHorizontalFlip(),
             RandomInPlaceVerticalFlip(),
@@ -1168,16 +1070,34 @@ def get_transform(det="single", aug_type=None):
             RandomVerticalFlip(y_max=y_orig),    
             RandomShear2D(0.03, 0.03),
             RandomRotation2D(3),
-            RandomStretch2D(0.05, 0.04),
+            RandomStretch2D(0.05, 0.05),
     	    RandomGridDistortion2D(100, 5),
     	    RandomScaleCharge(0.05),
     	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.01),
-            RandomCrop(x_max, y_max, 20),
-            # GaussianSmear(0.8, 0.02, y_max, x_max)
+            SemiRandomCrop(x_max, y_max, 20),
         ])
-
-    if aug_type=="newbig":
+        
+    # smallbilin
+    if aug_type=="smallaugbilin":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+    	    RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+    	    RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),    
+            RandomShear2D(0.03, 0.03),
+            RandomRotation2D(3),
+            RandomStretch2D(0.05, 0.05),
+    	    RandomGridDistortion2D(100, 5),
+    	    RandomScaleCharge(0.05),
+    	    RandomJitterCharge(0.05),
+    	    BilinearSplat(0.5),
+            SemiRandomCrop(x_max, y_max, 20),
+        ])
+        
+    # big
+    if aug_type=="bigaug":
         return transforms.Compose([
     	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
             RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
@@ -1191,10 +1111,30 @@ def get_transform(det="single", aug_type=None):
     	    RandomGridDistortion2D(100, 5),
     	    RandomScaleCharge(0.05),
     	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.01),
-            RandomCrop(x_max, y_max, 20),
+            SemiRandomCrop(x_max, y_max, 20),
+            RandomDropout(0.1)
         ])
-
+        
+    # bigbilin
+    if aug_type=="bigaugbilin":
+        return transforms.Compose([
+    	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
+    	    RandomInPlaceHorizontalFlip(),
+            RandomInPlaceVerticalFlip(),
+    	    RandomHorizontalFlip(x_max=x_orig),
+            RandomVerticalFlip(y_max=y_orig),    
+            RandomShear2D(0.1, 0.1),
+            RandomRotation2D(6),
+            RandomStretch2D(0.1, 0.1),
+    	    RandomGridDistortion2D(100, 5),
+    	    RandomScaleCharge(0.05),
+    	    RandomJitterCharge(0.05),
+    	    BilinearSplat(0.5),
+            SemiRandomCrop(x_max, y_max, 20),
+            RandomDropout(0.1)
+        ])
+    
     ## Is the worse performance here due to the dropout, the threshold change, or the smaller stretch?
     if aug_type=="newvbig":
         return transforms.Compose([
@@ -1234,29 +1174,6 @@ def get_transform(det="single", aug_type=None):
             RandomCrop(x_max, y_max, 20)
         ])
 
-    
-    if aug_type == "bigunit":
-        return transforms.Compose([
-            RandomGridDistortion2D(),
-            RandomShear2D(0.2, 0.2, y_max, x_max),
-            RandomHorizontalFlip(),
-            RandomRotation2D(12, y_max, x_max),
-            RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
-            ThisCrop(x_max, y_max),
-            ConstantCharge()
-	])
-
-
-    ## If not, return the default
-    return transforms.Compose([
-    	RandomGridDistortion2D(),
-    	RandomShear2D(0.05, 0.05, y_max, x_max),
-    	RandomHorizontalFlip(),
-    	RandomRotation2D(6, y_max, x_max),
-    	RandomBlockZeroImproved([0,10], [5,10], [0,x_max], [0,y_max]),
-    	RandomScaleCharge(0.02),
-    	RandomJitterCharge(0.02),
-    	ThisCrop(x_max, y_max)
-        ])
+    raise ValueError("Unknown augmentation type:", aug_type)
 
     
