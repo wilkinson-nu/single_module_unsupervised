@@ -429,12 +429,16 @@ class CCEncoderFSD12x4Opt(nn.Module):
                     nn.init.constant_(m.bn.bias, 0)
                     m.track_running_stats = False
                     
-    def forward(self, x, batch_size):
+    def forward(self, x, batch_size, return_maps=False):
 
         ## This is always the same, but can choose what to return
         x = self.encoder_cnn(x)
 
         outputs = []
+
+        if return_maps:
+            dense,_,_ = x.dense(shape=torch.Size([batch_size, self.ch[5], 12, 4]))
+            return dense
         
         # Compute the dense tensor if we want to hand this back
         if self.flatten:
