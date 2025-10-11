@@ -168,9 +168,9 @@ def get_projhead(nchan, args):
     hidden_act_fn = nn.SiLU
     latent_act_fn=nn.Tanh
     if args.proj_arch == "logits":
-        proj_head = ProjectionHeadLogits(nchan, args.latent, hidden_act_fn)
+        proj_head = ProjectionHeadLogits(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
     else:
-        proj_head = ProjectionHead(nchan, args.latent, hidden_act_fn, latent_act_fn)
+        proj_head = ProjectionHead(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn, latent_act_fn)
     return proj_head
 
 def get_clusthead(nchan, args):
@@ -406,6 +406,7 @@ if __name__ == '__main__':
     ## Optional
     parser.add_argument('--pretrained', type=str, default=None, nargs='?')
     parser.add_argument('--latent', type=int, default=128, nargs='?')
+    parser.add_argument('--nhidden', type=int, default=512, nargs='?')
     parser.add_argument('--nclusters', type=int, default=20, nargs='?')
     parser.add_argument('--nstep', type=int, default=200, nargs='?')    
     parser.add_argument('--nchan', type=int, default=16, nargs='?')
