@@ -19,7 +19,8 @@ from torch import nn
 
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, ClusteringLossMerged
-from ME_NN_libs import CCEncoderFSD12x4Opt, ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits
+from ME_NN_libs import CCEncoderFSD12x4Opt, CCEncoderFSD24x8Opt
+from ME_NN_libs import ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits, ClusteringHeadTwoLayerBN, ProjectionHeadLogitsBN, ProjectionHeadOneLogits
 from ME_analysis_libs import argmax_consistency
 
 ## For logging
@@ -61,7 +62,8 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
                                              num_workers=num_workers,
                                              drop_last=True,
-                                             prefetch_factor=1,
+                                             persistent_workers=True,
+                                             prefetch_factor=2,
                                              sampler=sampler)
     return dataloader
 
@@ -70,38 +72,52 @@ def manage_cuda_memory(rank, gpu_threshold):
     if torch.cuda.memory_allocated(rank) > gpu_threshold:
         torch.cuda.empty_cache()
 
-def load_pretrained(encoder, proj_head, clust_head, file_name):
+def load_pretrained(encoder, heads, file_name):
     checkpoint = torch.load(file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
-    proj_head.module.load_state_dict(checkpoint['proj_head_state_dict'])
-    clust_head.module.load_state_dict(checkpoint['clust_head_state_dict'])    
+
+    ## Load heads as requested
+    for name, head in heads.items:
+        key = f'{name}_head_state_dict'
+        if key in checkpoint:
+            head.module.load_state_dict(checkpoint[key])
     return
 
-def load_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name):
+def load_checkpoint(encoder, heads, optimizer, state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
-    proj_head.module.load_state_dict(checkpoint['proj_head_state_dict'])
-    clust_head.module.load_state_dict(checkpoint['clust_head_state_dict']) 
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     torch.set_rng_state(checkpoint['rng_state'].cpu())
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+
+    ## Load heads as requested
+    for	name, head in heads.items:
+        key = f'{name}_head_state_dict'
+        if key in checkpoint:
+            head.module.load_state_dict(checkpoint[key])
+    
     return checkpoint['epoch'] + 1
 
-def save_checkpoint(encoder, proj_head, clust_head, optimizer, state_file_name, iteration, loss, acc, args):
-    torch.save({
+def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, loss, acc, args):
+
+    state_dict = {
         'epoch': iteration,
         'encoder_state_dict': encoder.module.state_dict(),
-        'proj_head_state_dict': proj_head.module.state_dict(),
-        'clust_head_state_dict': clust_head.module.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
         'loss': loss,
         'acc': acc,
         'args':vars(args)
-    }, state_file_name)
+    }
 
-def get_act_from_string(act_name):
+    ## Save heads as needed:
+    for name, head in heads.items:
+        state_dict[f'{name}_head_state_dict'] = head.module.state_dict()
+
+    torch.save(state_dict, state_file_name)
+
+def get_act_from_string_ME(act_name):
     if act_name == "relu":
         return ME.MinkowskiReLU
     if act_name == "leakyrelu":
@@ -116,14 +132,31 @@ def get_act_from_string(act_name):
         return ME.MinkowskiTanh
     if act_name == "softsign":
         return ME.MinkowskiSoftsign
-
     return None
+
+def get_act_from_string(act_name):
+    if act_name == "relu":
+        return nn.ReLU
+    if act_name == "leakyrelu":
+        return nn.LeakyReLU
+    if act_name == "gelu":
+        return nn.GELU
+    if act_name in ["silu", "swish"]:
+        return nn.SiLU
+    if act_name == "selu":
+        return nn.SELU
+    if act_name == "tanh":
+        return nn.Tanh
+    if act_name == "softsign":
+        return nn.Softsign
+    return None
+
 
 ## Function to deal with all of the dataset handling
 def get_dataset(args, rank=0):
 
     ## Get the augmentation from the argument name
-    aug_transform = get_transform('fsd', args.aug_type)
+    aug_transform = get_transform('fsd', args.aug_type, args.aug_prob)
     
     ## Get the concrete dataset
     ## train_dataset now has a mix of simulation and data, with a controllable fraction
@@ -151,36 +184,46 @@ def get_dataset(args, rank=0):
 def get_encoder(args):
     
     ## Only one architecture for now
-    #if args.enc_arch == "12x4":
-    enc = CCEncoderFSD12x4Opt
+    if args.enc_arch == "12x4":
+        enc = CCEncoderFSD12x4Opt
+    elif args.enc_arch == "24x8":
+        enc = CCEncoderFSD24x8Opt
         
-    enc_act_fn=get_act_from_string(args.enc_act)
+    enc_act_fn=get_act_from_string_ME(args.enc_act)
     encoder = enc(nchan=args.nchan, \
                   act_fn=enc_act_fn, \
                   first_kernel=args.enc_arch_first_kernel, \
                   flatten=bool(args.enc_arch_flatten), \
                   pool=args.enc_arch_pool, \
                   slow_growth=bool(args.enc_arch_slow_growth),
-                  sep_heads=bool(args.enc_arch_sep_heads))
+                  sep_heads=bool(args.enc_arch_sep_heads),
+                  drop_fract=args.dropout)
     return encoder
 
 def get_projhead(nchan, args):
-    hidden_act_fn = nn.SiLU
+    hidden_act_fn = get_act_from_string(args.enc_act)
     latent_act_fn=nn.Tanh
     if args.proj_arch == "logits":
         proj_head = ProjectionHeadLogits(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
+    elif args.proj_arch == "logitsbn":
+        proj_head = ProjectionHeadLogitsBN(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
+    elif args.proj_arch == "one":
+        proj_head = ProjectionHeadOneLogits(nchan, args.latent)
     else:
         proj_head = ProjectionHead(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn, latent_act_fn)
     return proj_head
 
 def get_clusthead(nchan, args):
 
-    if args.clust_arch == "one":
-        clust = ClusteringHeadOneLayer
+    hidden_act_fn = get_act_from_string(args.enc_act)
+    if args.clust_arch == "none":
+        clust_head = None
+    elif args.clust_arch == "one":
+        clust_head = ClusteringHeadOneLayer(nchan, args.nclusters, args.softmax_temp)
+    elif args.clust_arch == "twobn":
+        clust_head = ClusteringHeadTwoLayerBN(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn)
     else:
-        clust = ClusteringHeadTwoLayer
-    
-    clust_head = clust(nchan, args.nclusters, args.softmax_temp)
+        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, args.softmax_temp)
     return clust_head
 
 def get_scheduler(args):
@@ -202,13 +245,32 @@ def run_training(rank, world_size, args):
     ## Setup the encoder
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
+    encoder_nchan_instance = encoder.get_nchan_instance()
+    encoder_nchan_cluster = encoder.get_nchan_cluster()
+    encoder .to(device)
+    encoder = DDP(encoder, device_ids=[rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
-    ## Set up the heads
-    hidden_act_fn = nn.SiLU
-    latent_act_fn=nn.Tanh
-    proj_head = get_projhead(encoder.get_nchan_instance(), args)
-    clust_head = get_clusthead(encoder.get_nchan_cluster(), args)
+    ## Dictionary of heads
+    heads = {}
     
+    ## Dictionary of loss functions
+    loss_fns = {}
+
+    ## Set up head and loss for projection space
+    proj_head = get_projhead(encoder_nchan_instance, args)
+    proj_head.to(device)
+    proj_head = DDP(proj_head, device_ids=[rank])
+    heads["proj"] = proj_head
+    loss_fns["proj"] = NTXentMerged(args.proj_temp)
+
+    ## Optionally include the head and loss for the clustering space
+    if args.clust_arch != "none":
+        clust_head = get_clusthead(encoder_nchan_cluster, args)
+        clust_head .to(device)
+        clust_head = DDP(clust_head, device_ids=[rank])
+        heads["clust"] = clust_head
+        loss_fns["clust"] = ClusteringLossMerged(args.clust_temp, args.entropy_scale)
+
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
     train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, 16)
@@ -222,26 +284,9 @@ def run_training(rank, world_size, args):
         print("Training with", num_iterations, "iterations")
         if log_dir: writer = SummaryWriter(log_dir=log_dir)
 
-    ## Set up the loss functions
-    proj_loss = NTXentMerged
-    clust_loss = ClusteringLossMerged
-    proj_loss_fn = proj_loss(args.proj_temp)
-    clust_loss_fn = clust_loss(args.clust_temp, args.entropy_scale, args.match_weight)
-    
-    encoder.to(device)
-    proj_head.to(device)
-    clust_head.to(device)
-    
-    ## Sort out parallel models (e.g., one is sent to each GPU)
-    encoder = DDP(encoder, device_ids=[rank])
-    proj_head = DDP(proj_head, device_ids=[rank])
-    clust_head = DDP(clust_head, device_ids=[rank])
-
     ## Sort out the optimizer (one for each GPU...)
-    params_to_optimize = [
-        {'params': encoder.parameters()},
-        {'params': proj_head.parameters()},
-        {'params': clust_head.parameters()},
+    params_to_optimize = [{'params': encoder.parameters()}] + [
+        {'params': h.parameters()} for h in heads.values()
     ]
     optimizer = torch.optim.AdamW(params_to_optimize, lr=args.lr, weight_decay=args.weight_decay)
 
@@ -271,7 +316,7 @@ def run_training(rank, world_size, args):
         if not args.state_file:
             if rank==0: print("Restart requested, but no state file provided, aborting")
             sys.exit()
-        start_iteration = load_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file)
+        start_iteration = load_checkpoint(encoder, heads, optimizer, args.state_file)
         if rank==0: print("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
@@ -279,7 +324,7 @@ def run_training(rank, world_size, args):
         if args.restart:
             print("Restart requested along with a pretraining file, abort!")
             sys.exit()
-        load_pretrained(encoder, proj_head, clust_head, args.pretrained)
+        load_pretrained(encoder, heads, args.pretrained)
         
     if rank==0 and args.log: writer = SummaryWriter(log_dir=log_dir)
 
@@ -290,16 +335,15 @@ def run_training(rank, world_size, args):
         train_loader.sampler.set_epoch(iteration)
         
         tot_loss_tensor = torch.tensor(0.0, device=device)  
-        proj_loss_tensor = torch.tensor(0.0, device=device)        
-        clust_loss_tensor = torch.tensor(0.0, device=device)        
-        clust_entropy_tensor = torch.tensor(0.0, device=device)
-        match_loss_tensor = torch.tensor(0.0, device=device)
+        losses_tensor = {name: torch.tensor(0.0, device=device) for name in heads.keys()}       
+        entropy_tensor = torch.tensor(0.0, device=device)
         total_acc_tensor = torch.tensor(0.0, device=device)
         
         nbatches   = len(train_loader)
         
-        # Set train mode for both the encoder and the decoder
+        # Set train mode for the encoder and any heads
         encoder.train()
+        for h in heads.values(): h.train()
         
         # Iterate over batches of images with the dataloader
         for cat_bcoords, cat_bfeats, this_batch_size in train_loader:
@@ -311,12 +355,24 @@ def run_training(rank, world_size, args):
 
             ## Now do the forward passes
             encoded_instance_batch, encoded_cluster_batch = encoder(cat_batch, this_batch_size)
-            proj_batch = proj_head(encoded_instance_batch)
-            clust_batch = clust_head(encoded_cluster_batch)
 
-            proj_loss = proj_loss_fn(proj_batch)
-            clust_loss, clust_entropy = clust_loss_fn(clust_batch)
-            tot_loss = proj_loss + clust_loss + clust_entropy
+            ## Keep track of the total loss
+            tot_loss = 0.0
+
+            ## Deal with the projection loss
+            proj_batch = heads["proj"](encoded_instance_batch)
+            proj_loss = loss_fns["proj"](proj_batch)
+            tot_loss += proj_loss
+            losses_tensor["proj"] += proj_loss.detach()
+            
+            ## Optionally deal with clustering loss
+            if "clust" in heads:
+                clust_batch = heads["clust"](encoded_cluster_batch)
+                clust_loss, clust_entropy = loss_fns["clust"](clust_batch)
+                tot_loss += clust_loss + clust_entropy
+                losses_tensor["clust"] += clust_loss.detach()
+                entropy_tensor += clust_entropy.detach()
+                total_acc_tensor += argmax_consistency(clust_batch).detach()
             
             # Backward pass
             optimizer.zero_grad()
@@ -325,29 +381,21 @@ def run_training(rank, world_size, args):
 
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
-            proj_loss_tensor += proj_loss.detach()
-            clust_loss_tensor += clust_loss.detach()
-            clust_entropy_tensor += clust_entropy.detach()
-            # match_loss_tensor += match_loss.detach()
-            
-            ## Additional logging (already detached)
-            total_acc_tensor += argmax_consistency(clust_batch)
             
             # Manage CUDA memory for ME
             torch.cuda.empty_cache()
             
         dist.all_reduce(tot_loss_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(proj_loss_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(clust_loss_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(clust_entropy_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(match_loss_tensor, op=dist.ReduceOp.SUM)
+        for name in heads.keys(): dist.all_reduce(losses_tensor[name], op=dist.ReduceOp.SUM)
+        dist.all_reduce(entropy_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_acc_tensor, op=dist.ReduceOp.SUM)
 
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size) 
-        av_proj_loss = proj_loss_tensor.item() / (nbatches * world_size) 
-        av_clust_loss = clust_loss_tensor.item() / (nbatches * world_size) 
-        av_clust_entropy = clust_entropy_tensor.item() / (nbatches * world_size)
-        av_match_loss = match_loss_tensor.item() / (nbatches * world_size)
+        av_losses = {
+            name: losses_tensor[name].item() / (nbatches * world_size)
+            for name in heads.keys()
+        }
+        av_entropy = entropy_tensor.item() / (nbatches * world_size)
         av_acc = total_acc_tensor.item() / (nbatches * world_size)
         
         ## See if we have an LR scheduler...
@@ -360,27 +408,30 @@ def run_training(rank, world_size, args):
 
             if log_dir:
                 writer.add_scalar('loss/total', av_tot_loss, iteration)              
-                writer.add_scalar('loss/proj', av_proj_loss, iteration)              
-                writer.add_scalar('loss/clust', av_clust_loss+av_clust_entropy, iteration)
-                writer.add_scalar('loss/entropy', av_clust_entropy, iteration)
-                writer.add_scalar('loss/clust_only', av_clust_loss, iteration)
-                writer.add_scalar('loss/match_loss', av_match_loss, iteration)
-                writer.add_scalar('monitor/acc', av_acc, iteration)
+                writer.add_scalar('loss/proj', av_losses["proj"], iteration)
+
+                if "clust" in heads:
+                    writer.add_scalar('loss/clust', av_losses["clust"]+av_entropy, iteration)
+                    writer.add_scalar('loss/entropy', av_entropy, iteration)
+                    writer.add_scalar('loss/clust_only', av_losses["clust"], iteration)
+                    writer.add_scalar('monitor/acc', av_acc, iteration)
                 
                 if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
 
-            print(f"Processed {iteration} / {start_iteration + num_iterations}; "
-                  f"loss = {av_tot_loss:.4f} ({av_proj_loss:.4f} + {av_clust_loss:.4f} + {av_clust_entropy:.4f} + {av_match_loss:.4f}); "
-                  f"acc = {av_acc:.4f}")
+            ## Build a string to report the outcome
+            iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f}"
+            if "clust" in heads:
+                iter_string += f" ({av_losses['proj']:.4f} + {av_losses['clust']:.4f} + {av_entropy:.4f}); acc = {av_acc:.4f}"
+            print(iter_string)
             print(f"Time taken: {(time.time()-tstart):.2f}")
 
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
-            save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss, av_acc, args)
+            save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss, av_acc, args)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, proj_head, clust_head, optimizer, args.state_file, iteration, av_tot_loss, av_acc, args)
+        save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, av_tot_loss, av_acc, args)
         if log_dir: writer.close()
 
     ## Clear things up
@@ -416,6 +467,7 @@ if __name__ == '__main__':
     parser.add_argument('--proj_loss', type=str, default=None, nargs='?')
     parser.add_argument('--proj_temp', type=float, default=0.5, nargs='?')
     parser.add_argument('--aug_type', type=str, default=None, nargs='?')
+    parser.add_argument('--aug_prob', type=float, default=1, nargs='?')
     parser.add_argument('--batch_size', type=int, default=512, nargs='?')
     parser.add_argument('--weight_decay', type=float, default=0, nargs='?')
 
@@ -423,7 +475,6 @@ if __name__ == '__main__':
     parser.add_argument('--clust_temp', type=float, default=0.5, nargs='?')    
     parser.add_argument('--entropy_scale', type=float, default=1.0, nargs='?')
     parser.add_argument('--softmax_temp', type=float, default=1.0, nargs='?')
-    parser.add_argument('--match_weight', type=float, default=0.0, nargs='?')
     
     ## This changes the architecture
     parser.add_argument('--enc_arch', type=str, default="global", nargs='?')
@@ -433,7 +484,7 @@ if __name__ == '__main__':
     parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
     parser.add_argument('--enc_arch_sep_heads', type=int, choices=[0,1], default=0, nargs='?')
 
-    parser.add_argument('--clust_arch', type=str, default="one", nargs='?')
+    parser.add_argument('--clust_arch', type=str, default="none", nargs='?')
     parser.add_argument('--proj_arch', type=str, default="logits", nargs='?')
     
     ## For adding simulation files, frac_data is the fraction of nevents which should be simulation
