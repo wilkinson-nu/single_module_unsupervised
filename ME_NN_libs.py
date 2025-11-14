@@ -286,7 +286,6 @@ class ContrastiveEncoderShallowME(nn.Module):
         out = self.encoder_lin(flat)          # Final embedding
         return out
 
-
 class CCEncoderFSD12x4Opt(nn.Module):
     def __init__(self, 
                  nchan : int,
@@ -295,7 +294,8 @@ class CCEncoderFSD12x4Opt(nn.Module):
                  flatten : bool = False,
                  pool : str = None,
                  slow_growth : bool = False,
-                 sep_heads : bool = False
+                 sep_heads : bool = False,
+                 drop_fract : float = 0
                  ):
         super().__init__()
 
@@ -307,7 +307,7 @@ class CCEncoderFSD12x4Opt(nn.Module):
         self.first_kernel_size = first_kernel
         self.flatten = flatten
         self.pool = pool
-        self.drop_fract = 0
+        self.drop_fract = drop_fract
         self.sep_heads = sep_heads
 
         
@@ -461,6 +461,169 @@ class CCEncoderFSD12x4Opt(nn.Module):
             else:
                 raise ValueError("Both flat and global are disabled!")
 
+
+class CCEncoderFSD24x8Opt(nn.Module):
+    def __init__(self, 
+                 nchan : int,
+                 act_fn : object = ME.MinkowskiSiLU,
+                 first_kernel : int = 3,
+                 flatten : bool = False,
+                 pool : str = None,
+                 slow_growth : bool = False,
+                 sep_heads : bool = False,
+                 drop_fract : float = 0
+                 ):
+        super().__init__()
+
+        if slow_growth:
+            self.ch = [nchan, nchan, nchan*2, nchan*2, nchan*4]
+        else:
+            self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16]
+        self.conv_kernel_size = 3
+        self.first_kernel_size = first_kernel
+        self.flatten = flatten
+        self.pool = pool
+        self.drop_fract = drop_fract
+        self.sep_heads = sep_heads
+
+        
+        ## Optional pooling
+        if self.pool == "max":
+            self.global_pool = ME.MinkowskiGlobalMaxPooling()
+        elif self.pool == "avg":
+            self.global_pool = ME.MinkowskiGlobalAvgPooling()
+        else:
+            self.global_pool = None
+
+        ## Error checking the config
+        if self.sep_heads:
+            if self.global_pool == None or self.flatten == False:
+                raise ValueError("To use sep_heads, you need to have both pooling and flattening enabled!")        
+        
+        ### Convolutional section
+        self.encoder_cnn = nn.Sequential(
+            ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.first_kernel_size, stride=2, bias=False, dimension=2), ## 768x256 ==> 384x128
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 384x128 ==> 192x64
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 192x64 ==> 96x32
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[2]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 96x32 ==> 48x16
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[3]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 48x16 ==> 24x8
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[4]),
+            act_fn(),
+            ME.MinkowskiDropout(self.drop_fract),
+            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
+            ME.MinkowskiBatchNorm(self.ch[4]),
+        )
+
+        # Initialize weights using Xavier initialization
+        self.initialize_weights()
+
+    def get_nchan_instance(self):
+        nout = 0
+        if self.sep_heads:
+            nout += self.ch[4]*24*8 + self.ch[4]
+        else:
+            if self.flatten:
+                nout += self.ch[4]*24*8
+            if self.global_pool is not None:
+                nout += self.ch[4]
+        return nout
+
+    def get_nchan_cluster(self):
+        nout = 0
+        if self.sep_heads:
+            nout += self.ch[4]
+        else:
+            if self.flatten:
+                nout += self.ch[4]*24*8
+            if self.global_pool is not None:
+                nout += self.ch[4]
+        return nout        
+        
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, ME.MinkowskiConvolution):
+                ME.utils.kaiming_normal_(m.kernel, mode="fan_out", nonlinearity="linear")
+            if isinstance(m, ME.MinkowskiLinear):
+                ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity="linear")
+            if isinstance(m, ME.MinkowskiBatchNorm):
+                    nn.init.constant_(m.bn.weight, 1)
+                    nn.init.constant_(m.bn.bias, 0)
+                    m.track_running_stats = False
+                    
+    def forward(self, x, batch_size, return_maps=False):
+
+        ## This is always the same, but can choose what to return
+        x = self.encoder_cnn(x)
+
+        outputs = []
+
+        if return_maps:
+            dense,_,_ = x.dense(shape=torch.Size([batch_size, self.ch[4], 24, 8]))
+            return dense
+        
+        # Compute the dense tensor if we want to hand this back
+        if self.flatten:
+            dense,_,_ = x.dense(shape=torch.Size([batch_size, self.ch[4], 24, 8]))
+            flat = dense.flatten(start_dim=1)
+            outputs.append(flat)
+
+        if self.global_pool is not None:
+            glob = self.global_pool(x).F
+            outputs.append(glob)
+
+        # Decide return type
+        if self.sep_heads:
+            return torch.cat(outputs, dim=1), outputs[1]
+        else:
+            if len(outputs) == 1:
+                return outputs[0], outputs[0]
+            elif len(outputs) > 1:
+                return torch.cat(outputs, dim=1), torch.cat(outputs, dim=1)
+            else:
+                raise ValueError("Both flat and global are disabled!")
+
         
     
 # Instance-level
@@ -468,16 +631,18 @@ class ProjectionHead(nn.Module):
     def __init__(self,
                  nchan : int,
                  nlatent: int,
+                 nhidden: int = -1,
                  hidden_act_fn : object = nn.ReLU,
                  latent_act_fn : object = nn.Tanh):
         super().__init__()
 
-        self.middle_layer = max(nchan//4, nlatent)
+        ## Slightly dodgy to retain previous default behaviour
+        self.hidden = nhidden if nhidden != -1 else nchan//4
         
         self.proj = nn.Sequential(
-            nn.Linear(nchan, self.middle_layer),
+            nn.Linear(nchan, self.hidden),
             hidden_act_fn(),
-            nn.Linear(self.middle_layer, nlatent),
+            nn.Linear(self.hidden, nlatent),
             latent_act_fn(),
         )
         self.initialize_weights()
@@ -491,19 +656,22 @@ class ProjectionHead(nn.Module):
     def forward(self, x):
         return self.proj(x)
 
+
 class ProjectionHeadLogits(nn.Module):
     def __init__(self,
                  nchan : int,
                  nlatent: int,
+                 nhidden: int = -1,
                  hidden_act_fn : object = nn.ReLU):
         super().__init__()
 
-        self.middle_layer = max(nchan//4, nlatent)
+        ## Slightly dodgy to retain previous default behaviour
+        self.hidden = nhidden if nhidden != -1 else nchan//4
         
         self.proj = nn.Sequential(
-            nn.Linear(nchan, self.middle_layer),
+            nn.Linear(nchan, self.hidden),
             hidden_act_fn(),
-            nn.Linear(self.middle_layer, nlatent),
+            nn.Linear(self.hidden, nlatent),
         )
         self.initialize_weights()
     
@@ -511,7 +679,60 @@ class ProjectionHeadLogits(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                if m.bias is not None: nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
+    def forward(self, x):
+        return self.proj(x)
+
+
+class ProjectionHeadLogitsBN(nn.Module):
+    def __init__(self,
+                 nchan : int,
+                 nlatent: int,
+                 nhidden: int = -1,
+                 hidden_act_fn : object = nn.ReLU):
+        super().__init__()
+
+        ## Slightly dodgy to retain previous default behaviour
+        self.hidden = nhidden if nhidden != -1 else nchan//4
+
+        self.proj = nn.Sequential(
+            nn.Linear(nchan, self.hidden, bias=False),
+            nn.BatchNorm1d(self.hidden),
+            hidden_act_fn(),
+            nn.Linear(self.hidden, nlatent, bias=True),
+        )
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                if m.bias is not None: nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        return self.proj(x)
+
+    
+class ProjectionHeadOneLogits(nn.Module):
+    def __init__(self,
+                 nchan : int,
+                 nlatent: int):
+        super().__init__()
+
+        self.proj = nn.Linear(nchan, nlatent, bias=True)
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                if m.bias is not None: nn.init.zeros_(m.bias)
 
     def forward(self, x):
         return self.proj(x)
@@ -548,6 +769,44 @@ class ClusteringHeadTwoLayer(nn.Module):
         x = self.softmax(x/self.softmax_temp)
         return x
 
+    
+class ClusteringHeadTwoLayerBN(nn.Module):
+    def __init__(self,
+                 nchan : int,
+                 nclusters : int,
+                 nhidden: int = -1,
+                 softmax_temp : float = 1.0,
+                 hidden_act_fn : object = nn.ReLU):
+        super().__init__()
+
+        ## Slightly dodgy to retain previous default behaviour
+        self.hidden = nhidden if nhidden != -1 else nchan//2
+
+        self.softmax_temp = softmax_temp
+
+        self.proj = nn.Sequential(
+            nn.Linear(nchan, self.hidden, bias=False),
+            nn.BatchNorm1d(self.hidden),
+            hidden_act_fn(),
+            nn.Linear(self.hidden, nclusters, bias=True),
+        )
+        self.initialize_weights()
+        self.softmax = nn.Softmax(dim=1)
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                if m.bias is not None: nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.proj(x)
+        x = self.softmax(x/self.softmax_temp)
+        return x
+    
 
     
 class ClusteringHeadOneLayer(nn.Module):
