@@ -19,8 +19,7 @@ from torch import nn
 
 ## Includes from my libraries for this project
 from ME_NN_libs import NTXentMerged, ClusteringLossMerged
-from ME_NN_libs import CCEncoderFSD12x4Opt, CCEncoderFSD24x8Opt
-from ME_NN_libs import ProjectionHead, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits, ClusteringHeadTwoLayerBN, ProjectionHeadLogitsBN, ProjectionHeadOneLogits
+from ME_NN_libs import get_encoder, get_projhead, get_clusthead
 from ME_analysis_libs import argmax_consistency
 
 ## For logging
@@ -77,7 +76,7 @@ def load_pretrained(encoder, heads, file_name):
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
 
     ## Load heads as requested
-    for name, head in heads.items:
+    for name, head in heads.items():
         key = f'{name}_head_state_dict'
         if key in checkpoint:
             head.module.load_state_dict(checkpoint[key])
@@ -91,7 +90,7 @@ def load_checkpoint(encoder, heads, optimizer, state_file_name):
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
 
     ## Load heads as requested
-    for	name, head in heads.items:
+    for	name, head in heads.items():
         key = f'{name}_head_state_dict'
         if key in checkpoint:
             head.module.load_state_dict(checkpoint[key])
@@ -112,44 +111,10 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, loss,
     }
 
     ## Save heads as needed:
-    for name, head in heads.items:
+    for name, head in heads.items():
         state_dict[f'{name}_head_state_dict'] = head.module.state_dict()
 
     torch.save(state_dict, state_file_name)
-
-def get_act_from_string_ME(act_name):
-    if act_name == "relu":
-        return ME.MinkowskiReLU
-    if act_name == "leakyrelu":
-        return ME.MinkowskiLeakyReLU
-    if act_name == "gelu":
-        return ME.MinkowskiGELU
-    if act_name in ["silu", "swish"]:
-        return ME.MinkowskiSiLU
-    if act_name == "selu":
-        return ME.MinkowskiSELU
-    if act_name == "tanh":
-        return ME.MinkowskiTanh
-    if act_name == "softsign":
-        return ME.MinkowskiSoftsign
-    return None
-
-def get_act_from_string(act_name):
-    if act_name == "relu":
-        return nn.ReLU
-    if act_name == "leakyrelu":
-        return nn.LeakyReLU
-    if act_name == "gelu":
-        return nn.GELU
-    if act_name in ["silu", "swish"]:
-        return nn.SiLU
-    if act_name == "selu":
-        return nn.SELU
-    if act_name == "tanh":
-        return nn.Tanh
-    if act_name == "softsign":
-        return nn.Softsign
-    return None
 
 
 ## Function to deal with all of the dataset handling
@@ -181,53 +146,25 @@ def get_dataset(args, rank=0):
         
     return train_dataset
 
-def get_encoder(args):
-    
-    ## Only one architecture for now
-    if args.enc_arch == "12x4":
-        enc = CCEncoderFSD12x4Opt
-    elif args.enc_arch == "24x8":
-        enc = CCEncoderFSD24x8Opt
-        
-    enc_act_fn=get_act_from_string_ME(args.enc_act)
-    encoder = enc(nchan=args.nchan, \
-                  act_fn=enc_act_fn, \
-                  first_kernel=args.enc_arch_first_kernel, \
-                  flatten=bool(args.enc_arch_flatten), \
-                  pool=args.enc_arch_pool, \
-                  slow_growth=bool(args.enc_arch_slow_growth),
-                  sep_heads=bool(args.enc_arch_sep_heads),
-                  drop_fract=args.dropout)
-    return encoder
-
-def get_projhead(nchan, args):
-    hidden_act_fn = get_act_from_string(args.enc_act)
-    latent_act_fn=nn.Tanh
-    if args.proj_arch == "logits":
-        proj_head = ProjectionHeadLogits(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
-    elif args.proj_arch == "logitsbn":
-        proj_head = ProjectionHeadLogitsBN(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
-    elif args.proj_arch == "one":
-        proj_head = ProjectionHeadOneLogits(nchan, args.latent)
-    else:
-        proj_head = ProjectionHead(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn, latent_act_fn)
-    return proj_head
-
-def get_clusthead(nchan, args):
-
-    hidden_act_fn = get_act_from_string(args.enc_act)
-    if args.clust_arch == "none":
-        clust_head = None
-    elif args.clust_arch == "one":
-        clust_head = ClusteringHeadOneLayer(nchan, args.nclusters, args.softmax_temp)
-    elif args.clust_arch == "twobn":
-        clust_head = ClusteringHeadTwoLayerBN(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn)
-    else:
-        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, args.softmax_temp)
-    return clust_head
-
-def get_scheduler(args):
-    return
+def get_scheduler(args, optimizer):
+    scheduler = None
+    if args.scheduler == "onecycle":
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=args.nstep, cycle_momentum=False)
+    if args.scheduler == "step":
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
+                                                   milestones=[150,300,450],
+                                                   gamma=0.1,
+                                                   last_epoch=-1,
+                                                   verbose=False)
+    if args.scheduler == "plateau":
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                         mode='min',
+                                                         factor=0.2,
+                                                         patience=0,
+                                                         cooldown=2,
+                                                         threshold=5e-3,
+                                                         threshold_mode='rel')
+    return scheduler
 
 ## Wrapped training function
 def run_training(rank, world_size, args):
@@ -278,7 +215,6 @@ def run_training(rank, world_size, args):
     ## So we don't constantly ask args
     num_iterations = args.nstep
     log_dir = args.log
-    sched = args.scheduler
     
     if rank==0:
         print("Training with", num_iterations, "iterations")
@@ -290,25 +226,7 @@ def run_training(rank, world_size, args):
     ]
     optimizer = torch.optim.AdamW(params_to_optimize, lr=args.lr, weight_decay=args.weight_decay)
 
-    ## Deal with a scheduler
-    scheduler = None
-    if sched == "onecycle":
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=num_iterations, cycle_momentum=False)
-    if sched == "step":
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
-                                                   milestones=[150,300,450],
-                                                   gamma=0.1,
-                                                   last_epoch=-1,
-                                                   verbose=False)
-    if sched == "plateau":
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                         mode='min',
-                                                         factor=0.2,
-                                                         patience=0,
-                                                         cooldown=2,
-                                                         threshold=5e-3,
-                                                         threshold_mode='rel')
-
+    scheduler = get_scheduler(args, optimizer)
     
     ## Load the checkpoint if one has been given
     start_iteration = 0
@@ -400,7 +318,7 @@ def run_training(rank, world_size, args):
         
         ## See if we have an LR scheduler...
         if scheduler:
-            if sched == "plateau": scheduler.step(av_tot_loss)
+            if args.scheduler == "plateau": scheduler.step(av_tot_loss)
             else: scheduler.step()
 
         ## Reporting, but only for rank 0
