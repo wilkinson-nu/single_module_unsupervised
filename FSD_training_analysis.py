@@ -1,8 +1,5 @@
-## This file trains a simple encoder with a contrastive loss. It should work with any number of GPUs distributed across nodes
 import numpy as np
 import argparse
-from torch import optim
-import sys
 import matplotlib
 
 matplotlib.rcParams['axes.grid'] = True          # enable grid globally
@@ -11,27 +8,13 @@ matplotlib.rcParams['grid.linestyle'] = '--'     # dashed lines
 matplotlib.rcParams['grid.color'] = 'gray'
 matplotlib.rcParams['grid.alpha'] = 0.5
 
-## Make matplotlib do things in batch mode, but if we're in a jupyter session
+## Make matplotlib do things in batch mode, but not if we're in a jupyter session
 if not matplotlib.get_backend().startswith("module://matplotlib_inline"):
     matplotlib.use("Agg")
 
-import torchvision.transforms.v2 as transforms
-import MinkowskiEngine as ME
-import torch
-import time
-import math
-
 ## Use a GPU if available
+import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-## The parallelisation libraries
-from torch.utils.data import DataLoader, DistributedSampler
-from torch.utils.data import ConcatDataset
-from torch import nn
-
-## Includes from my libraries for this project
-from ME_NN_libs import CCEncoderFSD12x4Opt, CCEncoderFSD24x8Opt, ClusteringHeadTwoLayer, ClusteringHeadOneLayer, ProjectionHeadLogits
-from ME_NN_libs import ClusteringHeadTwoLayerBN, ProjectionHeadLogitsBN, ProjectionHeadOneLogits
 
 ## Import analysis functions
 from ME_analysis_libs import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_metric_by_confidence, plot_cluster_bigblock
@@ -42,241 +25,16 @@ SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
-## Import transformations
-from ME_dataset_libs import DoNothing, get_transform, FirstRegionCrop
-
-## Import dataset
-from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn
-
-def load_checkpoint(state_file_name):
-    checkpoint = torch.load(state_file_name, map_location='cpu')
-    
-    # Reconstruct args Namespace
-    args = argparse.Namespace(**checkpoint['args'])
-    return checkpoint, args
-
-
-def get_act_from_string_ME(act_name):
-    if act_name == "relu":
-        return ME.MinkowskiReLU
-    if act_name == "leakyrelu":
-        return ME.MinkowskiLeakyReLU
-    if act_name == "gelu":
-        return ME.MinkowskiGELU
-    if act_name in ["silu", "swish"]:
-        return ME.MinkowskiSiLU
-    if act_name == "selu":
-        return ME.MinkowskiSELU
-    if act_name == "tanh":
-        return ME.MinkowskiTanh
-    if act_name == "softsign":
-        return ME.MinkowskiSoftsign
-    return None
-
-def get_act_from_string(act_name):
-    if act_name == "relu":
-        return nn.ReLU
-    if act_name == "leakyrelu":
-        return nn.LeakyReLU
-    if act_name == "gelu":
-        return nn.GELU
-    if act_name in ["silu", "swish"]:
-        return nn.SiLU
-    if act_name == "selu":
-        return nn.SELU
-    if act_name == "tanh":
-        return nn.Tanh
-    if act_name == "softsign":
-        return nn.Softsign
-    return None
-
-
-def get_models_from_checkpoint(state_file_name):
-
-    checkpoint, args = load_checkpoint(state_file_name)
-
-    ## Get the models
-    encoder = get_encoder(args)
-    proj_head = get_projhead(encoder.get_nchan_instance(), args)
-    clust_head = get_clusthead(encoder.get_nchan_cluster(), args)
-
-    ## Load saved model parameters
-    encoder.load_state_dict(checkpoint['encoder_state_dict'])
-    proj_head.load_state_dict(checkpoint['proj_head_state_dict'])
-    clust_head.load_state_dict(checkpoint['clust_head_state_dict']) 
-
-    return encoder, proj_head, clust_head, args
-
-
-## Function to deal with all of the dataset handling
-def get_dataset(input_dir, nevents):
-
-    print("Loading", nevents," events from", input_dir)
-    nom_transform = transforms.Compose([
-            FirstRegionCrop((800, 256), (768, 256)),
-            ])
-    
-    dataset = SingleModuleImage2D_solo_ME(input_dir, \
-                                          transform=nom_transform, \
-                                          max_events=nevents)
-
-    loader = torch.utils.data.DataLoader(dataset,
-                                         collate_fn=solo_ME_collate_fn,
-                                         batch_size=2048,
-                                         shuffle=False,
-                                         num_workers=8)
-    return dataset, loader
-
-def get_encoder(args):
-    
-    ## Only one architecture for now
-    if args.enc_arch == "12x4":
-        enc = CCEncoderFSD12x4Opt
-    else:
-        enc = CCEncoderFSD24x8Opt
-
-    enc_act_fn=get_act_from_string_ME(args.enc_act)
-    encoder = enc(nchan=args.nchan, \
-                  act_fn=enc_act_fn, \
-                  first_kernel=args.enc_arch_first_kernel, \
-                  flatten=bool(args.enc_arch_flatten), \
-                  pool=args.enc_arch_pool, \
-                  slow_growth=bool(args.enc_arch_slow_growth),
-                  sep_heads=bool(args.enc_arch_sep_heads))
-    return encoder
-
-def get_projhead(nchan, args):
-    hidden_act_fn = get_act_from_string(args.enc_act)
-    latent_act_fn=nn.Tanh
-    if args.proj_arch == "logits":
-        proj_head = ProjectionHeadLogits(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
-    elif args.proj_arch == "logitsbn":
-        proj_head = ProjectionHeadLogitsBN(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
-    elif args.proj_arch == "one":
-        proj_head = ProjectionHeadOneLogits(nchan, args.latent)
-    else:
-        proj_head = ProjectionHead(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn, latent_act_fn)
-    return proj_head
-
-def get_clusthead(nchan, args):
-    hidden_act_fn = get_act_from_string(args.enc_act)
-    if args.clust_arch == "one":
-        clust_head = ClusteringHeadOneLayer(nchan, args.nclusters, args.softmax_temp)
-    elif args.clust_arch == "twobn":
-        clust_head = ClusteringHeadTwoLayerBN(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn)
-    else:
-        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, args.softmax_temp)
-    return clust_head
-
-
-## def get_projhead(nchan, args):
-##     hidden_act_fn = nn.SiLU
-##     latent_act_fn = nn.Tanh
-##     proj_head = ProjectionHeadLogits(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
-##     return proj_head
-## 
-## def get_clusthead(nchan, args):
-## 
-##     if args.clust_arch == "one":
-##         clust = ClusteringHeadOneLayer
-##     else:
-##         clust = ClusteringHeadTwoLayer
-##     
-##     clust_head = clust(nchan, args.nclusters, args.softmax_temp)
-##     return clust_head
-
-
-def image_loop(encoder, proj_head, clust_head, loader):
-
-    latent = []    ## This is the instance clustering space
-    enc_latent = []    ## This is after the encoder (as passed to the clustering head) 
-    cluster = []
-    nhits = []
-    maxQ = []
-    sumQ = []
-    labels = []
-    y_range = []
-    x_range = []
-    
-    encoder.eval()
-    proj_head.eval()
-    clust_head.eval()
-    
-    ## Loop over the images (discard any extra info returned by loader)
-    for batch_coords, batch_feats, batch_labels, *_ in loader:
-        
-        batch_size = len(batch_labels)
-        batch_coords = batch_coords.to(device)
-        batch_feats = batch_feats.to(device)
-        orig_batch = ME.SparseTensor(batch_feats, batch_coords, device=device)            
-        
-        ## Now do the forward passes            
-        with torch.no_grad(): 
-            encoded_instance_batch, encoded_cluster_batch = encoder(orig_batch, batch_size)
-            clust_batch = clust_head(encoded_cluster_batch)
-            proj_batch = proj_head(encoded_instance_batch)
-
-        ## To get the ranges
-        y_range += [torch.max(i[:,0]).item()-torch.min(i[:,0]).item() for i in orig_batch.decomposed_coordinates]
-        x_range += [torch.max(i[:,1]).item()-torch.min(i[:,1]).item() for i in orig_batch.decomposed_coordinates]
-        nhits += [i.shape[0] for i in orig_batch.decomposed_features]
-        sumQ += [i.sum().item() for i in orig_batch.decomposed_features]
-        maxQ += [i.max().item() for i in orig_batch.decomposed_features]
-        cluster += [x[np.newaxis, :] for x in clust_batch.detach().cpu().numpy()]
-        latent += [x[np.newaxis, :] for x in proj_batch.detach().cpu().numpy()]
-        enc_latent += [x[np.newaxis, :] for x in encoded_cluster_batch.detach().cpu().numpy()]
-        labels += [i for i in batch_labels]
-
-    ## Derive some other useful quantities
-    np_clust = np.vstack(cluster)
-    sorted_idx  = np.argsort(np_clust, axis=1)[:, ::-1]
-    top3_idx = sorted_idx[:, :3]
-    clust_top3 = np.take_along_axis(np_clust, top3_idx, axis=1)
-
-    ## Return a dictionary to make my life easier
-    return {
-        "nhits": np.array(nhits),
-        "sumQ": np.array(sumQ),
-        "maxQ": np.array(maxQ),
-        "labels": np.array(labels),
-        "latent": np.vstack(latent),
-        "enc_latent": np.vstack(enc_latent),
-        "clust": np_clust,
-        "clust_index": np.argmax(np_clust, axis=1),
-        "clust_top3": clust_top3,
-        "clust_max": np.max(np_clust, axis=1),
-        "yrange": np.array(y_range),
-        "xrange":np.array(x_range),
-    }
-
-
-## Function to reorder the order of clusters in the processed data
-def reorder_clusters(data_processed, sim_processed):
-
-    ## How frequently is each cluster selected in data
-    unique, counts = np.unique(data_processed['clust_index'], return_counts=True)
-
-    ## Order from most common to least common
-    order = np.argsort(-counts)
-
-    ## map for reordering cluster indices
-    relabel_map = {old: new for new, old in enumerate(unique[order])}
-
-    data_processed['clust_index'] = np.array([relabel_map[c] for c in data_processed['clust_index']])
-    sim_processed['clust_index'] = np.array([relabel_map[c] for c in sim_processed['clust_index']])
-
-    data_processed['clust'] = data_processed['clust'][:,order]
-    sim_processed['clust'] = sim_processed['clust'][:,order]
-
+## Various shared analysis libraries
+from ME_analysis_libs import load_checkpoint, get_models_from_checkpoint, get_dataset, image_loop, reorder_clusters
     
 def run_analysis(args):
 
     ## Setup the encoder
-    encoder, proj_head, clust_head, training_args = get_models_from_checkpoint(args.input_file)
+    encoder, heads, training_args = get_models_from_checkpoint(args.input_file)
 
     encoder.to(device)
-    proj_head.to(device)
-    clust_head.to(device)
+    for h in heads.values(): h.to(device)
     
     ## Set up the datasets and loaders
     data_dataset, data_loader = get_dataset(training_args.data_dir, args.ndata)
@@ -290,8 +48,8 @@ def run_analysis(args):
     
     ## Get the processed vectors of interest from the datasets
     print("Loading inputs...")
-    data_processed = image_loop(encoder, proj_head, clust_head, data_loader)
-    sim_processed = image_loop(encoder, proj_head, clust_head, sim_loader)
+    data_processed = image_loop(encoder, heads, data_loader)
+    sim_processed = image_loop(encoder, heads, sim_loader)
 
     ## Do some magic to re-order the clusters for presentation purposes
     reorder_clusters(data_processed, sim_processed)
