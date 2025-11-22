@@ -1,6 +1,10 @@
 import torch
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+import argparse
 from sklearn.manifold import TSNE
 import MinkowskiEngine as ME
+import torchvision.transforms.v2 as transforms
 import numpy as np
 from scipy.cluster.hierarchy import linkage, fcluster
 import matplotlib.pyplot as plt
@@ -13,6 +17,197 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler, normalize
 from cuml.preprocessing import StandardScaler as cuMLScaler
 from cuml.manifold import UMAP as cuML_UMAP
 from matplotlib.ticker import MaxNLocator
+from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
+from ME_dataset_libs import DoNothing, get_transform, FirstRegionCrop
+from ME_NN_libs import get_encoder, get_projhead, get_clusthead
+
+## For clustering studies
+import spherecluster
+from spherecluster import VonMisesFisherMixture
+from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
+
+def load_checkpoint(state_file_name):
+    checkpoint = torch.load(state_file_name, map_location='cpu')
+    
+    # Reconstruct args Namespace
+    args = argparse.Namespace(**checkpoint['args'])
+    return checkpoint, args
+
+def get_models_from_checkpoint(state_file_name):
+
+    checkpoint, args = load_checkpoint(state_file_name)
+
+    ## Get the models
+    encoder = get_encoder(args)
+    encoder.load_state_dict(checkpoint['encoder_state_dict'])
+
+    ## Dictionary of heads and load saved model parameters
+    heads = {}
+    
+    heads["proj"] = get_projhead(encoder.get_nchan_instance(), args)
+    heads["proj"] .load_state_dict(checkpoint['proj_head_state_dict'])
+
+    ## Optionally load the clustering head
+    if args.clust_arch != "none":
+        heads["clust"] = get_clusthead(encoder.get_nchan_cluster(), args)
+        heads["clust"] .load_state_dict(checkpoint['clust_head_state_dict']) 
+
+    return encoder, heads, args
+
+
+## Function to deal with all of the dataset handling
+## Should probably move to ME_dataset_libs...
+def get_dataset(input_dir, nevents, return_metadata=False):
+
+    print("Loading", nevents," events from", input_dir)
+    nom_transform = transforms.Compose([
+            FirstRegionCrop((800, 256), (768, 256)),
+            ])
+    
+    dataset = SingleModuleImage2D_solo_ME(input_dir, \
+                                          transform=nom_transform, \
+                                          max_events=nevents,\
+                                          return_metadata=return_metadata)
+    this_collate = solo_ME_collate_fn
+    if return_metadata: this_collate = solo_ME_collate_fn_with_meta
+    
+    loader = torch.utils.data.DataLoader(dataset,
+                                         collate_fn=this_collate,
+                                         batch_size=2048,
+                                         shuffle=False,
+                                         num_workers=8)
+    return dataset, loader
+
+
+def image_loop(encoder, heads, loader, detailed_info=True):
+
+    latent = []    ## This is the instance clustering space
+    enc_latent = []    ## This is after the encoder (as passed to the clustering head) 
+    cluster = []
+    nhits = []
+    maxQ = []
+    sumQ = []
+    labels = []
+    y_range = []
+    x_range = []
+    filenames = []
+    event_ids = []
+    
+    encoder.eval()
+    for h in heads.values(): h.eval()
+    
+    ## Loop over the images (discard any extra info returned by loader)
+    for batch in loader:
+
+        ## Start with the items that are always there
+        batch_coords, batch_feats, batch_labels = batch[:3]
+        ## If the loader returns the file names and event ids, collect those too
+        batch_filenames = batch[3] if len(batch) > 3 else None
+        batch_eventids = batch[4] if len(batch) > 4 else None
+        
+        batch_size = len(batch_labels)
+        batch_coords = batch_coords.to(device)
+        batch_feats = batch_feats.to(device)
+        orig_batch = ME.SparseTensor(batch_feats, batch_coords, device=device)            
+
+        dec_coords = orig_batch.decomposed_coordinates
+        dec_feats  = orig_batch.decomposed_features
+        
+        ## Now do the forward passes            
+        with torch.no_grad(): 
+            encoded_instance_batch, encoded_cluster_batch = encoder(orig_batch, batch_size)
+            if "clust" in heads: clust_batch = heads["clust"](encoded_cluster_batch)
+            proj_batch = heads["proj"](encoded_instance_batch)
+
+        ## Move to the CPU
+        if "clust" in heads: cluster.append(clust_batch.detach().cpu())
+        latent.append(proj_batch.detach().cpu())
+        enc_latent.append(encoded_cluster_batch.detach().cpu())
+        labels.extend(batch_labels)
+        
+        ## If desired, add a load more info, but this slows things down a lot...
+        if detailed_info is True:
+            nhits_batch = torch.tensor([f.shape[0] for f in dec_feats], device=device)
+            sumQ_batch  = torch.stack([f.sum() for f in dec_feats])
+            maxQ_batch  = torch.stack([f.max() for f in dec_feats])
+        
+            y_max_batch = torch.stack([c[:,0].max() for c in dec_coords])
+            y_min_batch = torch.stack([c[:,0].min() for c in dec_coords])
+            x_max_batch = torch.stack([c[:,1].max() for c in dec_coords])
+            x_min_batch = torch.stack([c[:,1].min() for c in dec_coords])
+
+            y_range_batch = y_max_batch - y_min_batch
+            x_range_batch = x_max_batch - x_min_batch
+
+            # Move everything to the CPU
+            nhits.append(nhits_batch.cpu())
+            sumQ.append(sumQ_batch.cpu())
+            maxQ.append(maxQ_batch.cpu())
+            y_range.append(y_range_batch.cpu())
+            x_range.append(x_range_batch.cpu())
+
+        if batch_filenames is not None:
+            filenames.extend(batch_filenames)
+        if batch_eventids is not None:
+            event_ids.extend(batch_eventids)
+
+    ## Turn into numpy arrays 
+    latent = torch.cat(latent).numpy()
+    enc_latent = torch.cat(enc_latent).numpy()
+
+    ## Return a dictionary to make my life easier
+    out = {
+        "labels": np.array(labels),
+        "latent": latent,
+        "enc_latent": enc_latent,
+    }
+    
+    if "clust" in heads:
+        cluster = torch.cat(cluster).numpy()
+
+        ## Derive some other useful quantities
+        sorted_idx  = np.argsort(cluster, axis=1)[:, ::-1]
+        top3_idx = sorted_idx[:, :3]
+        clust_top3 = np.take_along_axis(cluster, top3_idx, axis=1)
+
+        out["clust"] = cluster
+        out["clust_index"] = np.argmax(cluster, axis=1)
+        out["clust_top3"] = clust_top3
+        out["clust_max"] = np.max(cluster, axis=1)
+    
+    if detailed_info is True:
+        out["nhits"] = torch.cat(nhits).numpy()
+        out["sumQ"] = torch.cat(sumQ).numpy()
+        out["maxQ"] = torch.cat(maxQ).numpy()
+        out["yrange"] = torch.cat(y_range).numpy()
+        out["xrange"] = torch.cat(x_range).numpy()
+    
+    ## Add the filename and event id if applicable
+    if filenames: out["filename"] = filenames
+    if event_ids: out["event_id"] = event_ids
+    return out
+
+## Function to reorder the order of clusters in the processed data
+def reorder_clusters(data_processed, sim_processed):
+
+    ## Rage quit if someone tries to call this without cluster labels
+    if "clust" not in data_processed: return
+        
+    ## How frequently is each cluster selected in data
+    unique, counts = np.unique(data_processed['clust_index'], return_counts=True)
+
+    ## Order from most common to least common
+    order = np.argsort(-counts)
+
+    mapping_arr = np.zeros(unique.max() + 1, dtype=np.int64)
+    mapping_arr[unique[order]] = np.arange(len(unique))
+
+    data_processed['clust_index'] = mapping_arr[data_processed['clust_index']]
+    sim_processed['clust_index']  = mapping_arr[sim_processed['clust_index']]
+    
+    data_processed['clust'] = data_processed['clust'][:,order]
+    sim_processed['clust'] = sim_processed['clust'][:,order]
+
 
 @torch.no_grad()
 def argmax_consistency(c_cat, device=None):
@@ -485,7 +680,7 @@ def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_pro
     for i in range(max_images):
         ax = plt.subplot(1,max_images,i+1)
         
-        numpy_coords, numpy_feats, _, _, _ = dataset[indices[i]]
+        numpy_coords, numpy_feats, *_ = dataset[indices[i]]
 
         # Create batched coordinates for the SparseTensor input
         orig_bcoords  = ME.utils.batched_coordinates([numpy_coords])
@@ -545,38 +740,74 @@ def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, clust
     plt.show()  
     plt.close()
 
+
+def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True):
+
+    X_norm = dataset / np.linalg.norm(dataset, axis=1, keepdims=True)
+
+    ## init: k-means++, spherical-k-means, random, random-class (default), random-orthonormal
+    ## max_iter: 300
+    ## n_init: 10
+    ## n_jobs: 1 (number of CPUs to use)
+    
+    vMF = VonMisesFisherMixture(n_clusters=n_clusters, posterior_type='soft', n_init=n_copies, n_jobs=n_copies, verbose=verbose, max_iter=500)
+    vMF.fit(X_norm)
+
+    ## For some reasons labels are floats
+    labels = vMF.predict(X_norm).astype(int)
+    weights = vMF.weights_
+
+    metrics = {}
+    metrics["silhouette"] = silhouette_score(X_norm, labels, metric="cosine")
+    metrics["calinski_harabasz"] = calinski_harabasz_score(X_norm, labels)
+    metrics["davies_bouldin"] = davies_bouldin_score(X_norm, labels)
+
+    if verbose:
+        print("Cluster weights:", weights)
+        print("Silhouette score:", metrics["silhouette"])
+        print("Calinski-Harabasz =", metrics["calinski_harabasz"])
+        print("Davies-Bouldin =", metrics["davies_bouldin"])
+
+    return labels, metrics
+
 def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
-                 lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None):
+                 lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None, tsne_results=None):
     
     print("Running scikit-learn t-SNE with: perplexity =", perp, "early exaggeration =", exag)
 
-    # Normalize vectors if desired
+    # L2 normalize vectors if desired (for cosine similarity)
     if norm:
         norms = np.linalg.norm(input_vect, axis=1, keepdims=True)
         input_vect = input_vect / (norms + 1e-10)
 
     # Create the TSNE object
-    tsne = TSNE(n_components=2,
-                perplexity=perp,
-                n_iter=n_iter,
-                early_exaggeration=exag,
-                learning_rate=lr,
-                init='pca',
-                metric='cosine',
-                method='barnes_hut',
-                verbose=0)
+    if tsne_results is None:
+        tsne = TSNE(n_components=2,
+                    perplexity=perp,
+                    n_iter=n_iter,
+                    early_exaggeration=exag,
+                    learning_rate=lr,
+                    init='pca',
+                    metric='cosine',
+                    method='barnes_hut',
+                    verbose=0)
     
-    tsne_results = tsne.fit_transform(input_vect)
+        tsne_results = tsne.fit_transform(input_vect)
 
-    # Colors
+    # Colors   
     unique_labels = np.unique(zvect)
     n_clusters = len(unique_labels)
+    # all_colors = [plt.cm.nipy_spectral(i / n_clusters) for i in range(n_clusters)]
     all_colors = (
         plt.cm.tab20.colors +
         plt.cm.tab20b.colors +
         plt.cm.tab20c.colors +
         plt.cm.tab10.colors
     )
+    if n_clusters > 70:
+        n_extra = n_clusters - 70
+        all_colors += tuple(plt.cm.nipy_spectral(i / n_extra) for i in range(n_extra))
+        
     cmap = mcolors.ListedColormap(all_colors[:n_clusters])
     norm_cmap = mcolors.BoundaryNorm(boundaries=np.arange(n_clusters + 1), ncolors=n_clusters)
 
