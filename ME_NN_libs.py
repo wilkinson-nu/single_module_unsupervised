@@ -74,217 +74,7 @@ class NTXentMerged(nn.Module):
         loss = torch.sum(loss_partial) / (2*batch_size)
 
         return loss
-
-
-#### This is for contrastive only training
-## These are the original encoders
-class ContrastiveEncoderME(nn.Module):
-    
-    def __init__(self, 
-                 nchan : int,
-                 latent_dim : int,
-                 hidden_act_fn : object = ME.MinkowskiReLU,
-                 latent_act_fn : object = ME.MinkowskiTanh,
-                 drop_fract : float = 0,
-                 conv_kernel_size=3):
-        """
-        Inputs:
-            - nchan : Number of channels we use in the first convolutional layers. Deeper layers might use a duplicate of it.
-            - latent_dim : Dimensionality of latent representation z
-            - act_fn : Activation function used throughout the encoder network
-        """
-        super().__init__()
         
-        self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16, nchan*32, nchan*64, nchan*128]
-        self.conv_kernel_size = conv_kernel_size
-        
-        ### Convolutional section
-        self.encoder_cnn = nn.Sequential(
-            ME.MinkowskiConvolution(in_channels=1, out_channels=self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 256x128 ==> 128x64
-            # ME.MinkowskiBatchNorm(self.ch[0]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[0], kernel_size=3, bias=False, dimension=2), ## No change in size
-            # ME.MinkowskiBatchNorm(self.ch[0]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[0], out_channels=self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 128x64 ==> 64x32
-            # ME.MinkowskiBatchNorm(self.ch[1]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[1], kernel_size=3, bias=False, dimension=2), ## No change in size
-            # ME.MinkowskiBatchNorm(self.ch[1]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[1], out_channels=self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 64x32 ==> 32x16
-            ME.MinkowskiBatchNorm(self.ch[2]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[2], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[2]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[2], out_channels=self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 32x16 ==> 16x8
-            ME.MinkowskiBatchNorm(self.ch[3]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[3], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[3]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[3], out_channels=self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 16x8 ==> 8x4
-            ME.MinkowskiBatchNorm(self.ch[4]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[4], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[4]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[4], out_channels=self.ch[5], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 8x4 ==> 4x2
-            ME.MinkowskiBatchNorm(self.ch[5]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[5], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[5]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[5], out_channels=self.ch[6], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), ## 4x2 ==> 2x1
-            ME.MinkowskiBatchNorm(self.ch[6]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[6], out_channels=self.ch[6], kernel_size=3, bias=False, dimension=2), ## No change in size
-            ME.MinkowskiBatchNorm(self.ch[6]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(in_channels=self.ch[6], out_channels=self.ch[7], kernel_size=(2,1), stride=(2,1), bias=False, dimension=2), ## 2x1 ==> 1x1
-            ME.MinkowskiBatchNorm(self.ch[7]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-        )
-        
-        ### Linear section, simple for now
-        self.encoder_lin = nn.Sequential(
-            ME.MinkowskiLinear(self.ch[7], self.ch[4]),
-            ME.MinkowskiBatchNorm(self.ch[4]),
-            hidden_act_fn(),      
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiLinear(self.ch[4], self.ch[3]),
-            ME.MinkowskiBatchNorm(self.ch[3]),
-	    hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiLinear(self.ch[3], latent_dim),
-            latent_act_fn()
-        )
-        # Initialize weights using Xavier initialization
-        self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, ME.MinkowskiConvolution) or \
-               isinstance(m, ME.MinkowskiGenerativeConvolutionTranspose):
-                ME.utils.kaiming_normal_(m.kernel, mode="fan_out", nonlinearity="linear")
-            if isinstance(m, ME.MinkowskiLinear):
-                ME.utils.kaiming_normal_(m.linear.weight, mode='fan_out', nonlinearity="linear")
-            if isinstance(m, ME.MinkowskiBatchNorm):
-                    nn.init.constant_(m.bn.weight, 1)
-                    nn.init.constant_(m.bn.bias, 0)
-                    m.track_running_stats = False
-                    
-    def forward(self, x, batch_size):
-        x = self.encoder_cnn(x)
-        x = self.encoder_lin(x)
-        return x
-
-class ContrastiveEncoderShallowME(nn.Module):
-    def __init__(self, 
-                 nchan : int,
-                 latent_dim : int,
-                 hidden_act_fn : object = ME.MinkowskiReLU,
-                 latent_act_fn : object = ME.MinkowskiTanh,
-                 drop_fract : float = 0,
-                 conv_kernel_size=3):
-        super().__init__()
-
-        self.ch = [nchan, nchan*2, nchan*4, nchan*8, nchan*16]
-        self.conv_kernel_size = conv_kernel_size
-        
-        # Convolutional section — down to 8x4
-        self.encoder_cnn = nn.Sequential(
-            ME.MinkowskiConvolution(1, self.ch[0], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), # 256x128 -> 128x64
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[0], self.ch[0], kernel_size=3, bias=False, dimension=2),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[0], self.ch[1], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), # 128x64 -> 64x32
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[1], self.ch[1], kernel_size=3, bias=False, dimension=2),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[1], self.ch[2], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), # 64x32 -> 32x16
-            ME.MinkowskiBatchNorm(self.ch[2]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[2], self.ch[2], kernel_size=3, bias=False, dimension=2),
-            ME.MinkowskiBatchNorm(self.ch[2]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[2], self.ch[3], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), # 32x16 -> 16x8
-            ME.MinkowskiBatchNorm(self.ch[3]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[3], self.ch[3], kernel_size=3, bias=False, dimension=2),
-            ME.MinkowskiBatchNorm(self.ch[3]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[3], self.ch[4], kernel_size=self.conv_kernel_size, stride=2, bias=False, dimension=2), # 16x8 -> 8x4
-            ME.MinkowskiBatchNorm(self.ch[4]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-            ME.MinkowskiConvolution(self.ch[4], self.ch[4], kernel_size=3, bias=False, dimension=2),
-            ME.MinkowskiBatchNorm(self.ch[4]),
-            hidden_act_fn(),
-            ME.MinkowskiDropout(drop_fract),
-        )
-
-        # We'll flatten after this to shape [B, C * 16 * 8]
-        self.feature_channels = self.ch[4]
-        
-        # Linear projection head (pure PyTorch)
-        self.encoder_lin = nn.Sequential(
-            nn.Linear(self.feature_channels*8*4, self.feature_channels),
-            nn.BatchNorm1d(self.feature_channels),
-            nn.SiLU(),
-            nn.Dropout(drop_fract),
-            nn.Linear(self.feature_channels, self.feature_channels//4),
-            nn.BatchNorm1d(self.feature_channels//4),
-            nn.SiLU(),
-            nn.Dropout(drop_fract),
-            nn.Linear(self.feature_channels//4, latent_dim),
-            nn.Tanh()
-        )
-
-        self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, ME.MinkowskiConvolution):
-                ME.utils.kaiming_normal_(m.kernel, mode="fan_out", nonlinearity="linear")
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
-            if isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x, batch_size):
-        x = self.encoder_cnn(x)
-        # Convert sparse tensor to dense
-        dense,_,_ = x.dense(shape=torch.Size([batch_size, self.feature_channels, 8, 4]))
-        #  dense = self.to_dense(x)
-        flat = dense.flatten(start_dim=1)     # [B, C * 8 * 4]
-        out = self.encoder_lin(flat)          # Final embedding
-        return out
 
 class CCEncoderFSD12x4Opt(nn.Module):
     def __init__(self, 
@@ -831,3 +621,83 @@ class ClusteringHeadOneLayer(nn.Module):
         x = self.linear(x)
         x = self.softmax(x/self.softmax_temp)
         return x
+
+def get_act_from_string_ME(act_name):
+    if act_name == "relu":
+        return ME.MinkowskiReLU
+    if act_name == "leakyrelu":
+        return ME.MinkowskiLeakyReLU
+    if act_name == "gelu":
+        return ME.MinkowskiGELU
+    if act_name in ["silu", "swish"]:
+        return ME.MinkowskiSiLU
+    if act_name == "selu":
+        return ME.MinkowskiSELU
+    if act_name == "tanh":
+        return ME.MinkowskiTanh
+    if act_name == "softsign":
+        return ME.MinkowskiSoftsign
+    return None
+
+def get_act_from_string(act_name):
+    if act_name == "relu":
+        return nn.ReLU
+    if act_name == "leakyrelu":
+        return nn.LeakyReLU
+    if act_name == "gelu":
+        return nn.GELU
+    if act_name in ["silu", "swish"]:
+        return nn.SiLU
+    if act_name == "selu":
+        return nn.SELU
+    if act_name == "tanh":
+        return nn.Tanh
+    if act_name == "softsign":
+        return nn.Softsign
+    return None
+
+
+def get_encoder(args):
+    
+    ## Only one architecture for now
+    if args.enc_arch == "12x4":
+        enc = CCEncoderFSD12x4Opt
+    elif args.enc_arch == "24x8":
+        enc = CCEncoderFSD24x8Opt
+        
+    enc_act_fn=get_act_from_string_ME(args.enc_act)
+    encoder = enc(nchan=args.nchan, \
+                  act_fn=enc_act_fn, \
+                  first_kernel=args.enc_arch_first_kernel, \
+                  flatten=bool(args.enc_arch_flatten), \
+                  pool=args.enc_arch_pool, \
+                  slow_growth=bool(args.enc_arch_slow_growth),
+                  sep_heads=bool(args.enc_arch_sep_heads),
+                  drop_fract=args.dropout)
+    return encoder
+
+def get_projhead(nchan, args):
+    hidden_act_fn = get_act_from_string(args.enc_act)
+    latent_act_fn=nn.Tanh
+    if args.proj_arch == "logits":
+        proj_head = ProjectionHeadLogits(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
+    elif args.proj_arch == "logitsbn":
+        proj_head = ProjectionHeadLogitsBN(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn)
+    elif args.proj_arch == "one":
+        proj_head = ProjectionHeadOneLogits(nchan, args.latent)
+    else:
+        proj_head = ProjectionHead(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn, latent_act_fn)
+    return proj_head
+
+def get_clusthead(nchan, args):
+
+    hidden_act_fn = get_act_from_string(args.enc_act)
+    if args.clust_arch == "none":
+        clust_head = None
+    elif args.clust_arch == "one":
+        clust_head = ClusteringHeadOneLayer(nchan, args.nclusters, args.softmax_temp)
+    elif args.clust_arch == "twobn":
+        clust_head = ClusteringHeadTwoLayerBN(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn)
+    else:
+        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, args.softmax_temp)
+    return clust_head
