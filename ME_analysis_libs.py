@@ -757,10 +757,18 @@ def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True)
     labels = vMF.predict(X_norm).astype(int)
     weights = vMF.weights_
 
+    labs = np.unique(labels)
+    
     metrics = {}
-    metrics["silhouette"] = silhouette_score(X_norm, labels, metric="cosine")
-    metrics["calinski_harabasz"] = calinski_harabasz_score(X_norm, labels)
-    metrics["davies_bouldin"] = davies_bouldin_score(X_norm, labels)
+
+    if labs.size < 2 or labs.size >= len(labels):
+        metrics["silhouette"] = None
+        metrics["calinski_harabasz"] = None
+        metrics["davies_bouldin"] = None
+    else:
+        metrics["silhouette"] = silhouette_score(X_norm, labels, metric="cosine")
+        metrics["calinski_harabasz"] = calinski_harabasz_score(X_norm, labels)
+        metrics["davies_bouldin"] = davies_bouldin_score(X_norm, labels)
 
     if verbose:
         print("Cluster weights:", weights)
