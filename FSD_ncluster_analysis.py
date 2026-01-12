@@ -33,8 +33,16 @@ from ME_analysis_libs import load_checkpoint, get_models_from_checkpoint, get_da
 from joblib import Parallel, delayed
 
 def plot_metric(x_vals, y_vals, metric_name, save_name=False):
+
+    x_vals = np.array(x_vals)
+    y_vals = np.array(y_vals, dtype=object)
+    
+    mask = [(y is not None) and not (isinstance(y, float) and np.isnan(y)) for y in y_vals]
+    x_clean = x_vals[mask]
+    y_clean = y_vals[mask].astype(float)
+    
     plt.figure(figsize=(6, 4))
-    plt.plot(x_vals, y_vals, marker='o')
+    plt.plot(x_clean, y_clean, marker='o')
     plt.xticks(x_vals)
 
     plt.xlabel("Number of clusters (k)")
@@ -48,13 +56,12 @@ def plot_metric(x_vals, y_vals, metric_name, save_name=False):
 def process_one(ncluster, latent, ncopies):
     print("Processing ncluster =", ncluster)
 
-    labels, metrics = run_vMF(
-        latent,
-        ncluster,
-        init="k-means++",
-        n_copies=ncopies,
-        verbose=True
-    )
+    labels, metrics = run_vMF(latent,
+                              ncluster,
+                              init="k-means++",
+                              n_copies=ncopies,
+                              verbose=True)
+    print("Finished ncluster =", ncluster)
     return ncluster, labels, metrics
     
 def run_analysis(args):
@@ -95,7 +102,8 @@ def run_analysis(args):
         )
         for ncluster in ncluster_list
     )
-    
+
+    print("Making summary plots...")
     silhouette_scores = []
     ch_scores = []
     db_scores = []
