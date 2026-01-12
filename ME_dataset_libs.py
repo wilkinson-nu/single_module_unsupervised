@@ -401,7 +401,6 @@ class RandomShear2D:
 class RandomPixelNoise2D:
     def __init__(self, poisson_mean=10, image_bounds=(0, 256, 0, 512)):
         self.poisson_mean = poisson_mean
-        self.noise_value = 1
         self.image_bounds = image_bounds
 
     def __call__(self, coords, feats):
@@ -420,11 +419,10 @@ class RandomPixelNoise2D:
         x_noise = np.random.randint(x_min, x_max, size=n_noise)
         noise_coords = np.stack([y_noise, x_noise], axis=1)
 
-        # If this is applied when constant charge isn't used, will have to be careful about overwriting real pixels with noise
-
-        # Generate corresponding features
-        noise_feats = np.full((len(noise_coords), feats.shape[1]), self.noise_value, dtype=feats.dtype)
-
+        # Sample noise values from existing features
+        idx = np.random.randint(0, len(feats), size=n_noise)
+        noise_feats = feats[idx].copy()
+        
         # Append to input
         new_coords = np.concatenate([coords, noise_coords], axis=0)
         new_feats = np.concatenate([feats, noise_feats], axis=0)
@@ -513,6 +511,34 @@ class JitterCoords:
         )
         coords_new = coords + jitter
         return coords_new, feats
+
+class SplitJitterCoords:
+    def __init__(self, n_sub=10, coord_jitter=0.5):
+        self.n_sub = n_sub
+        self.coord_jitter = coord_jitter
+
+    def __call__(self, coords, feats):
+        coords_out = np.repeat(coords, self.n_sub, axis=0)
+        feats_out = np.repeat(feats/self.n_sub, self.n_sub, axis=0)
+        
+        jitter = np.random.uniform(
+            low=-self.coord_jitter,
+            high=self.coord_jitter,
+            size=coords_out.shape
+        )
+
+        return coords_out+jitter, feats_out
+
+
+## Move the initial grid within a pixel width in both dimensions
+class GridJitter:
+    def __init__(self, ndim=2):
+        self.ndim = ndim
+
+    def __call__(self, coords, feats):
+        grid_offset = np.random.uniform(-0.5, 0.5, size=self.ndim)
+        return coords + grid_offset, feats
+
 
 
 ## Apply a Gaussian jitter to all values
@@ -712,9 +738,16 @@ class BilinearSplat:
         features_combined = np.concatenate([f00, f01, f10, f11])
     
         # Consolidate features at unique coordinates
-        unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
-        summed_feats = np.zeros(len(unique_coords))    
-        np.add.at(summed_feats, indices, features_combined)
+        W = 10000
+        hash_vals = coords_combined[:,0] * W + coords_combined[:,1]
+        unique_hashes, inverse = np.unique(hash_vals, return_inverse=True)
+        summed_feats = np.zeros(len(unique_hashes), dtype=features_combined.dtype)
+        np.add.at(summed_feats, inverse, features_combined)
+        unique_coords = np.stack([unique_hashes // W, unique_hashes % W], axis=-1)
+
+        #unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
+        #summed_feats = np.zeros(len(unique_coords))    
+        #np.add.at(summed_feats, indices, features_combined)
 
         # Create a mask for values above the threshold
         mask = summed_feats >= self.threshold
@@ -722,6 +755,71 @@ class BilinearSplat:
         # Apply the mask to filter features and coordinates
         unique_coords = unique_coords[mask]
         summed_feats = summed_feats[mask]        
+        
+        # Reshape summed_feats to (N, 1)
+        summed_feats = summed_feats.reshape(-1, 1)
+        
+        return unique_coords, summed_feats
+
+## Add an optional threshold
+class BilinearSplatMod:
+    def __init__(self, threshold_min=0.04, threshold_max=0.04, p=0.5):
+        self.threshold_min=threshold_min
+        self.threshold_max=threshold_max
+        self.p = p
+        
+    def __call__(self, coords, feats):
+        
+        feats = np.squeeze(feats)  # Remove single-dimensional entries from shape
+        
+        # Floor and ceil coordinates for each point
+        x0, y0 = np.floor(coords[:, 1]).astype(int), np.floor(coords[:, 0]).astype(int)
+        x1, y1 = x0 + 1, y0 + 1
+    
+        # Calculate the weights for bilinear interpolation
+        wx1 = coords[:, 1] - x0
+        wx0 = 1 - wx1
+        wy1 = coords[:, 0] - y0
+        wy0 = 1 - wy1
+    
+        # Coordinates for the four corners
+        coords00 = np.stack([y0, x0], axis=-1)
+        coords10 = np.stack([y1, x0], axis=-1)
+        coords01 = np.stack([y0, x1], axis=-1)
+        coords11 = np.stack([y1, x1], axis=-1)
+        
+        # Calculate interpolated feature values for each of the four corners
+        f00 = feats * (wx0 * wy0)
+        f10 = feats * (wx0 * wy1)
+        f01 = feats * (wx1 * wy0)
+        f11 = feats * (wx1 * wy1)
+        
+        # Combine coordinates and features
+        coords_combined = np.vstack([coords00,coords01,coords10,coords11])
+        features_combined = np.concatenate([f00, f01, f10, f11])
+    
+        # Consolidate features at unique coordinates
+        W = 10000
+        hash_vals = coords_combined[:,0] * W + coords_combined[:,1]
+        unique_hashes, inverse = np.unique(hash_vals, return_inverse=True)
+        summed_feats = np.zeros(len(unique_hashes), dtype=features_combined.dtype)
+        np.add.at(summed_feats, inverse, features_combined)
+        unique_coords = np.stack([unique_hashes // W, unique_hashes % W], axis=-1)
+        
+        #unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
+        #summed_feats = np.zeros(len(unique_coords))    
+        #np.add.at(summed_feats, indices, features_combined)
+
+        ## Get the threshold
+        threshold = np.random.uniform(self.threshold_min, self.threshold_max)
+        
+        if np.random.rand() < self.p:
+            # Create a mask for values above the threshold
+            mask = summed_feats >= threshold
+    
+            # Apply the mask to filter features and coordinates
+            unique_coords = unique_coords[mask]
+            summed_feats = summed_feats[mask]        
         
         # Reshape summed_feats to (N, 1)
         summed_feats = summed_feats.reshape(-1, 1)
@@ -1016,101 +1114,6 @@ def get_transform(det="single", aug_type=None, aug_prob=1):
         y_orig=800
 
 
-    # small
-    if aug_type=="smallaug":
-        return transforms.Compose([
-       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.03, 0.03),
-            RandomRotation2D(3),
-            RandomStretch2D(0.05, 0.05),
-    	    RandomGridDistortion2D(100, 5),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-            SemiRandomCrop(x_max, y_max, 20),
-        ])
-        
-    # smallbilin
-    if aug_type=="smallaugbilin":
-        return transforms.Compose([
-       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.03, 0.03),
-            RandomRotation2D(3),
-            RandomStretch2D(0.05, 0.05),
-    	    RandomGridDistortion2D(100, 5),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.5),
-            SemiRandomCrop(x_max, y_max, 20),
-        ])
-        
-    # big
-    if aug_type=="bigaug":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.1, 0.1),
-            RandomRotation2D(6),
-            RandomStretch2D(0.1, 0.1),
-    	    RandomGridDistortion2D(100, 5),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-            SemiRandomCrop(x_max, y_max, 20),
-            RandomDropout(0.1)
-        ])
-        
-    # bigbilin
-    if aug_type=="bigaugbilin":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.1, 0.1),
-            RandomRotation2D(6),
-            RandomStretch2D(0.1, 0.1),
-    	    RandomGridDistortion2D(100, 5),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.5),
-            SemiRandomCrop(x_max, y_max, 20),
-            RandomDropout(0.1)
-        ])
-
-    if aug_type=="vbigaugbilin":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            RandomShear2D(0.2, 0.2),
-            RandomRotation2D(10),
-            RandomStretch2D(0.2, 0.2),
-    	    RandomGridDistortion2D(100, 5, 2, 25),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.01),
-            SemiRandomCrop(x_max, y_max),
-            # RandomDropout(0.1)
-        ])
-
     if aug_type=="vbigaugbilinfix":
         return transforms.Compose([
     	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
@@ -1159,29 +1162,6 @@ def get_transform(det="single", aug_type=None, aug_prob=1):
             # RandomDropout(0.1)
         ])
 
-    if aug_type=="vbigaugbilinfixnostretch":
-        return transforms.Compose([
-    	    RandomBlockZeroImproved([50,100], [5,10], [0,x_orig], [0,y_orig]),
-            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig]),
-    	    RandomInPlaceHorizontalFlip(),
-            RandomInPlaceVerticalFlip(),
-    	    RandomHorizontalFlip(x_max=x_orig),
-            RandomVerticalFlip(y_max=y_orig),    
-            JitterCoords(),
-            UnlogCharge(),
-            RandomShear2D(0.2, 0.2),
-            RandomRotation2D(10),
-    	    RandomGridDistortion2D(100, 5, 2, 25),
-    	    RandomScaleCharge(0.05),
-    	    RandomJitterCharge(0.05),
-    	    BilinearSplat(0.5),
-            RelogCharge(),
-            RandomScaleCharge(0.02),
-    	    RandomJitterCharge(0.02),
-            SemiRandomCrop(x_max, y_max),
-            # RandomDropout(0.1)
-        ])        
-
     if aug_type=="bigaugbilinfix":
         return transforms.Compose([
        	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
@@ -1204,6 +1184,296 @@ def get_transform(det="single", aug_type=None, aug_prob=1):
     	    RandomJitterCharge(0.02, p=aug_prob),
             SemiRandomCrop(x_max, y_max, 20),
         ])
+
+    ## Same as bigaugbilinfix, except the aug_probs are fixed for flips
+    if aug_type=="baseaug":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 5, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 20),
+        ])
+
+    ## 1 - Add late stage dropout
+    if aug_type=="baseaugdrop":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 5, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 20),
+            RandomDropout(0.1, p=aug_prob)
+        ])
+        
+    ## 2 - Increase zero blocks early and late drop out
+    if aug_type=="baseaugmoredrop":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([50, 200], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([1000,5000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 5, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 20),
+            RandomDropout(0.2, p=aug_prob)
+        ])
+
+    if aug_type=="baseaugcharge":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 5, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.1, p=aug_prob),
+    	    RandomJitterCharge(0.1, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.1, p=aug_prob),
+    	    RandomJitterCharge(0.1, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 20),
+        ])
+
+    ## Increase the smoothing
+    if aug_type=="baseaugsmooth":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 5, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    ExpandedBilinearSplat(0.5, 2),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 20),
+        ])
+        
+    ## More aggressive grid distortion
+    if aug_type=="baseauggrid":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 10, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 20),
+        ])
+
+    ## 7 - More aggressive random crops
+    if aug_type=="baseaugcrop":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(0.5*aug_prob),
+            RandomInPlaceVerticalFlip(0.5*aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=0.5*aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=0.5*aug_prob),    
+            JitterCoords(),
+            UnlogCharge(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 5, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 40, 80),
+        ])
+
+    if aug_type=="baseaugsplit":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(aug_prob),
+            RandomInPlaceVerticalFlip(aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=aug_prob),    
+            UnlogCharge(),
+            SplitJitterCoords(10),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 10, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplat(0.5),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 40, 80),
+        ]) 
+
+    if aug_type=="baseaugsplitgridmod":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(aug_prob),
+            RandomInPlaceVerticalFlip(aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=aug_prob),    
+            UnlogCharge(),
+            GridJitter(),
+            SplitJitterCoords(10),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 10, 2, 25, p=aug_prob),
+            BilinearSplatMod(0.3, 0.5, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 40, 80),
+        ])         
+        
+    if aug_type=="baseauggridmodjit0.5":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(aug_prob),
+            RandomInPlaceVerticalFlip(aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=aug_prob),    
+            UnlogCharge(),
+            GridJitter(),
+            JitterCoords(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 10, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplatMod(0.3, 0.5, p=aug_prob),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 40, 80),
+        ]) 
+
+    if aug_type=="baseauggridmodjit0.3":
+        return transforms.Compose([
+            RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomInPlaceHorizontalFlip(aug_prob),
+            RandomInPlaceVerticalFlip(aug_prob),
+            RandomHorizontalFlip(x_max=x_orig, p=aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=aug_prob),
+            UnlogCharge(),
+            GridJitter(),
+            JitterCoords(0.3),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+            RandomGridDistortion2D(100, 10, 2, 25, p=aug_prob),
+            RandomScaleCharge(0.05, p=aug_prob),
+            RandomJitterCharge(0.05, p=aug_prob),
+            BilinearSplatMod(0.3, 0.5, p=aug_prob),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+            RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 40, 80),
+        ])
+    
+    if aug_type=="baseauggridmodnoise":
+        return transforms.Compose([
+       	    RandomBlockZeroImproved([0, 50], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            RandomBlockZeroImproved([500,2000], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+    	    RandomInPlaceHorizontalFlip(aug_prob),
+            RandomInPlaceVerticalFlip(aug_prob),
+    	    RandomHorizontalFlip(x_max=x_orig, p=aug_prob),
+            RandomVerticalFlip(y_max=y_orig, p=aug_prob),    
+            UnlogCharge(),
+            RandomPixelNoise2D(30),
+            GridJitter(),
+            JitterCoords(),
+            RandomShear2D(0.1, 0.1, p=aug_prob),
+            RandomRotation2D(6, p=aug_prob),
+            RandomStretch2D(0.1, 0.1, p=aug_prob),
+    	    RandomGridDistortion2D(100, 10, 2, 25, p=aug_prob),
+    	    RandomScaleCharge(0.05, p=aug_prob),
+    	    RandomJitterCharge(0.05, p=aug_prob),
+    	    BilinearSplatMod(0.3, 0.5, p=aug_prob),
+            RelogCharge(),
+            RandomScaleCharge(0.02, p=aug_prob),
+    	    RandomJitterCharge(0.02, p=aug_prob),
+            SemiRandomCrop(x_max, y_max, 40, 80),
+        ]) 
+             
     
     raise ValueError("Unknown augmentation type:", aug_type)
 
