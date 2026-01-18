@@ -1,0 +1,235 @@
+FROM debian:11-slim AS builder
+
+ARG NCORES=4
+ENV GEN_DIR=/opt/generators
+
+# Install build deps
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    build-essential gfortran cmake git wget \
+    libboost-all-dev libclhep-dev \
+    python3 python3-pip \
+    python3-numpy python3-dev \
+    zlib1g-dev libx11-dev libssl-dev libpng-dev libjpeg-dev \
+    liblzma-dev libxxhash-dev libxpm-dev libxft-dev libxext-dev \
+    libgsl-dev liblz4-dev libgif-dev libtiff-dev libxml2-dev \
+    libfftw3-dev libblas-dev ca-certificates \
+    libxerces-c-dev libhdf5-dev \
+    libglu1-mesa-dev libgl1-mesa-dev libgl1-mesa-dri \
+    libosmesa6 libosmesa6-dev \
+    libglew-dev freeglut3-dev libyaml-cpp-dev \
+    && update-ca-certificates
+
+# Build dir
+RUN mkdir -p ${GEN_DIR}
+WORKDIR ${GEN_DIR}
+
+# Get PYTHIA6
+RUN wget --no-check-certificate http://root.cern.ch/download/pythia6.tar.gz && \
+    tar -xzf pythia6.tar.gz && rm pythia6.tar.gz && \
+    wget --no-check-certificate https://pythia.org/download/pythia6/pythia6428.f && \
+    mv pythia6428.f pythia6/pythia6428.f && rm pythia6/pythia6416.f
+
+# Build PYTHIA6
+WORKDIR ${GEN_DIR}/pythia6
+RUN sed -i "s/int /extern int /g" pythia6_common_address.c && \
+    sed -i "s/char /extern char /g" pythia6_common_address.c && \
+    sed -i "s/extern int pyuppr/int pyuppr/g" pythia6_common_address.c && \
+    sed -i "s/m64/march=native/g" makePythia6.linuxx8664 && \
+    ./makePythia6.linuxx8664
+
+ENV PYTHIA6=${GEN_DIR}/pythia6
+ENV LD_LIBRARY_PATH=${PYTHIA6}:${LD_LIBRARY_PATH}
+
+# Get ROOT
+WORKDIR ${GEN_DIR}
+RUN git clone -b v6-24-06 --depth 1 --single-branch https://github.com/root-project/root.git root
+
+# Build ROOT
+RUN mkdir -p ${GEN_DIR}/root/install && cd ${GEN_DIR}/root/install
+WORKDIR ${GEN_DIR}/root/install
+RUN cmake -DPYTHIA6_LIBRARY=${PYTHIA6}/libPythia6.so \
+          -DCMAKE_CXX_STANDARD=17 \
+	  -Dpythia6=ON -Dminuit2=ON -Dmathmore=ON -Dgdml=ON \
+          -Ddavix=OFF -Dfitsio=OFF -Dgfal=OFF -Dcastor=OFF \
+          -Dclad=OFF -Dhttp=OFF -Droot7=OFF -Dwebgui=OFF \
+          -Dxrootd=OFF -Dmlp=OFF -Dmysql=OFF -Doracle=OFF \
+          -Dpgsql=OFF -Droofit=OFF -Dspectrum=OFF -Dsqlite=OFF \
+          -Ddataframe=OFF -Dimt=OFF -Dtmva=OFF -Dvdt=OFF \
+          -Dtmva-cpu=OFF -Dtmva-pymva=OFF -Dssl=OFF -Dcudnn=OFF -Dexceptions=OFF \
+	  -Deve=ON -Dx11=ON -Dopengl=ON -Dbuiltin_ftgl=ON -Dbuiltin_gl2ps=ON \
+          -DPYTHON_EXECUTABLE=/usr/bin/python3 -Dpython3=ON \
+          ../ && \
+    make -j${NCORES}
+    #|| (cat CMakeFiles/CMakeError.log && false)
+
+## Set ROOT environment
+ENV ROOTSYS=${GEN_DIR}/root/install
+ENV PATH=${ROOTSYS}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${ROOTSYS}/lib:${LD_LIBRARY_PATH}
+
+# G4
+WORKDIR ${GEN_DIR}
+RUN git clone -b v10.7.2 https://github.com/Geant4/geant4.git && \
+    mkdir geant4/build geant4/install && cd geant4/build && \
+    cmake -DCMAKE_INSTALL_PREFIX=../install \
+          -DGEANT4_INSTALL_DATA=ON \
+          -DGEANT4_USE_GDML=ON ../ && \
+    make -j${NCORES} && make install
+    
+ENV GEANT4=${GEN_DIR}/geant4/install
+ENV G4ABLADATA=${GEANT4}/share/Geant4-10.7.2/data/G4ABLA3.1
+ENV G4ENSDFSTATEDATA=${GEANT4}/share/Geant4-10.7.2/data/G4ENSDFSTATE2.3
+ENV G4INCLDATA=${GEANT4}/share/Geant4-10.7.2/data/G4INCL1.0
+ENV G4LEDATA=${GEANT4}/share/Geant4-10.7.2/data/G4EMLOW7.13
+ENV G4LEVELGAMMADATA=${GEANT4}/share/Geant4-10.7.2/data/PhotonEvaporation5.7
+ENV G4NEUTRONHPDATA=${GEANT4}/share/Geant4-10.7.2/data/G4NDL4.6
+ENV G4PARTICLEXSDATA=${GEANT4}/share/Geant4-10.7.2/data/G4PARTICLEXS3.1.1
+ENV G4PIIDATA=${GEANT4}/share/Geant4-10.7.2/data/G4PII1.3
+ENV G4RADIOACTIVEDATA=${GEANT4}/share/Geant4-10.7.2/data/RadioactiveDecay5.6
+ENV G4REALSURFACEDATA=${GEANT4}/share/Geant4-10.7.2/data/RealSurface2.2
+ENV G4SAIDXSDATA=${GEANT4}/share/Geant4-10.7.2/data/G4SAIDDATA2.0
+ENV LD_LIBRARY_PATH=${GEANT4}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${GEANT4}/bin:${PATH}
+
+## Now edep-sim
+## Note the dirty sed hack to shut CAPTAIN up
+RUN git clone https://github.com/DUNE/edep-sim.git && \
+    cd edep-sim && \
+    sed -i "s/#define BUILD_CAPTAIN/\/\/#define BUILD_CAPTAIN/" src/EDepSimUserDetectorConstruction.cc && \
+    mkdir install && cd build && \
+    cmake -DCMAKE_INSTALL_PREFIX=../install ../ && \
+    make -j${NCORES} && make install
+
+ENV EDEPSIM=/opt/generators/edep-sim/install
+ENV LD_LIBRARY_PATH=${EDEPSIM}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${EDEPSIM}/bin:${PATH}
+ENV CPLUS_INCLUDE_PATH=${EDEPSIM}/include/EDepSim:${CPLUS_INCLUDE_PATH}
+
+## Sort out LHAPDF
+WORKDIR ${GEN_DIR}
+RUN apt-get install -y python-is-python3
+RUN mkdir ${GEN_DIR}/LHAPDF && cd ${GEN_DIR}/LHAPDF && \
+    wget https://lhapdf.hepforge.org/downloads/LHAPDF-6.5.1.tar.gz && \
+    tar xzf LHAPDF-6.5.1.tar.gz && \
+    rm LHAPDF-6.5.1.tar.gz && cd LHAPDF-6.5.1 && \
+    ./configure --prefix=${PWD}/../LHAPDF-6.5.1_build && \
+    make -j ${NCORES} && make install
+    
+ENV LHAPDF=${GEN_DIR}/LHAPDF/LHAPDF-6.5.1_build
+ENV LD_LIBRARY_PATH=${LHAPDF}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${LHAPDF}/bin:${PATH}
+ENV LHAPATH=${LHAPDF}/include/LHAPDF
+
+## Setup the GENIE paths
+ENV GENIE_VERSION=R-3_06_02
+ENV GENIE=${GEN_DIR}/GENIE/${GENIE_VERSION}
+ENV LHAPDF_LIB=${LHAPDF}/lib
+ENV LHAPDF_INC=${LHAPDF}/include
+
+## Need log4cpp for GENIE
+RUN apt-get install -y liblog4cpp5-dev
+	
+## Get the GENIE code
+RUN mkdir -p ${GEN_DIR}/GENIE && \
+    git clone -b ${GENIE_VERSION} --depth 1 --single-branch https://github.com/GENIE-MC/Generator.git ${GEN_DIR}/GENIE/${GENIE_VERSION} && \    
+    cd ${GENIE} && \
+    sed -i 's/g77/gfortran/g' src/make/Make.include && \
+    ./configure --enable-debug \
+    		--enable-fnal \
+    		--enable-rwght \
+    		--enable-lhapdf6 \
+		--disable-lhapdf5 \
+    		--disable-apfel && \
+    make -j${NCORES} && make install
+    
+ENV PATH=$GENIE/bin:${PATH}
+ENV LD_LIBRARY_PATH=$GENIE/lib:$LD_LIBRARY_PATH
+    
+    ## Shut GENIE up when it runs
+RUN cp ${GENIE}/config/Messenger_whisper.xml ${GENIE}/config/Messenger.xml && \
+    sed -i '$ d' ${GENIE}/config/Messenger.xml && \
+    echo '  <priority msgstream="ResonanceDecay">      FATAL </priority>' >> ${GENIE}/config/Messenger.xml && \
+    echo '  <priority msgstream="Pythia6Decay">        FATAL </priority>' >> ${GENIE}/config/Messenger.xml && \
+    echo '  <priority msgstream="INukeNucleonCorr">    FATAL </priority>' >> ${GENIE}/config/Messenger.xml && \
+    echo '  <priority msgstream="gevgen_fnal">         FATAL </priority>' >> ${GENIE}/config/Messenger.xml && \
+    echo '</messenger_config>' >> ${GENIE}/config/Messenger.xml
+    
+# ---------- Runtime stage ----------
+FROM debian:11-slim
+
+ENV GEN_DIR=/opt/generators
+
+# Runtime deps only (strip compilers)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    	python3 python3-numpy \
+	python3-pip python3-dev \
+        libx11-6 libssl1.1 libpng16-16 libjpeg62-turbo \
+        liblzma5 libxxhash0 libxpm4 libxft2 libxext6  \
+        liblz4-1 libgif7 libtiff5 libxml2 libfftw3-double3 \
+        libblas3 libx11-dev libxerces-c-dev \
+	libgsl-dev libxpm-dev libxft-dev libhdf5-dev \
+	libxext-dev libgl1-mesa-dev libosmesa6 libosmesa6-dev \
+	libglew-dev freeglut3-dev  libyaml-cpp-dev \
+	g++ libc6-dev libstdc++-10-dev \
+	git build-essential cmake python3-dev libeigen3-dev \
+	liblog4cpp5-dev python-is-python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+
+## PYTHIA6
+ENV GEN_DIR=/opt/generators
+COPY --from=builder ${GEN_DIR}/pythia6 ${GEN_DIR}/pythia6
+ENV PYTHIA6=${GEN_DIR}/pythia6
+ENV LD_LIBRARY_PATH=${PYTHIA6}:${LD_LIBRARY_PATH}
+
+## ROOT
+ENV ROOTSYS=${GEN_DIR}/root/install
+COPY --from=builder ${ROOTSYS} ${ROOTSYS}
+ENV PATH=${ROOTSYS}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${ROOTSYS}/lib:${LD_LIBRARY_PATH}
+ENV PYTHONPATH=${ROOTSYS}/lib:${PYTHONPATH}
+
+## GEANT4
+ENV GEANT4=${GEN_DIR}/geant4/install
+COPY --from=builder ${GEANT4} ${GEANT4}
+ENV G4ABLADATA=${GEANT4}/share/Geant4-10.7.2/data/G4ABLA3.1
+ENV G4ENSDFSTATEDATA=${GEANT4}/share/Geant4-10.7.2/data/G4ENSDFSTATE2.3
+ENV G4INCLDATA=${GEANT4}/share/Geant4-10.7.2/data/G4INCL1.0
+ENV G4LEDATA=${GEANT4}/share/Geant4-10.7.2/data/G4EMLOW7.13
+ENV G4LEVELGAMMADATA=${GEANT4}/share/Geant4-10.7.2/data/PhotonEvaporation5.7
+ENV G4NEUTRONHPDATA=${GEANT4}/share/Geant4-10.7.2/data/G4NDL4.6
+ENV G4PARTICLEXSDATA=${GEANT4}/share/Geant4-10.7.2/data/G4PARTICLEXS3.1.1
+ENV G4PIIDATA=${GEANT4}/share/Geant4-10.7.2/data/G4PII1.3
+ENV G4RADIOACTIVEDATA=${GEANT4}/share/Geant4-10.7.2/data/RadioactiveDecay5.6
+ENV G4REALSURFACEDATA=${GEANT4}/share/Geant4-10.7.2/data/RealSurface2.2
+ENV G4SAIDXSDATA=${GEANT4}/share/Geant4-10.7.2/data/G4SAIDDATA2.0
+ENV LD_LIBRARY_PATH=${GEANT4}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${GEANT4}/bin:${PATH}
+
+## EDEP-SIM
+ENV EDEPSIM=/opt/generators/edep-sim/install
+COPY --from=builder ${EDEPSIM} ${EDEPSIM}
+ENV LD_LIBRARY_PATH=${EDEPSIM}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${EDEPSIM}/bin:${PATH}
+ENV CPLUS_INCLUDE_PATH=${EDEPSIM}/include/EDepSim:${CPLUS_INCLUDE_PATH}
+
+## LHAPDF
+ENV LHAPDF=${GEN_DIR}/LHAPDF/LHAPDF-6.5.1_build
+COPY --from=builder ${LHAPDF} ${LHAPDF}
+ENV LD_LIBRARY_PATH=${LHAPDF}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${LHAPDF}/bin:${PATH}
+ENV LHAPATH=${LHAPDF}/include/LHAPDF
+
+## GENIE
+ENV GENIE_VERSION=R-3_06_02
+ENV GENIE=${GEN_DIR}/GENIE/${GENIE_VERSION}
+COPY --from=builder ${GENIE} ${GENIE}
+ENV PATH=$GENIE/bin:${PATH}
+ENV LD_LIBRARY_PATH=$GENIE/lib:$LD_LIBRARY_PATH
+
+
+## Python installs
+RUN python3 -m pip install --upgrade pip setuptools wheel \
+    && python3 -m pip install numpy fire h5py pandas matplotlib scipy scikit-learn
+    
