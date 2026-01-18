@@ -1,6 +1,7 @@
 import sys
 import h5py
 import numpy as np
+import argparse
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import matplotlib
@@ -199,14 +200,12 @@ def get_truth_label(trajs, segments):
     return Label.NOLABEL
 
 
-def make_images(input_file_name, output_file_name):
+def make_images(input_file_name, output_file_name, min_hits=1):
 
     f = h5py.File(input_file_name, "r")
 
-    ## Allows a minimum number of hits to be an interesting event
-    min_hits = 1
-    
     raw_events = f['charge/events/data']
+    ## Allows a minimum number of hits to be an interesting event
     events = raw_events[raw_events['nhit'] > min_hits]
 
     ## How many events do we have?
@@ -275,7 +274,16 @@ def make_images(input_file_name, output_file_name):
             ## Now get trajectories, but... there can be more than one interaction in the image...
             traj_starts = mc_traj_region[mc_int_ref, 'start']
             traj_stops  = mc_traj_region[mc_int_ref, 'stop']
+            seg_starts = mc_seg_region[mc_int_ref, 'start']
+            seg_stops  = mc_seg_region[mc_int_ref, 'stop']
+            
+            print("traj_starts:", traj_starts)
+            print("traj_stops:", traj_stops)
+            print("seg_starts:", seg_starts)
+            print("seg_stops:", seg_stops)
 
+            print("N. hits =", len(these_hits))
+            
             ## Extract final trajectories
             traj_ref_chunks = [mc_traj_refs[start:stop] for start, stop in zip(traj_starts, traj_stops)]
             all_traj_refs = np.vstack(traj_ref_chunks)
@@ -365,11 +373,20 @@ def make_images(input_file_name, output_file_name):
 
 if __name__ == '__main__':
 
-    ## Take an input file and convert it to an h5 file of images
-    if len(sys.argv) < 3:
-        print("An input file and output file name must be provided as arguments!")
-        sys.exit()
+    ## Parse some args
+    parser = argparse.ArgumentParser("Image maker")
 
-    input_file_name = sys.argv[1]
-    output_file_name = sys.argv[2]
-    make_images(input_file_name, output_file_name)
+    # Require an input file name and location to dump plots
+    parser.add_argument('--input', type=str)
+    parser.add_argument('--output', type=str)
+
+    ## Allow a minimum number of hits cut
+    parser.add_argument('--min_hits', type=int, default=1, nargs='?')
+
+    # Parse arguments from command line
+    args = parser.parse_args()
+
+    ## Report arguments
+    for arg in vars(args): print(arg, getattr(args, arg))
+
+    make_images(args.input, args.output, args.min_hits)
