@@ -216,30 +216,6 @@ def get_3D_image_from_event(event, origin, voxel_size):
     return coords, values
 
 
-def collapse_3d_to_2d(coords_3d, values_3d, keep_axes=(0, 1)):
-
-    # Select the two axes we want to keep
-    kept = coords_3d[:, keep_axes]   # shape (N,2)
-
-    # Make a structured array so numpy can do row-wise unique
-    dtype = np.dtype([('a', np.int32), ('b', np.int32)])
-    structured = np.empty(len(kept), dtype=dtype)
-    structured['a'] = kept[:, 0]
-    structured['b'] = kept[:, 1]
-
-    # Find unique 2D coordinates and mapping
-    uniq, inverse = np.unique(structured, return_inverse=True)
-
-    # Sum values for identical (a,b)
-    values_2d = np.zeros(len(uniq), dtype=values_3d.dtype)
-    np.add.at(values_2d, inverse, values_3d)
-
-    # Convert back to plain (M,2) array
-    coords_2d = np.vstack([uniq['a'], uniq['b']]).T
-
-    return coords_2d, values_2d
-
-    
 def read_edepsim_output(infilelist, output_file_name):
 
     output_size = np.array([256, 256, 256])
