@@ -20,10 +20,11 @@ from matplotlib.ticker import MaxNLocator
 from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
 from ME_dataset_libs import DoNothing, get_transform, FirstRegionCrop
 from ME_NN_libs import get_encoder, get_projhead, get_clusthead
+import faiss
 
 ## For clustering studies
-import spherecluster
-from spherecluster import VonMisesFisherMixture
+#import spherecluster
+#from spherecluster import VonMisesFisherMixture
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
 
 def load_checkpoint(state_file_name):
@@ -750,15 +751,63 @@ def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True)
     ## n_init: 10
     ## n_jobs: 1 (number of CPUs to use)
     
-    vMF = VonMisesFisherMixture(n_clusters=n_clusters, posterior_type='soft', n_init=n_copies, n_jobs=n_copies, verbose=verbose, max_iter=500)
-    vMF.fit(X_norm)
+    ## vMF = VonMisesFisherMixture(n_clusters=n_clusters, posterior_type='soft', n_init=n_copies, n_jobs=n_copies, verbose=verbose, max_iter=500)
+    ## vMF.fit(X_norm)
+    ## 
+    ## ## For some reasons labels are floats
+    ## labels = vMF.predict(X_norm).astype(int)
+    ## weights = vMF.weights_
+    ## 
+    ## labs = np.unique(labels)
+    ## 
+    ## metrics = {}
+    ## 
+    ## if labs.size < 2 or labs.size >= len(labels):
+    ##     metrics["silhouette"] = None
+    ##     metrics["calinski_harabasz"] = None
+    ##     metrics["davies_bouldin"] = None
+    ## else:
+    ##     metrics["silhouette"] = silhouette_score(X_norm, labels, metric="cosine")
+    ##     metrics["calinski_harabasz"] = calinski_harabasz_score(X_norm, labels)
+    ##     metrics["davies_bouldin"] = davies_bouldin_score(X_norm, labels)
+    ## 
+    ## if verbose:
+    ##     print("Cluster weights:", weights)
+    ##     print("Silhouette score:", metrics["silhouette"])
+    ##     print("Calinski-Harabasz =", metrics["calinski_harabasz"])
+    ##     print("Davies-Bouldin =", metrics["davies_bouldin"])
+    ## 
+    ## return labels, metrics
+    return 
 
-    ## For some reasons labels are floats
-    labels = vMF.predict(X_norm).astype(int)
-    weights = vMF.weights_
+def run_faiss_spherical_kmeans(dataset, n_clusters, n_iter=20, verbose=True, seed=123):
+    # Normalize embeddings (critical for cosine clustering)
+    X = dataset.astype(np.float32)
+    X /= np.linalg.norm(X, axis=1, keepdims=True)
 
+    N, d = X.shape
+
+    # FAISS k-means (spherical via normalization)
+    kmeans = faiss.Kmeans(
+        d=d,
+        k=n_clusters,
+        niter=n_iter,
+        verbose=verbose,
+        seed=seed,
+        spherical=True  # ensures centroid normalization
+    )
+    kmeans.train(X)
+
+    # Assign clusters
+    _, labels = kmeans.index.search(X, 1)
+    labels = labels.flatten()
+
+    # Cluster weights
+    counts = np.bincount(labels, minlength=n_clusters)
+    weights = counts / N
+
+    # Metrics
     labs = np.unique(labels)
-    
     metrics = {}
 
     if labs.size < 2 or labs.size >= len(labels):
@@ -766,9 +815,9 @@ def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True)
         metrics["calinski_harabasz"] = None
         metrics["davies_bouldin"] = None
     else:
-        metrics["silhouette"] = silhouette_score(X_norm, labels, metric="cosine")
-        metrics["calinski_harabasz"] = calinski_harabasz_score(X_norm, labels)
-        metrics["davies_bouldin"] = davies_bouldin_score(X_norm, labels)
+        metrics["silhouette"] = silhouette_score(X, labels, metric="cosine")
+        metrics["calinski_harabasz"] = calinski_harabasz_score(X, labels)
+        metrics["davies_bouldin"] = davies_bouldin_score(X, labels)
 
     if verbose:
         print("Cluster weights:", weights)
@@ -776,8 +825,8 @@ def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True)
         print("Calinski-Harabasz =", metrics["calinski_harabasz"])
         print("Davies-Bouldin =", metrics["davies_bouldin"])
 
-    return labels, metrics
-
+    return labels, metrics, kmeans.centroids
+    
 def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
                  lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None, tsne_results=None):
     
@@ -792,7 +841,7 @@ def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
     if tsne_results is None:
         tsne = TSNE(n_components=2,
                     perplexity=perp,
-                    n_iter=n_iter,
+                    # n_iter=n_iter,
                     early_exaggeration=exag,
                     learning_rate=lr,
                     init='pca',
