@@ -12,14 +12,14 @@ RUN apt-get install -y emacs
 RUN apt-get install -y git ninja-build cmake build-essential libopenblas-dev \
     xterm xauth openssh-server tmux wget mate-desktop-environment-core
 
-RUN apt-get update
-RUN apt-get install -y emacs
-
 ## Update HDF5 libs
 RUN python -m pip install --upgrade pip
-RUN pip install h5py
 
-RUN pip install notebook ipykernel
+# Install cuML and cuPy
+RUN pip install "cuml-cu11" --extra-index-url=https://pypi.nvidia.com \
+    && pip install "cupy-cuda11x"
+
+RUN pip install h5py notebook ipykernel tensorboard matplotlib scipy joblib scikit-learn pandas
 
 ## A GUI for matplotlib
 RUN pip install pyqt5
@@ -34,7 +34,7 @@ ENV MAX_JOBS=2
 RUN git clone --recursive "https://github.com/NVIDIA/MinkowskiEngine"
 RUN cd MinkowskiEngine; python setup.py install --force_cuda --blas=openblas
 
-RUN pip install tensorboard matplotlib scipy joblib scikit-learn pandas
+RUN pip install faiss-gpu
 
 ENV XDG_RUNTIME_DIR=${PWD}
-ENV export NO_AT_BRIDGE=1
+ENV NO_AT_BRIDGE=1
