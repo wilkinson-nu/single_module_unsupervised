@@ -9,8 +9,39 @@ from scipy.sparse import coo_matrix
 from enum import Enum, auto
 from collections import defaultdict
 
-make_plots = True
+make_plots = False
 
+def get_neutrino_4mom(groo_event):
+    ## Topology << Enum class
+    ## N. charged particles
+    ## N. neutrons
+    ## N. protons
+    ## N. charged pions
+    ## N. EM showers
+    ## N. exotic
+    ## CC/NC
+    ## Mode? << Enum class
+    ## Enu
+    ## q0
+    
+    ## Loop over the particles in GENIE's stack
+    for p in range(groo_event.StdHepN):
+
+        ## Look for the particle status
+        ## 0 is initial state, 1 is final, check the GENIE docs for others
+        if groo_event.StdHepStatus[p] != 0: continue
+
+        ## Check for a neutrino (any flavor)
+        if abs(groo_event.StdHepPdg[p]) not in [12, 14, 16]: continue
+
+        ## Kindly redirect any complaints about this line to /dev/null
+        ## edep-sim uses MeV, gRooTracker uses GeV...
+        return TLorentzVector(groo_event.StdHepP4[p*4 + 0]*1000,
+                              groo_event.StdHepP4[p*4 + 1]*1000,
+                              groo_event.StdHepP4[p*4 + 2]*1000,
+                              groo_event.StdHepP4[p*4 + 3]*1000)
+    ## Should never happen...
+    return None
 
 ## Define labels
 class Label(Enum):
