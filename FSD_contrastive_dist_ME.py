@@ -18,8 +18,11 @@ from torch.utils.data import ConcatDataset
 from torch import nn
 
 ## Includes from my libraries for this project
-from ME_NN_libs import NTXentMerged, ClusteringLossMerged
-from ME_NN_libs import get_encoder, get_projhead, get_clusthead
+from core.losses.ntxent import NTXentMerged
+from core.losses.clustering import ClusteringLossMerged
+from core.models.encoder import get_encoder
+from core.models.projection_head import get_projhead
+from core.models.clustering_head import get_clusthead
 from ME_analysis_libs import argmax_consistency
 
 ## For logging
@@ -31,10 +34,11 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from ME_dataset_libs import DoNothing, get_transform
+from core.data.augmentations_2d import DoNothing
+from datasets.fsd.augmentations_2d import get_transform
 
 ## Import dataset
-from ME_dataset_libs import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
+from core.data.datasets import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):
