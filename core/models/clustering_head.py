@@ -1,5 +1,5 @@
 from torch import nn
-from utils import get_act_from_string
+from core.models.utils import get_act_from_string
 
 class ClusteringHeadTwoLayer(nn.Module):
     def __init__(self, 
