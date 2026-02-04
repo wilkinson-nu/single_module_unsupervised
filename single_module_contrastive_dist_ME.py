@@ -27,10 +27,10 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from ME_dataset_libs import CenterCrop, get_transform
+from core.data.augmentations_2d import CenterCrop, get_transform
 
 ## Import dataset
-from ME_dataset_libs import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
+from core.data.datasets import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):
