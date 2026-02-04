@@ -1,7 +1,7 @@
 from torch import nn
 import torch
 import MinkowskiEngine as ME
-from utils import get_act_from_string_ME
+from core.models.utils import get_act_from_string_ME
 
 class CCEncoderVarDepth(nn.Module):
     def __init__(self, 
