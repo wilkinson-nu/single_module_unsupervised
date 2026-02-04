@@ -10,16 +10,20 @@ from scipy.cluster.hierarchy import linkage, fcluster
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib import cm
-from ME_dataset_libs import make_dense, make_dense_from_tensor, Label
+from core.analysis.image_utils import make_dense, make_dense_from_tensor
+from datasets.fsd.truth_labels import Label
 from cuml.manifold import TSNE as cuML_TSNE
 import cupy as cp
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, normalize
 from cuml.preprocessing import StandardScaler as cuMLScaler
 from cuml.manifold import UMAP as cuML_UMAP
 from matplotlib.ticker import MaxNLocator
-from ME_dataset_libs import SingleModuleImage2D_solo_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
-from ME_dataset_libs import DoNothing, get_transform, FirstRegionCrop
-from ME_NN_libs import get_encoder, get_projhead, get_clusthead
+from core.data.datasets import SingleModuleImage2D_solo_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
+from core.data.augmentations_2d import DoNothing, FirstRegionCrop
+from datasets.fsd.augmentations_2d import get_transform
+from core.models.encoder import get_encoder
+from core.models.projection_head import get_projhead
+from core.models.clustering_head import get_clusthead
 import faiss
 
 ## For clustering studies
