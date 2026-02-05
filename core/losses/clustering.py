@@ -1,5 +1,6 @@
 import math
 import torch
+from torch import nn
 
 class ClusteringLossMerged(nn.Module):
     def __init__(self, temperature=0.5, entropy_weight=1.0):

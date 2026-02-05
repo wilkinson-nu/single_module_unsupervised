@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 
 class NTXentMerged(nn.Module):
     def __init__(self, temperature=0.5):
