@@ -12,7 +12,6 @@ import cupy as cp
 from cuml.preprocessing import StandardScaler as cuMLScaler
 from cuml.manifold import UMAP as cuML_UMAP
 from matplotlib.ticker import MaxNLocator
-from core.data.datasets import SingleModuleImage2D_solo_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
 import faiss
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
 

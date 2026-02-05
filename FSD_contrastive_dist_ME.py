@@ -38,7 +38,7 @@ from core.data.augmentations_2d import DoNothing
 from datasets.fsd.augmentations_2d import get_transform
 
 ## Import dataset
-from core.data.datasets import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
+from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):
@@ -133,16 +133,16 @@ def get_dataset(args, rank=0):
     ndata = int(args.nevents*args.frac_data)
     nsim = args.nevents - ndata
 
-    data_dataset = SingleModuleImage2D_MultiHDF5_ME(args.data_dir, \
-                                                     nom_transform=DoNothing(), \
-                                                     aug_transform=aug_transform, \
-                                                     max_events=ndata)
+    data_dataset = paired_2d_dataset_ME(args.data_dir, \
+                                        nom_transform=DoNothing(), \
+                                        aug_transform=aug_transform, \
+                                        max_events=ndata)
     if nsim > 0:
         if rank==0: print("Training with", ndata, "data and", nsim, "simulation events!")
-        sim_dataset = SingleModuleImage2D_MultiHDF5_ME(args.sim_dir, \
-                                                     nom_transform=DoNothing(), \
-                                                     aug_transform=aug_transform, \
-                                                     max_events=nsim)
+        sim_dataset = paired_2d_dataset_ME(args.sim_dir, \
+                                           nom_transform=DoNothing(), \
+                                           aug_transform=aug_transform, \
+                                           max_events=nsim)
         train_dataset = ConcatDataset([data_dataset, sim_dataset])
     else:
         if rank==0: print("Training with", ndata, "data events!")

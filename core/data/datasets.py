@@ -7,8 +7,7 @@ from bisect import bisect
 import MinkowskiEngine as ME
 import torch
 
-## TO BE RENAMED
-class SingleModuleImage2D_MultiHDF5_ME(Dataset):
+class paired_2d_dataset_ME(Dataset):
 
     def __init__(self, infile_dir, nom_transform, aug_transform=None, max_events=None):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
@@ -98,7 +97,7 @@ def cat_ME_collate_fn(batch):
     return cat_bcoords, cat_bfeats, len(raw_feats)*2
 
 
-class SingleModuleImage2D_solo_ME(Dataset):
+class single_2d_dataset_ME(Dataset):
 
     def __init__(self, infile_dir, transform, max_events=None, return_metadata=False):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))

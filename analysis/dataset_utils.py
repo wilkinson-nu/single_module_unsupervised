@@ -1,4 +1,4 @@
-from core.data.datasets import SingleModuleImage2D_solo_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
+from core.data.adtasets import single_2d_dataset_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
 from core.data.augmentations_2d import FirstRegionCrop
 import torch
 import MinkowskiEngine as ME
@@ -12,7 +12,7 @@ def get_dataset(input_dir, nevents, return_metadata=False):
             FirstRegionCrop((800, 256), (768, 256)),
             ])
     
-    dataset = SingleModuleImage2D_solo_ME(input_dir, \
+    dataset = single_2d_dataset_ME(input_dir, \
                                           transform=nom_transform, \
                                           max_events=nevents,\
                                           return_metadata=return_metadata)

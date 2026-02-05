@@ -30,7 +30,7 @@ _=torch.manual_seed(SEED)
 from core.data.augmentations_2d import CenterCrop, get_transform
 
 ## Import dataset
-from core.data.datasets import SingleModuleImage2D_MultiHDF5_ME, cat_ME_collate_fn
+from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):
@@ -297,10 +297,10 @@ if __name__ == '__main__':
     aug_transform = get_transform('single', args.aug_type)
     
     ## Get the concrete dataset
-    train_dataset = SingleModuleImage2D_MultiHDF5_ME(args.indir, \
-                                                     nom_transform=CenterCrop(), \
-                                                     aug_transform=aug_transform, \
-                                                     max_events=args.nevents)
+    train_dataset = paired_2d_dataset_ME(args.indir, \
+                                         nom_transform=CenterCrop(), \
+                                         aug_transform=aug_transform, \
+                                         max_events=args.nevents)
     ## Only one architecture for now
     enc = ContrastiveEncoderME
 
