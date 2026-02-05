@@ -9,6 +9,7 @@ from scipy.sparse import coo_matrix
 from enum import Enum, auto
 from collections import defaultdict
 
+## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
 
 def get_neutrino_4mom(groo_event):
@@ -370,6 +371,4 @@ if __name__ == '__main__':
     input_file_name = sys.argv[1]
     output_file_name = sys.argv[2]
 
-    print(input_file_name)
-                                     
     read_edepsim_output(input_file_name, output_file_name)
