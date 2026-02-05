@@ -1,0 +1,23 @@
+/edep/phys/ionizationModel 0
+/edep/gdml/read _GEOM_
+
+/edep/hitSagitta lar_vol 1.0 mm
+/edep/hitLength lar_vol 1.0 mm
+/edep/db/set/neutronThreshold 0 MeV
+/edep/db/set/lengthThreshold 0 mm
+/edep/db/set/gammaThreshold 0 MeV
+/edep/random/timeRandomSeed
+/edep/hitSeparation lar_vol -1 mm
+/edep/update
+
+/generator/kinematics/set rooTracker
+/generator/kinematics/rooTracker/input _GROO_FILE_
+/generator/position/set fixed
+/generator/position/fixed/position 0 0 0 cm
+/generator/count/set fixed
+/generator/count/fixed/number 1
+/generator/add
+
+/random/setSeeds _RAND1_ _RAND2_
+
+/run/initialize
