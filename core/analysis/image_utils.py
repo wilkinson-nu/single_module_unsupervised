@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 
-def make_dense(coords_batch, feats_batch, device, index=0, max_i=256, max_j=128, device):
+def make_dense(coords_batch, feats_batch, device, index=0, max_i=256, max_j=128):
     img = ME.SparseTensor(feats_batch.float(), coords_batch.int(), device=device)
     coords, feats = img.decomposed_coordinates_and_features
     batch_size = len(coords)
