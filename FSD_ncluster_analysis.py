@@ -17,17 +17,15 @@ if not matplotlib.get_backend().startswith("module://matplotlib_inline"):
 import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-## Import analysis functions
-from ME_analysis_libs import run_tsne_skl, plot_cluster_bigblock, run_vMF
-
 ## Seeding
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Various shared analysis libraries
-from ME_analysis_libs import run_tsne_skl, plot_cluster_bigblock
-from ME_analysis_libs import load_checkpoint, get_models_from_checkpoint, get_dataset, image_loop
+from analysis.plotting_utils import run_tsne_skl, plot_cluster_bigblock
+from analysis.model_utils import load_checkpoint, get_models_from_checkpoint
+from analysis.dataset_utils import get_dataset, image_loop
 
 ## For paraellising the ncluster runs
 from joblib import Parallel, delayed

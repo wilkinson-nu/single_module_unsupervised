@@ -17,8 +17,8 @@ import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ## Import analysis functions
-from ME_analysis_libs import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_metric_by_confidence, plot_cluster_bigblock
-from ME_analysis_libs import run_tsne_cuml, run_umap_cuml, run_tsne_skl
+from analysis.plotting_utils import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_metric_by_confidence, plot_cluster_bigblock
+from analysis.plotting_utils import run_tsne_cuml, run_umap_cuml, run_tsne_skl
 
 ## Seeding
 SEED=12345
@@ -26,7 +26,8 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Various shared analysis libraries
-from ME_analysis_libs import load_checkpoint, get_models_from_checkpoint, get_dataset, image_loop, reorder_clusters
+from analysis.model_utils import load_checkpoint, get_models_from_checkpoint
+from analysis.dataset_utils import get_dataset, image_loop, reorder_clusters
     
 def run_analysis(args):
 

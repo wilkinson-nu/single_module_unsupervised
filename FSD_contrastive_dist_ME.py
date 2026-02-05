@@ -23,7 +23,7 @@ from core.losses.clustering import ClusteringLossMerged
 from core.models.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
-from ME_analysis_libs import argmax_consistency
+from core.analysis.metrics import argmax_consistency
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
