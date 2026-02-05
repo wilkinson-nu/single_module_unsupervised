@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<gdml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://service-spi.web.cern.ch/service-spi/app/releases/GDML/schema/gdml.xsd">
+  <define>
+    <position name="lar_vol_1intoppos" x="0" y="0" z="0" unit="m"/>
+  </define>
+  <materials>
+    <material name="vacuum" Z="1">
+      <D unit="g/cm3" value="0"/>
+      <atom unit="g/mole" value="0"/>
+    </material>
+    <material name="lar" Z="18">
+      <D unit="g/cm3" value="1.3954"/>
+      <atom unit="g/mole" value="39.948"/>
+    </material>
+    <element name="nitrogen_elm" formula="N" Z="7">
+      <atom unit="g/mole" value="14.0671"/>
+    </element>
+    <element name="oxygen_elm" formula="O" Z="8">
+      <atom unit="g/mole" value="15.999000000000001"/>
+    </element>
+    <element name="argon_elm" formula="Ar" Z="18">
+      <atom unit="g/mole" value="39.948"/>
+    </element>
+    <material name="air">
+      <D unit="g/cm3" value="0.001225"/>
+      <fraction n="0.0093400003388524055" ref="argon_elm"/>
+      <fraction n="0.78115397691726685" ref="nitrogen_elm"/>
+      <fraction n="0.20947599411010742" ref="oxygen_elm"/>
+    </material>
+  </materials>
+  <solids>
+    <box name="top_box" x="2" y="2" z="2" lunit="m"/>
+    <box name="lar_box" x="2" y="2" z="2" lunit="m"/>
+  </solids>
+  <structure>
+    <volume name="lar_vol">
+      <auxiliary auxtype="SensDet" auxvalue="lar_vol"/>
+      <auxiliary auxtype="EField" auxvalue="(0.0 V/cm, 0.0 V/cm, 0.0 V/cm)"/>
+      <auxiliary auxtype="StepLimit" auxvalue="1 mm"/>
+      <materialref ref="lar"/>
+      <solidref ref="lar_box"/>
+      <auxiliary auxtype="SensDet" auxvalue="lar_box"/>
+    </volume>
+    <volume name="top">
+      <auxiliary auxtype="SensDet" auxvalue="top"/>      
+      <materialref ref="air"/>
+      <solidref ref="top_box"/>
+      <auxiliary auxtype="SensDet" auxvalue="top_box"/>            
+      <physvol name="lar_vol_1" copynumber="1">
+        <volumeref ref="lar_vol"/>
+        <positionref ref="lar_vol_1intoppos"/>
+      </physvol>
+    </volume>
+  </structure>
+  <setup name="default" version="1.0">
+    <world ref="top"/>
+  </setup>
+</gdml>
