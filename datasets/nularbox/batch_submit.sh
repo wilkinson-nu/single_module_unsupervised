@@ -37,7 +37,7 @@ do
 
     ## Pass on the job specific information
     sed -i "s/__SEED__/${RANDOM}/g" ${THIS_TEMP}
-    sed -i "s/__OUTDIR_ROOT__/${OUTDIR_ROOT}/g" ${THIS_TEMP}
+    sed -i "s/__OUTDIR_ROOT__/${OUTDIR_ROOT//\//\\/}/g" ${THIS_TEMP}
     sed -i "s/__OUTFILE_ROOT__/${OUTFILE_ROOT}/g" ${THIS_TEMP}
     sed -i "s/__FLUX_FILE__/${FLUX_FILE}/g" ${THIS_TEMP}
     sed -i "s/__FLUX_HIST__/${FLUX_HIST}/g" ${THIS_TEMP}
