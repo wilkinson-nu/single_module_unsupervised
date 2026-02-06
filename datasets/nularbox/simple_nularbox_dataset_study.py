@@ -13,29 +13,29 @@ def make_dataset_summary_plots(input_file_names, plotDir="plots"):
     
     ## Get some high-level summary information
     maxN = 0
-    maxSumQ = 0
+    maxSumE = 0
     total_images = 0
-    maxQ = 0
+    maxE = 0
     ndodgy = 0
-    maxLogQ = 0
-    maxSumLogQ = 0
+    maxLogE = 0
+    maxSumLogE = 0
     nEmpty = 0
     
     ## Binning
     N_lin_bin_edges = np.linspace(0, 4000, 200)
     N_log_bin_edges = np.logspace(0, 3.7, 100)
-    LogQ_bin_edges = np.linspace(0, 2, 100)    
-    SumLogQ_bin_edges = np.logspace(0, 3, 100)
-    Q_bin_edges = np.linspace(0, 2, 100)
-    SumQ_bin_edges = np.linspace(0, 500, 100)
+    LogE_bin_edges = np.linspace(0, 2.5, 100)    
+    SumLogE_bin_edges = np.logspace(0, 3, 100)
+    E_bin_edges = np.logspace(0, 2.4, 125)
+    SumE_bin_edges = np.linspace(0, 5000, 100)
     
     ## Bin counts for 1D plots
-    Q_arr,_ = np.histogram([], bins=Q_bin_edges)
-    LogQ_arr,_ = np.histogram([], bins=LogQ_bin_edges)
-    SumQ_arr,_ = np.histogram([], bins=SumQ_bin_edges)    
-    maxLogQ_arr,_ = np.histogram([], bins=LogQ_bin_edges)
-    SumLogQ_arr,_ = np.histogram([], bins=SumLogQ_bin_edges)
-    maxQ_arr,_ = np.histogram([], bins=Q_bin_edges)
+    E_arr,_ = np.histogram([], bins=E_bin_edges)
+    LogE_arr,_ = np.histogram([], bins=LogE_bin_edges)
+    SumE_arr,_ = np.histogram([], bins=SumE_bin_edges)    
+    maxLogE_arr,_ = np.histogram([], bins=LogE_bin_edges)
+    SumLogE_arr,_ = np.histogram([], bins=SumLogE_bin_edges)
+    maxE_arr,_ = np.histogram([], bins=E_bin_edges)
 
     N_lin_arr,_ = np.histogram([], bins=N_lin_bin_edges)
     N_log_arr,_ = np.histogram([], bins=N_log_bin_edges)
@@ -54,12 +54,12 @@ def make_dataset_summary_plots(input_file_names, plotDir="plots"):
         total_images += nimages
         
         these_N = []
-        these_sumQ = []
-        these_maxQ = []
-        these_Q = []
-        these_logQ = []
-        these_sumLogQ = []
-        these_maxLogQ = []
+        these_sumE = []
+        these_maxE = []
+        these_E = []
+        these_logE = []
+        these_sumLogE = []
+        these_maxLogE = []
         
         ## Loop over the images
         for i in range(nimages):
@@ -73,36 +73,36 @@ def make_dataset_summary_plots(input_file_names, plotDir="plots"):
                 nEmpty += 1
                 continue
             
-            these_Q   += list(data)
+            these_E   += list(data)
             these_N    .append(np.count_nonzero(data))
-            these_sumQ .append(np.sum(data))
-            these_maxQ .append(np.max(data))
+            these_sumE .append(np.sum(data))
+            these_maxE .append(np.max(data))
 
             log_data = np.log10(1 + data)
-            these_logQ += list(log_data)
-            these_sumLogQ .append(np.sum(log_data))
-            these_maxLogQ .append(np.max(log_data))
+            these_logE += list(log_data)
+            these_sumLogE .append(np.sum(log_data))
+            these_maxLogE .append(np.max(log_data))
             
             sum_images += 1
             
         ## Now fill the histograms
-        this_Q_arr,_ = np.histogram(these_Q, bins=Q_bin_edges)
-        Q_arr += this_Q_arr
+        this_E_arr,_ = np.histogram(these_E, bins=E_bin_edges)
+        E_arr += this_E_arr
 
-        this_LogQ_arr,_ = np.histogram(these_logQ, bins=LogQ_bin_edges)
-        LogQ_arr += this_LogQ_arr
+        this_LogE_arr,_ = np.histogram(these_logE, bins=LogE_bin_edges)
+        LogE_arr += this_LogE_arr
         
-        this_maxQ_arr,_ = np.histogram(these_maxQ, bins=Q_bin_edges)
-        maxQ_arr += this_maxQ_arr       
+        this_maxE_arr,_ = np.histogram(these_maxE, bins=E_bin_edges)
+        maxE_arr += this_maxE_arr       
 
-        this_maxLogQ_arr,_ = np.histogram(these_maxLogQ, bins=LogQ_bin_edges)
-        maxLogQ_arr += this_maxLogQ_arr
+        this_maxLogE_arr,_ = np.histogram(these_maxLogE, bins=LogE_bin_edges)
+        maxLogE_arr += this_maxLogE_arr
         
-        this_SumQ_arr,_ = np.histogram(these_sumQ, bins=SumQ_bin_edges)
-        SumQ_arr += this_SumQ_arr
+        this_SumE_arr,_ = np.histogram(these_sumE, bins=SumE_bin_edges)
+        SumE_arr += this_SumE_arr
 
-        this_SumLogQ_arr,_ = np.histogram(these_sumLogQ, bins=SumLogQ_bin_edges)
-        SumLogQ_arr += this_SumLogQ_arr
+        this_SumLogE_arr,_ = np.histogram(these_sumLogE, bins=SumLogE_bin_edges)
+        SumLogE_arr += this_SumLogE_arr
         
         this_lin_N_arr,_ = np.histogram(these_N, bins=N_lin_bin_edges)
         N_lin_arr += this_lin_N_arr
@@ -112,10 +112,10 @@ def make_dataset_summary_plots(input_file_names, plotDir="plots"):
         
         if max(these_N) > maxN:
             maxN = max(these_N)
-        if max(these_sumQ) > maxSumQ:
-            maxSumQ = max(these_sumQ)
-        if max(these_sumLogQ) > maxSumLogQ:
-            maxSumLogQ = max(these_sumLogQ)
+        if max(these_sumE) > maxSumE:
+            maxSumE = max(these_sumE)
+        if max(these_sumLogE) > maxSumLogE:
+            maxSumLogE = max(these_sumLogE)
             
         ## End of this file
         f.close()
@@ -134,48 +134,49 @@ def make_dataset_summary_plots(input_file_names, plotDir="plots"):
     plt.savefig(plotDir+"/nhits_distribution_logx.png")
     plt.close()
     
-    plt.hist(Q_bin_edges[:-1], bins=Q_bin_edges, weights=Q_arr, log=False)
-    plt.xlabel(r'Raw Q')
+    plt.hist(E_bin_edges[:-1], bins=E_bin_edges, weights=E_arr, log=True)
+    plt.xlabel(r'Raw E (MeV)')
+    plt.xscale('log')
     plt.ylabel('N. hits')
-    plt.savefig(plotDir+"/Q_distribution.png")
+    plt.savefig(plotDir+"/E_distribution.png")
     plt.close()
 
-    plt.hist(LogQ_bin_edges[:-1], bins=LogQ_bin_edges, weights=LogQ_arr, log=False)
-    plt.xlabel(r'log$_{10}$(1 + Q)')
+    plt.hist(LogE_bin_edges[:-1], bins=LogE_bin_edges, weights=LogE_arr, log=True)
+    plt.xlabel(r'log$_{10}$(1 + E)')
     plt.ylabel('N. hits')
-    plt.savefig(plotDir+"/LogQ_distribution.png")
+    plt.savefig(plotDir+"/LogE_distribution.png")
     plt.close()
     
-    plt.hist(Q_bin_edges[:-1], bins=Q_bin_edges, weights=maxQ_arr, log=False)
-    plt.xlabel(r'Max. raw Q')
+    plt.hist(E_bin_edges[:-1], bins=E_bin_edges, weights=maxE_arr, log=False)
+    plt.xlabel(r'Max. raw E (MeV)')
     plt.ylabel('N. events')
-    plt.savefig(plotDir+"/maxQ_distribution.png")
+    plt.savefig(plotDir+"/maxE_distribution.png")
     plt.close()
 
-    plt.hist(LogQ_bin_edges[:-1], bins=LogQ_bin_edges, weights=maxLogQ_arr, log=False)
-    plt.xlabel(r'Max. log$_{10}$(1 + Q)')
+    plt.hist(LogE_bin_edges[:-1], bins=LogE_bin_edges, weights=maxLogE_arr, log=False)
+    plt.xlabel(r'Max. log$_{10}$(1 + E)')
     plt.ylabel('N. events')
-    plt.savefig(plotDir+"/maxLogQ_distribution.png")
+    plt.savefig(plotDir+"/maxLogE_distribution.png")
     plt.close()
     
-    plt.hist(SumQ_bin_edges[:-1], bins=SumQ_bin_edges, weights=SumQ_arr, log=True)
-    plt.xlabel(r'$\sum$ raw Q')
+    plt.hist(SumE_bin_edges[:-1], bins=SumE_bin_edges, weights=SumE_arr, log=True)
+    plt.xlabel(r'$\sum$ raw E (MeV)')
     plt.xscale('linear')
     plt.ylabel('N. events')
-    plt.savefig(plotDir+"/sumQ_distribution.png")
+    plt.savefig(plotDir+"/sumE_distribution.png")
     plt.close()
 
-    plt.hist(SumLogQ_bin_edges[:-1], bins=SumLogQ_bin_edges, weights=SumLogQ_arr, log=True)
-    plt.xlabel(r'$\sum$log$_{10}$(1 + Q)')
+    plt.hist(SumLogE_bin_edges[:-1], bins=SumLogE_bin_edges, weights=SumLogE_arr, log=True)
+    plt.xlabel(r'$\sum$log$_{10}$(1 + E)')
     plt.xscale('log')
     plt.ylabel('N. events')
-    plt.savefig(plotDir+"/sumLogQ_distribution.png")
+    plt.savefig(plotDir+"/sumLogE_distribution.png")
     plt.close()
     
     print("Total", total_images, "images")
     print("Maximum number of hits:", maxN)
-    print("Maximum sum of charge:", maxSumQ)
-    print("Maximum sum of log charge:", maxSumLogQ)
+    print("Maximum sum of E:", maxSumE)
+    print("Maximum sum of log E:", maxSumLogE)
     print("N. empty:", nEmpty)
     
     
