@@ -62,7 +62,7 @@ sed -i "s/_RAND2_/$((SEED + 2))/g" ${EDEP_MAC}
 echo "Running edep-sim..."
 shifter edep-sim -o ${OUTFILE_ROOT}_EDEPSIM.root \
 	${EDEP_MAC} \
-	-e ${NEVENTS}
+	-e ${NEVENTS} &> /dev/null
 
 ## Copy back the edep-sim file
 if [ ! -d "${OUTDIR_ROOT}/EDEPSIM" ]; then
