@@ -245,6 +245,14 @@ def get_3D_image_from_event(event, origin, voxel_size):
     ## Prepare for COO coordinates
     coords = np.array(list(acc.keys()), dtype=np.int32)
     values = np.array(list(acc.values()), dtype=np.float32)
+
+    ## Add protection against 0 and 1 hit events...
+    if coords.size == 0:
+        coords = coords.reshape(0, 3)
+        values = values.reshape(0)
+    else:
+        coords = coords.reshape(-1, 3)
+
     return coords, values
 
 
