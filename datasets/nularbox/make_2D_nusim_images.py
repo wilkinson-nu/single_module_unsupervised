@@ -12,6 +12,22 @@ from collections import defaultdict
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
 
+## Initial label types to store, to be clarified and then will need to be versioned (probably)
+LABEL_DTYPE_EXP = np.dtype([
+    ("cc",        np.bool_),
+    ("topology",  np.uint8),
+    ("mode",      np.uint8),
+    ("ncharged",  np.int8),
+    ("nneutrons", np.int8),
+    ("npipm",     np.int8),
+    ("npi0",      np.int8),
+    ("nkpm",      np.int8),
+    ("nexotic",   np.int8),
+    ("enu",       np.float32),
+    ("q0",        np.float32),
+])
+
+
 def get_neutrino_4mom(groo_event):
     ## Topology << Enum class
     ## N. charged particles
@@ -44,52 +60,6 @@ def get_neutrino_4mom(groo_event):
     ## Should never happen...
     return None
 
-## Define labels
-class Label(Enum):
-
-    ## Default
-    NOLABEL = -1
-    
-    ## e+/- or photon induced
-    EM = auto()
-
-    ## Neutron induced
-    NEUTRON = auto()
-
-    ## Proton induced
-    PROTON = auto()
-
-    ## Charged pion induced
-    PION = auto()
-    
-    ## Multiple muons deposit energy into the active volume
-    MULTIMUON = auto()
-
-    ## The muon interacted outside the active volume
-    EXTERNAL = auto()
-
-    ## Stopping muon which is captured by a nucleus and then decays not through a Michel
-    STOPPINGCAPTURE = auto()
-
-    ## Muon which decays into a Michel inside the volume
-    STOPPINGMICHEL = auto()
-
-    ## This is a catch-all category for stopping events that aren't the other two...
-    STOPPINGOTHER = auto()
-    
-    ## This is meant to be for through-going muons without much colinear activity
-    THROUGHCLEAN = auto()
-
-    ## This is to try and get at through-going muons with colinear showers
-    THROUGHMESSY = auto()
-
-    ## A method to dump the list
-    @classmethod
-    def print_members(cls):
-        for member in cls:
-            print(f"{member.name}: {member.value}")
-    
-    
 def get_truth_label(trajs, segments):
 
     ntraj  = len(trajs)
@@ -337,35 +307,40 @@ def read_edepsim_output(infilelist, output_file_name):
         ## Enu
         ## q0
         
-            
+        labels = np.zeros((), dtype=LABEL_DTYPE_EXP)
+        ## Fill like:
+        ## labels["energy"] = enu
+        
         ## At this point, save
         sparse_image_list .append(this_sparse_2d)
         event_id_list     .append(evt)
         ## Need to improve this
-        label_list        .append(1)
+        label_list        .append(labels)
 
         ## Optionally dump out some files to have a look at
         if make_plots:
             plt.imshow(this_sparse_2d.toarray(), origin='lower')
             plt.savefig("plots/image_"+str(evt)+".png")
+
             
-        
     ## Write the images to an hdf5 file
     with h5py.File(output_file_name, 'w') as fout:
 
         ## Save the number of images in the file
         fout.attrs['N'] = len(sparse_image_list)
 
+        ## Store label_struct schema
+        fout.attrs['label_dtype'] = LABEL_DTYPE_EXP.descr
         ## Save the labels defined when this file was produced
         # label_dict = {member.name: member.value for member in Label}
         # fout.attrs['label_enum'] = json.dumps(label_dict)
         
-        for i, (sparse_image, event_id, label) in enumerate(zip(sparse_image_list, event_id_list, label_list)):
+        for i, (sparse_image, event_id, label_struct) in enumerate(zip(sparse_image_list, event_id_list, label_list)):
             group = fout.create_group(str(i))
             group.create_dataset('data', data=sparse_image.data)
             group.create_dataset('row', data=sparse_image.row.astype(np.uint16))
             group.create_dataset('col', data=sparse_image.col.astype(np.uint16))
-            # group.create_dataset('label', data=np.int8(label))
+            group.create_dataset('labels', data=label_struct, dtype=LABEL_DTYPE_EXP)
             group.attrs['shape'] = np.array(sparse_image.shape, dtype=np.uint16)
             group.attrs['event_id'] = np.uint32(event_id)
     ## Done
