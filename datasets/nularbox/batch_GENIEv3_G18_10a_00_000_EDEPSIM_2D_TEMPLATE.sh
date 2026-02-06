@@ -77,7 +77,7 @@ shifter python3 make_2D_nusim_images.py ${OUTFILE_ROOT}_EDEPSIM.root ${OUTFILE_R
 if [ ! -d "${OUTDIR_ROOT}/IMAGES2D" ]; then
     mkdir -p ${OUTDIR_ROOT}/IMAGES2D
 fi
-cp ${tempDir}/${OUTFILE_ROOT}_IMAGES2D.root ${OUTDIR_ROOT}/IMAGES2D/.
+cp ${tempDir}/${OUTFILE_ROOT}_IMAGES2D.h5 ${OUTDIR_ROOT}/IMAGES2D/.
 
 ## Clean up
 rm -r ${tempDir}
