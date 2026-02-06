@@ -266,7 +266,8 @@ def read_edepsim_output(infilelist, output_file_name):
         plt.figure(figsize=(7, 7))
         
     ## Uniform and small pixel pitch
-    dx, dy, dz = 0.372, 0.372, 0.372
+    ## Uses mm, the default output unit for edep-sim
+    dx, dy, dz = 3.72, 3.72, 3.72
     voxel_size = np.array([dx, dy, dz])
 
     ## Origin for the grid, offset to avoid the vertex being at a bin edge, maybe better to jitter?
