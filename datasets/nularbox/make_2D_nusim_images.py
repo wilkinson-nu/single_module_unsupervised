@@ -18,14 +18,18 @@ LABEL_DTYPE_EXP = np.dtype([
     ("cc",        np.bool_),
     ("topology",  np.int8),
     ("mode",      np.int8),
-    ("nneutrons", np.int8),
-    ("nprotons",  np.int8),    
+    ("nneutron",  np.int8),
+    ("nantineut", np.int8),
+    ("nproton",   np.int8),    
+    ("nantiprot", np.int8),    
     ("npipm",     np.int8),
     ("npi0",      np.int8),
     ("nkapm",     np.int8),
     ("nka0",      np.int8),
-    ("ngamma",    np.int8),
+    ("nem",       np.int8),
+    ("nmuon",     np.int8),    
     ("nstrange",  np.int8),
+    ("ncharm",    np.int8),    
     ("enu",       np.float32),
     ("q0",        np.float32),
 ])
@@ -82,6 +86,10 @@ class Mode(Enum):
     NCRES = auto()
     NCDIS = auto()
     NCCOH = auto()
+
+    ## Other
+    IMD = auto()
+    NUEE = auto()
     
     ## A method to dump the list
     @classmethod
@@ -104,7 +112,9 @@ def get_mode(code):
     is_2p2h = "MEC" in code
     is_qe = "QES" in code
     is_coh = "COH" in code
-
+    is_imd = "IMD" in code
+    is_nuee = "NuEEL" in code
+    
     if is_dis:
         if is_cc: return Mode.CCDIS
         else: return Mode.NCDIS
@@ -120,13 +130,17 @@ def get_mode(code):
     elif is_coh:
         if is_cc: return Mode.CCCOH
         else: return Mode.NCCOH
+    elif is_imd:
+        return Mode.IMD
+    elif is_nuee:
+        return Mode.NUEE
 
     print("Found unparseable code:", code)
     return Mode.NONE 
 
 def get_topology(labels, vertex):
 
-    if labels["nstrange"]+labels["nkapm"]+labels["nka0"] > 0:
+    if labels["nstrange"]+labels["ncharm"]+labels["nkapm"]+labels["nka0"] > 0:
         if labels["cc"]: return Topology.CCOther
         else: return Topology.NCOther
     if labels["npipm"]+labels["npi0"]>2:
@@ -190,12 +204,19 @@ def get_truth_labels(vertex, groo):
 
     ## Remove the leading lepton from the list (strong assumption about the order)
     pdg_list = pdg_list[1:]
+
+    ## Strip any neutrinos
+    pdg_list = [x for x in pdg_list if abs(x) in [12, 14, 16]]
     
     ## Now count particles in the list (and modify the list)
-    labels["nprotons"] = sum(1 for x in pdg_list if x == 2212)
+    labels["nproton"] = sum(1 for x in pdg_list if x == 2212)
     pdg_list = [x for x in pdg_list if x != 2212]
-    labels["nneutrons"] = sum(1 for x in pdg_list if x == 2112)
+    labels["nantiprot"] = sum(1 for x in pdg_list if x == -2212)
+    pdg_list = [x for x in pdg_list if x != -2212]    
+    labels["nneutron"] = sum(1 for x in pdg_list if x == 2112)
     pdg_list = [x for x in pdg_list if x != 2112]
+    labels["nantineut"] = sum(1 for x in pdg_list if x == -2112)
+    pdg_list = [x for x in pdg_list if x != -2112]    
     labels["npipm"] = sum(1 for x in pdg_list if abs(x) == 211)
     pdg_list = [x for x in pdg_list if abs(x) != 211]
     labels["npi0"] = sum(1 for x in pdg_list if x == 111)
@@ -204,11 +225,15 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if abs(x) != 321]
     labels["nka0"] = sum(1 for x in pdg_list if abs(x) in [311, 130])
     pdg_list = [x for x in pdg_list if abs(x) not in [311, 130]]
-    labels["ngamma"] = sum(1 for x in pdg_list if x != 22)
-    pdg_list = [x for x in pdg_list if x != 22]
-    labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3122])
-    pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3122]]    
-
+    labels["nem"] = sum(1 for x in pdg_list if abs(x) not in [22, 11])
+    pdg_list = [x for x in pdg_list if abs(x) not in [22, 11]]
+    labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3122, 3112, 3212])
+    pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3122, 3112, 3212]]    
+    labels["ncharm"] = sum(1 for x in pdg_list if abs(x) in [411, 4122, 421, 4212, 4222, 431])
+    pdg_list = [x for x in pdg_list if abs(x) not in [411, 4122, 421, 4212, 4222, 431]]       
+    labels["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
+    pdg_list = [x for x in pdg_list if abd(x) != 13]
+    
     ## Also remove remnant nuclei
     pdg_list = [x for x in pdg_list if x not in [1000180400]]
 
