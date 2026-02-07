@@ -8,6 +8,7 @@ import matplotlib
 from scipy.sparse import coo_matrix
 from enum import Enum, auto
 from collections import defaultdict
+import json
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
@@ -15,33 +16,142 @@ make_plots = False
 ## Initial label types to store, to be clarified and then will need to be versioned (probably)
 LABEL_DTYPE_EXP = np.dtype([
     ("cc",        np.bool_),
-    ("topology",  np.uint8),
-    ("mode",      np.uint8),
-    ("ncharged",  np.int8),
+    ("topology",  np.int8),
+    ("mode",      np.int8),
     ("nneutrons", np.int8),
+    ("nprotons",  np.int8),    
     ("npipm",     np.int8),
     ("npi0",      np.int8),
-    ("nkpm",      np.int8),
-    ("nexotic",   np.int8),
+    ("nkapm",     np.int8),
+    ("nka0",      np.int8),
+    ("ngamma",    np.int8),
+    ("nstrange",  np.int8),
     ("enu",       np.float32),
     ("q0",        np.float32),
 ])
 
+class Topology(Enum):
+
+    ## Default
+    NONE = -1
+
+    ## CC topologies
+    CC0pi = auto()
+    CC1pi0 = auto()
+    CC1pipm = auto()
+    CC2pi = auto()
+    CCNpi = auto()
+    CCOther = auto()
+
+    ## NC topologies
+    NC0pi = auto()
+    NC1pipm = auto()
+    NC1pi0 = auto()
+    NC2pi = auto()
+    NCNpi = auto()
+    NCOther = auto()
+    
+    ## A method to dump the list
+    @classmethod
+    def print_members(cls):
+        for member in cls:
+            print(f"{member.name}: {member.value}")
+
+    @classmethod
+    def name_from_index(cls, index):
+        for member in cls:
+            if member.value == index:
+                return member.name
+        return f"Unknown label for index {index}"
+
+class Mode(Enum):
+
+    ## Default
+    NONE = -1
+
+    ## CC modes
+    CCQE = auto()
+    CC2p2h = auto()
+    CCRES = auto()
+    CCDIS = auto()
+    CCCOH = auto()
+
+    ## NC modes
+    NCQE = auto()
+    NC2p2h = auto()
+    NCRES = auto()
+    NCDIS = auto()
+    NCCOH = auto()
+    
+    ## A method to dump the list
+    @classmethod
+    def print_members(cls):
+        for member in cls:
+            print(f"{member.name}: {member.value}")
+
+    @classmethod
+    def name_from_index(cls, index):
+        for member in cls:
+            if member.value == index:
+                return member.name
+        return f"Unknown label for index {index}"
+
+def get_mode(code):
+
+    is_cc = "[CC]" in code
+    is_dis = "DIS" in code
+    is_res = "RES" in code
+    is_2p2h = "MEC" in code
+    is_qe = "QES" in code
+    is_coh = "COH" in code
+
+    if is_dis:
+        if is_cc: return Mode.CCDIS
+        else: return Mode.NCDIS
+    elif is_res:
+        if is_cc: return Mode.CCRES
+        else: return Mode.NCRES
+    elif is_2p2h:
+        if is_cc: return Mode.CC2p2h
+        else: return Mode.NC2p2h
+    elif is_qe:
+        if is_cc: return Mode.CCQE
+        else: return Mode.NCQE
+    elif is_coh:
+        if is_cc: return Mode.CCCOH
+        else: return Mode.NCCOH
+
+    print("Found unparseable code:", code)
+    return Mode.NONE 
+
+def get_topology(labels, vertex):
+
+    if labels["nstrange"]+labels["nkapm"]+labels["nka0"] > 0:
+        if labels["cc"]: return Topology.CCOther
+        else: return Topology.NCOther
+    if labels["npipm"]+labels["npi0"]>2:
+        if labels["cc"]: return Topology.CCNpi
+        else: return Topology.NCNpi        
+    if labels["npipm"]+labels["npi0"]>1:
+        if labels["cc"]: return Topology.CC2pi
+        else: return Topology.NC2pi
+    if labels["npipm"]+labels["npi0"]==0:
+        if labels["cc"]: return Topology.CC0pi
+        else: return Topology.NC0pi
+    if labels["npipm"] == 1 and labels["npi0"]==0:
+        if labels["cc"]: return Topology.CC1pipm
+        else: return Topology.NC1pipm
+    if labels["npipm"] == 0 and labels["npi0"]==1:
+        if labels["cc"]: return Topology.CC1pi0
+        else: return Topology.NC1pi0
+
+    print("Unknown topology:", [x.GetPDGCode() for x in vertex.Particles])
+    return Topology.NONE
 
 def get_neutrino_4mom(groo_event):
-    ## Topology << Enum class
-    ## N. charged particles
-    ## N. neutrons
-    ## N. protons
-    ## N. charged pions
-    ## N. EM showers
-    ## N. exotic
-    ## CC/NC
-    ## Mode? << Enum class
-    ## Enu
-    ## q0
     
     ## Loop over the particles in GENIE's stack
+    ## I think the neutrino is always position 0...
     for p in range(groo_event.StdHepN):
 
         ## Look for the particle status
@@ -51,87 +161,87 @@ def get_neutrino_4mom(groo_event):
         ## Check for a neutrino (any flavor)
         if abs(groo_event.StdHepPdg[p]) not in [12, 14, 16]: continue
 
-        ## Kindly redirect any complaints about this line to /dev/null
-        ## edep-sim uses MeV, gRooTracker uses GeV...
-        return TLorentzVector(groo_event.StdHepP4[p*4 + 0]*1000,
-                              groo_event.StdHepP4[p*4 + 1]*1000,
-                              groo_event.StdHepP4[p*4 + 2]*1000,
-                              groo_event.StdHepP4[p*4 + 3]*1000)
+        return ROOT.TLorentzVector(groo_event.StdHepP4[p*4 + 0]*1000,
+                                   groo_event.StdHepP4[p*4 + 1]*1000,
+                                   groo_event.StdHepP4[p*4 + 2]*1000,
+                                   groo_event.StdHepP4[p*4 + 3]*1000)
     ## Should never happen...
     return None
 
-def get_truth_label(trajs, segments):
+## Assuming a well ordered stack... check this is the case for other GENIE versions
+def is_ccinc(pdg_list):
+    if abs(pdg_list[0]) in [12, 14, 16]: return False
+    return True
 
-    ntraj  = len(trajs)
-    nsegs  = len(segments)
-    
-    ## Grab the primaries
-    prims = trajs[trajs['parent_id']==-1]
-    daughters = trajs[trajs['parent_id']==0]
-    nprim = len(prims)
+def get_truth_labels(vertex, groo):
 
-    seg_mask = np.isin(trajs['traj_id'], segments['traj_id'])
-    masked_trajs = trajs[seg_mask]
-    masked_daughters = masked_trajs[masked_trajs['parent_id']==0]
-    
-    ## If there's more than one primary... kind of tough
-    nmuon = np.count_nonzero(np.abs(prims['pdg_id'])==13)
-    nEM   = np.count_nonzero((np.abs(prims['pdg_id'])==11)|(prims['pdg_id']==22))
-    nNeut = np.count_nonzero(np.abs(prims['pdg_id'])==2112)
-    nProt = np.count_nonzero(np.abs(prims['pdg_id'])==2212)
-    nPion = np.count_nonzero(np.abs(prims['pdg_id'])==211)
-    
-    ## Simple categories if there is no muon
-    if nmuon == 0:
-        if nEM > 0: return Label.EM
-        if nProt > 0: return Label.PROTON
-        if nNeut > 0: return Label.NEUTRON
-        if nPion > 0: return Label.PION
-        print("Unhandled primary particle PDG:", prims['pdg_id'])
+    labels = np.zeros((), dtype=LABEL_DTYPE_EXP)
 
-    ## Do the primaries make it into the detector?
-    prim_segments = segments[segments['traj_id'] == 0]
-    nprims_entering = len(np.unique(prim_segments['event_id']))
+    ## Get all of the primary particles coming out of the event
+    pdg_list = [x.GetPDGCode() for x in vertex.Particles]
+    
+    ## Get the neutrino and outgoing lepton
+    nu_4mom = get_neutrino_4mom(groo)
+    lep_4mom = vertex.Particles[0].GetMomentum()
+
+    labels["cc"] = is_ccinc(pdg_list)
+    labels["enu"] = nu_4mom.E()/1000.
+    labels["q0"] = (nu_4mom.E() - lep_4mom.E())/1000.
+
+    ## Remove the leading lepton from the list (strong assumption about the order)
+    pdg_list = pdg_list[1:]
+    
+    ## Now count particles in the list (and modify the list)
+    labels["nprotons"] = sum(1 for x in pdg_list if x == 2212)
+    pdg_list = [x for x in pdg_list if x != 2212]
+    labels["nneutrons"] = sum(1 for x in pdg_list if x == 2112)
+    pdg_list = [x for x in pdg_list if x != 2112]
+    labels["npipm"] = sum(1 for x in pdg_list if abs(x) == 211)
+    pdg_list = [x for x in pdg_list if abs(x) != 211]
+    labels["npi0"] = sum(1 for x in pdg_list if x == 111)
+    pdg_list = [x for x in pdg_list if x != 111]
+    labels["nkapm"] = sum(1 for x in pdg_list if abs(x) == 321)
+    pdg_list = [x for x in pdg_list if abs(x) != 321]
+    labels["nka0"] = sum(1 for x in pdg_list if abs(x) in [311, 130])
+    pdg_list = [x for x in pdg_list if abs(x) not in [311, 130]]
+    labels["ngamma"] = sum(1 for x in pdg_list if x != 22)
+    pdg_list = [x for x in pdg_list if x != 22]
+    labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3122])
+    pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3122]]    
+
+    ## Also remove remnant nuclei
+    pdg_list = [x for x in pdg_list if x not in [1000180400]]
+
+    ## Sanity check during testing
+    if len(pdg_list)>0: print("Remaining list:", pdg_list)
+
+    ## Now figure out the topology
+    ## if labels["nstrange"]+labels["nkapm"]+labels["nka0"] > 0:
+    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CCOther.value)
+    ##     else: labels["topology"] = np.int8(Topology.NCOther.value)
+    ## elif labels["npipm"]+labels["npi0"]>2:
+    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CCNpi.value)
+    ##     else: labels["topology"] = np.int8(Topology.NCNpi.value)        
+    ## elif labels["npipm"]+labels["npi0"]>1:
+    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC2pi.value)
+    ##     else: labels["topology"] = np.int8(Topology.NC2pi.value)
+    ## elif labels["npipm"]+labels["npi0"]==0:
+    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC0pi.value)
+    ##     else: labels["topology"] = np.int8(Topology.NC0pi.value)
+    ## elif labels["npipm"] == 1 and labels["npi0"]==0:
+    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC1pipm.value)
+    ##     else: labels["topology"] = np.int8(Topology.NC1pipm.value)
+    ## elif labels["npipm"] == 0 and labels["npi0"]==1:
+    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC1pi0.value)
+    ##     else: labels["topology"] = np.int8(Topology.NC1pi0.value)
+    ## else:
+    ##     print("Unknown topology:", [x.GetPDGCode() for x in vertex.Particles])
+    ##     labels["topology"] = np.int8(Topology.NONE.value)
+
+    labels["topology"] = np.int8(get_topology(labels, vertex).value)
+    labels["mode"] = np.int8(get_mode(str(groo.EvtCode)).value)
         
-    ## This category can include multiple clean tracks, or events in which one is very much dominant
-    if nmuon > 1 and nprims_entering > 1: return Label.MULTIMUON
-
-    ## If a muon interacts outside the detector volume but daughters make it in
-    if nprims_entering == 0: return Label.EXTERNAL
-
-    ## Does the primary end in the detector?
-    ends = in_volume(prims['xyz_end'])
-    
-    ## Deal with stopping tracks
-    if ends:
-
-        ## Use G4 process codes to classify events
-        nhaddecay=0
-        #nhaddecay = np.count_nonzero((masked_daughters['start_process'] == 4) & ((masked_daughters['start_subprocess'] == 151)|(masked_daughters['start_subprocess'] == 131))
-        nmichel = np.count_nonzero((masked_daughters['start_process'] == 6) & (masked_daughters['start_subprocess'] == 201))
-
-        ## These are rare, but included as printouts to flag unusual events (maybe better categories can be defined later)
-        if nhaddecay >0 and nmichel > 0:
-            print("BOTH DECAYS")
-            print([(pdg,p,s) for pdg,p,s in zip(masked_daughters['pdg_id'], masked_daughters['start_process'], masked_daughters['start_subprocess'])])
-        if nhaddecay == 0 and nmichel == 0:
-            print("SOMETHING ELSE")
-            print([(pdg,p,s) for pdg,p,s in zip(masked_daughters['pdg_id'], masked_daughters['start_process'], masked_daughters['start_subprocess'])])
-        
-        ## Return the relevant category
-        if nhaddecay > 0: return Label.STOPPINGCAPTURE
-        if nmichel > 0: return Label.STOPPINGMICHEL
-        return Label.STOPPINGOTHER
-
-    ## Deal with through-going tracks
-    else:
-        ## Not a great means of separation, but events with pair production tend to be messier
-        ## This distinction isn't amazing though... clean tracks tend to be very clean, but messy tracks are a mix...
-        npos = len(masked_trajs[masked_trajs['pdg_id']==-11])
-        if npos > 0: return Label.THROUGHMESSY
-        return Label.THROUGHCLEAN
-    
-    return Label.NOLABEL
+    return labels
 
     
 ## How do we deal with events where nothing happens...?
@@ -265,7 +375,7 @@ def read_edepsim_output(infilelist, output_file_name):
     nevts  = edep_tree.GetEntries()
     for evt in range(nevts):
         edep_tree.GetEntry(evt)
-        #groo_tree.GetEntry(evt)
+        groo_tree.GetEntry(evt)
 
         ## Add a check for empty images
         if len(event.Trajectories) <=1: continue
@@ -294,22 +404,8 @@ def read_edepsim_output(infilelist, output_file_name):
         this_sparse_2d = coo_matrix((values_3d, (row, col)), shape=keep_shape)
         this_sparse_2d .sum_duplicates() 
 
-        ## Save a billion and 1 truth labels... Probably need to keep revisiting
-        ## Topology
-        ## N. charged particles
-        ## N. neutrons
-        ## N. protons
-        ## N. charged pions
-        ## N. EM showers
-        ## N. exotic
-        ## CC/NC
-        ## Mode?
-        ## Enu
-        ## q0
-        
-        labels = np.zeros((), dtype=LABEL_DTYPE_EXP)
-        ## Fill like:
-        ## labels["energy"] = enu
+        vertex = edep_tree.Event.Primaries[0]
+        labels = get_truth_labels(vertex, groo_tree)
         
         ## At this point, save
         sparse_image_list .append(this_sparse_2d)
@@ -331,9 +427,10 @@ def read_edepsim_output(infilelist, output_file_name):
 
         ## Store label_struct schema
         fout.attrs['label_dtype'] = LABEL_DTYPE_EXP.descr
-        ## Save the labels defined when this file was produced
-        # label_dict = {member.name: member.value for member in Label}
-        # fout.attrs['label_enum'] = json.dumps(label_dict)
+
+        ## Save enums defined when making the file
+        fout.attrs['Topology_enum'] = json.dumps({m.name: m.value for m in Topology})
+        fout.attrs['Mode_enum'] = json.dumps({m.name: m.value for m in Mode})
         
         for i, (sparse_image, event_id, label_struct) in enumerate(zip(sparse_image_list, event_id_list, label_list)):
             group = fout.create_group(str(i))
