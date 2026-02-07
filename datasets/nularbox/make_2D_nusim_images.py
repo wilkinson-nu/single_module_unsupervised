@@ -215,29 +215,6 @@ def get_truth_labels(vertex, groo):
     ## Sanity check during testing
     if len(pdg_list)>0: print("Remaining list:", pdg_list)
 
-    ## Now figure out the topology
-    ## if labels["nstrange"]+labels["nkapm"]+labels["nka0"] > 0:
-    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CCOther.value)
-    ##     else: labels["topology"] = np.int8(Topology.NCOther.value)
-    ## elif labels["npipm"]+labels["npi0"]>2:
-    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CCNpi.value)
-    ##     else: labels["topology"] = np.int8(Topology.NCNpi.value)        
-    ## elif labels["npipm"]+labels["npi0"]>1:
-    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC2pi.value)
-    ##     else: labels["topology"] = np.int8(Topology.NC2pi.value)
-    ## elif labels["npipm"]+labels["npi0"]==0:
-    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC0pi.value)
-    ##     else: labels["topology"] = np.int8(Topology.NC0pi.value)
-    ## elif labels["npipm"] == 1 and labels["npi0"]==0:
-    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC1pipm.value)
-    ##     else: labels["topology"] = np.int8(Topology.NC1pipm.value)
-    ## elif labels["npipm"] == 0 and labels["npi0"]==1:
-    ##     if labels["cc"]: labels["topology"] = np.int8(Topology.CC1pi0.value)
-    ##     else: labels["topology"] = np.int8(Topology.NC1pi0.value)
-    ## else:
-    ##     print("Unknown topology:", [x.GetPDGCode() for x in vertex.Particles])
-    ##     labels["topology"] = np.int8(Topology.NONE.value)
-
     labels["topology"] = np.int8(get_topology(labels, vertex).value)
     labels["mode"] = np.int8(get_mode(str(groo.EvtCode)).value)
         
