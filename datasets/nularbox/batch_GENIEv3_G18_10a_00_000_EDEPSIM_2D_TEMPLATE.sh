@@ -36,7 +36,9 @@ cp ${INPUTS_DIR}/${GENIE_TUNE}_splines.xml.gz .
 cp ${INPUTS_DIR}/${FLUX_FILE} .
 cp ${INPUTS_DIR}/${EDEP_MAC} .
 cp ${INPUTS_DIR}/${GEOM} .
-cp ${INPUTS_DIR}/../make_2D_nusim_images.py .
+
+## This is... pretty bad practice. Copy the run script and any library functions in the directory...
+cp ${INPUTS_DIR}/../*.py .
 
 echo "Starting gevgen..."
 shifter gevgen -n ${NEVENTS} -t ${TARG} -p ${NU_PDG} \
