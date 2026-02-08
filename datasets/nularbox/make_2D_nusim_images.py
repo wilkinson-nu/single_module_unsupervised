@@ -232,7 +232,7 @@ def get_truth_labels(vertex, groo):
     labels["ncharm"] = sum(1 for x in pdg_list if abs(x) in [411, 4122, 421, 4212, 4222, 431])
     pdg_list = [x for x in pdg_list if abs(x) not in [411, 4122, 421, 4212, 4222, 431]]       
     labels["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
-    pdg_list = [x for x in pdg_list if abd(x) != 13]
+    pdg_list = [x for x in pdg_list if abs(x) != 13]
     
     ## Also remove remnant nuclei
     pdg_list = [x for x in pdg_list if x not in [1000180400]]
