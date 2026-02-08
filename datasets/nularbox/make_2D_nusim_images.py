@@ -439,7 +439,7 @@ def read_edepsim_output(infilelist, output_file_name):
             group.create_dataset('data', data=sparse_image.data)
             group.create_dataset('row', data=sparse_image.row.astype(np.uint16))
             group.create_dataset('col', data=sparse_image.col.astype(np.uint16))
-            group.create_dataset('labels', data=label_struct, dtype=LABEL_DTYPE_EXP)
+            group.create_dataset('label', data=label_struct, dtype=LABEL_DTYPE_EXP)
             group.attrs['shape'] = np.array(sparse_image.shape, dtype=np.uint16)
             group.attrs['event_id'] = np.uint32(event_id)
     ## Done
