@@ -8,7 +8,7 @@ import matplotlib
 from scipy.sparse import coo_matrix
 from collections import defaultdict
 import json
-from datasets.nularbox.truth_labels import LABEL_DTYPE_EXP, Topology, Mode
+from truth_labels import LABEL_DTYPE_EXP, Topology, Mode
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
@@ -115,7 +115,7 @@ def get_truth_labels(vertex, groo):
     pdg_list = pdg_list[1:]
 
     ## Strip any neutrinos
-    pdg_list = [x for x in pdg_list if abs(x) in [12, 14, 16]]
+    pdg_list = [x for x in pdg_list if abs(x) not in [12, 14, 16]]
     
     ## Now count particles in the list (and modify the list)
     labels["nproton"] = sum(1 for x in pdg_list if x == 2212)
