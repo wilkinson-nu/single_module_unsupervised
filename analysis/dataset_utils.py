@@ -1,4 +1,4 @@
-from core.data.adtasets import single_2d_dataset_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
+from core.data.datasets import single_2d_dataset_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
 from core.data.augmentations_2d import FirstRegionCrop
 import torch
 import MinkowskiEngine as ME
@@ -13,9 +13,9 @@ def get_dataset(input_dir, nevents, return_metadata=False):
             ])
     
     dataset = single_2d_dataset_ME(input_dir, \
-                                          transform=nom_transform, \
-                                          max_events=nevents,\
-                                          return_metadata=return_metadata)
+                                   transform=nom_transform, \
+                                   max_events=nevents,\
+                                   return_metadata=return_metadata)
     this_collate = solo_ME_collate_fn
     if return_metadata: this_collate = solo_ME_collate_fn_with_meta
     
@@ -27,7 +27,7 @@ def get_dataset(input_dir, nevents, return_metadata=False):
     return dataset, loader
 
 
-def image_loop(encoder, heads, loader, detailed_info=True):
+def image_loop(encoder, heads, loader, device, detailed_info=True):
 
     latent = []    ## This is the instance clustering space
     enc_latent = []    ## This is after the encoder (as passed to the clustering head) 
