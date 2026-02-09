@@ -7,6 +7,11 @@ RUNSCRIPT=make_2D_nusim_images.py
 INDIR=/global/cfs/cdirs/dune/users/cwilk/nularbox_simulation/EDEPSIM
 OUTDIR=/global/cfs/cdirs/dune/users/cwilk/nularbox_simulation/IMAGES2D
 
+## Image options
+IMAGE_SIZE=512
+MIN_HITS=1
+THRESHOLD=0.2
+
 for INFILEFULL in $(ls ${INDIR}/*.root); do
     
     INFILE=${INFILEFULL##*/}
@@ -44,7 +49,7 @@ for INFILEFULL in $(ls ${INDIR}/*.root); do
     echo "cp ${INPUT_DIR}/*.py ." >> ${THIS_SUB}
     
     ## Do the business
-    echo "shifter python3 ${RUNSCRIPT} ${INFILE} ${INFILE/.root/.h5}" >> ${THIS_SUB}
+    echo "shifter python3 ${RUNSCRIPT} --input ${INFILE} --output ${INFILE/.root/.h5} --image_size ${IMAGE_SIZE} --min_hits ${MIN_HITS} --threshold ${THRESHOLD}" >> ${THIS_SUB}
     echo "cp ${INFILE/.root/.h5} ${OUTDIR}/." >> ${THIS_SUB}
 
     ## Clean up
