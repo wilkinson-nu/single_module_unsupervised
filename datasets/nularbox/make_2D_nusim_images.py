@@ -9,6 +9,7 @@ from scipy.sparse import coo_matrix
 from collections import defaultdict
 import json
 from truth_labels import LABEL_DTYPE_EXP, Topology, Mode
+import argparse
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
@@ -247,9 +248,9 @@ def get_3D_image_from_event(event, origin, voxel_size):
     return coords, values
 
 
-def read_edepsim_output(infilelist, output_file_name):
+def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
 
-    output_size = np.array([256, 256, 256])
+    output_size = np.array([image_size, image_size, image_size])
     
     ## For debugging
     if make_plots:
@@ -315,13 +316,26 @@ def read_edepsim_output(infilelist, output_file_name):
         this_sparse_2d = coo_matrix((values_3d, (row, col)), shape=keep_shape)
         this_sparse_2d .sum_duplicates() 
 
+        ## Modify the array by removing below threshold hits
+        if threshold > 0:
+            mask = this_sparse_2d.data >= threshold
+            this_sparse_2d.data = this_sparse_2d.data[mask]
+            this_sparse_2d.row  = this_sparse_2d.row[mask]
+            this_sparse_2d.col  = this_sparse_2d.col[mask]
+        
         vertex = edep_tree.Event.Primaries[0]
         labels = get_truth_labels(vertex, groo_tree)
+
+        ## Decide whether to proceed given the number of hits
+        if np.count_nonzero(this_sparse_2d.data) < min_hists:
+            print("Rejected event with labels:", labels)
+            print("Topology =", Topology.name_from_index(labels['topology']))
+            print("Mode =", Mode.name_from_index(labels['mode']))
+            continue
         
         ## At this point, save
         sparse_image_list .append(this_sparse_2d)
         event_id_list     .append(evt)
-        ## Need to improve this
         label_list        .append(labels)
 
         ## Optionally dump out some files to have a look at
@@ -355,12 +369,26 @@ def read_edepsim_output(infilelist, output_file_name):
     
 if __name__ == '__main__':
 
-    ## Take an input file and convert it to an h5 file of images
-    if len(sys.argv) < 3:
-        print("An input file and output file name must be provided as arguments!")
-        sys.exit()
+    ## Parse some args
+    parser = argparse.ArgumentParser("Image maker")
 
-    input_file_name = sys.argv[1]
-    output_file_name = sys.argv[2]
+    # Require an input file name and location to dump plots
+    parser.add_argument('--input', type=str)
+    parser.add_argument('--output', type=str)
 
-    read_edepsim_output(input_file_name, output_file_name)
+    ## Image size option
+    parser.add_argument('--size', type=int, default=256, nargs='?')    
+    
+    ## Allow a minimum number of hits cut
+    parser.add_argument('--min_hits', type=int, default=1, nargs='?')
+
+    ## Add a threshold option
+    parser.add_argument('--threshold', type=float, default=0, nargs='?')
+    
+    # Parse arguments from command line
+    args = parser.parse_args()
+
+    ## Report arguments
+    for arg in vars(args): print(arg, getattr(args, arg))
+
+    make_images(args.input, args.output, args.size, args.min_hits, args.threshold)
