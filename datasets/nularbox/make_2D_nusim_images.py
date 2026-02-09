@@ -143,8 +143,18 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if abs(x) not in [411, 4122, 421, 4212, 4222, 431]]       
     labels["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
     pdg_list = [x for x in pdg_list if abs(x) != 13]
+
+    ## Add some fragmentation categories for INCL
+    labels["ndeuteron"] = sum(1 for x in pdg_list if x == 1000010020)
+    pdg_list = [x for x in pdg_list if x != 1000010020]
+    labels["nalpha"] = sum(1 for x in pdg_list if x == 1000020040)
+    pdg_list = [x for x in pdg_list if x != 1000020040]    
+    labels["nhelium3"] = sum(1 for x in pdg_list if x == 1000020030)
+    pdg_list = [x for x in pdg_list if x != 1000020030]    
+    labels["nnuclfrag"] = sum(1 for x in pdg_list if (x > 1000030060 and x < 1000180400))
+    pdg_list = [x for x in pdg_list if not (x > 1000030060 and x < 1000180400)]
     
-    ## Also remove remnant nuclei
+    ## Also remove remnant nuclei (coherent events)
     pdg_list = [x for x in pdg_list if x not in [1000180400]]
 
     ## Sanity check during testing
