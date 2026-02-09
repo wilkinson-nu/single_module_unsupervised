@@ -150,9 +150,11 @@ def get_truth_labels(vertex, groo):
     labels["nalpha"] = sum(1 for x in pdg_list if x == 1000020040)
     pdg_list = [x for x in pdg_list if x != 1000020040]    
     labels["nhelium3"] = sum(1 for x in pdg_list if x == 1000020030)
-    pdg_list = [x for x in pdg_list if x != 1000020030]    
+    pdg_list = [x for x in pdg_list if x != 1000020030]
+    labels["ntritium"] = sum(1 for x in pdg_list if x == 1000010030)
+    pdg_list = [x for x in pdg_list if x != 1000010030] 
     labels["nnuclfrag"] = sum(1 for x in pdg_list if (x > 1000030060 and x < 1000180400))
-    pdg_list = [x for x in pdg_list if not (x > 1000030060 and x < 1000180400)]
+    pdg_list = [x for x in pdg_list if not (x >= 1000020060 and x < 1000180400)]
     
     ## Also remove remnant nuclei (coherent events)
     pdg_list = [x for x in pdg_list if x not in [1000180400]]

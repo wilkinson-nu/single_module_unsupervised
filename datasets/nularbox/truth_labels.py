@@ -20,6 +20,7 @@ LABEL_DTYPE_EXP = np.dtype([
     ("nstrange",  np.int8),
     ("ncharm",    np.int8),
     ("ndeuteron", np.int8),
+    ("ntritium",  np.int8),
     ("nalpha",    np.int8),
     ("nhelium3",  np.int8),
     ("nnuclfrag", np.int8),    
