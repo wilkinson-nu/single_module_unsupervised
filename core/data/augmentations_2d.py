@@ -216,6 +216,10 @@ class RandomInPlaceHorizontalFlip:
         self.p = p
 
     def __call__(self, coords, feats):
+        
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         new_coords = coords.copy()
         
         if np.random.rand() < self.p:
@@ -230,6 +234,10 @@ class RandomInPlaceVerticalFlip:
         self.p = p
 
     def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         new_coords = coords.copy()
 
         if np.random.rand() < self.p:
@@ -245,6 +253,10 @@ class RandomHorizontalFlip:
         self.x_max = x_max
 
     def __call__(self, coords, feats):
+        
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         new_coords = coords.copy()
 
         if np.random.rand() < self.p:
@@ -259,6 +271,10 @@ class RandomVerticalFlip:
         self.y_max = y_max
 
     def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         new_coords = coords.copy()
         
         if np.random.rand() < self.p:
@@ -283,6 +299,9 @@ class RandomRotation2D:
 
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
             
@@ -382,6 +401,9 @@ class RandomBlockZeroImproved:
 
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
         
@@ -416,6 +438,9 @@ class RandomDropout:
 
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
 
@@ -440,6 +465,10 @@ class JitterCoords:
         self.coord_jitter = coord_jitter
 
     def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         jitter = np.random.uniform(
             low=-self.coord_jitter,
             high=self.coord_jitter,
@@ -454,6 +483,10 @@ class SplitJitterCoords:
         self.coord_jitter = coord_jitter
 
     def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         coords_out = np.repeat(coords, self.n_sub, axis=0)
         feats_out = np.repeat(feats/self.n_sub, self.n_sub, axis=0)
         
@@ -472,6 +505,10 @@ class GridJitter:
         self.ndim = ndim
 
     def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         grid_offset = np.random.uniform(-0.5, 0.5, size=self.ndim)
         return coords + grid_offset, feats
 
@@ -485,6 +522,9 @@ class RandomJitterCharge:
 
     def __call__(self,  coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
 
@@ -513,6 +553,9 @@ class RandomScaleCharge:
 
     def __call__(self,  coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
         
@@ -544,6 +587,9 @@ class RandomGridDistortion2D:
 
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
         
@@ -644,7 +690,10 @@ class BilinearSplat:
         self.threshold=threshold
         
     def __call__(self, coords, feats):
-        
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         feats = np.squeeze(feats)  # Remove single-dimensional entries from shape
         
         # Floor and ceil coordinates for each point
@@ -705,7 +754,10 @@ class BilinearSplatMod:
         self.p = p
         
     def __call__(self, coords, feats):
-        
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         feats = np.squeeze(feats)  # Remove single-dimensional entries from shape
         
         # Floor and ceil coordinates for each point
@@ -769,6 +821,10 @@ class ExpandedBilinearSplat:
         self.radius = int(radius)
 
     def __call__(self, coords, feats):
+        
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         feats = np.squeeze(feats)
         x0 = np.floor(coords[:, 1]).astype(int)
         y0 = np.floor(coords[:, 0]).astype(int)
