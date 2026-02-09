@@ -306,6 +306,8 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
                 (y >= -output_size[1]/2) & (y < output_size[1]/2) &
                 (z >= -output_size[2]/2) & (z < output_size[2]/2))
         values_3d = values_3d_raw[mask]
+
+        ## Shift so the masked coordinates start at (0,0,0)
         coords_3d = coords_3d_raw[mask] + output_size/2
 
         ## Which axes to project onto
@@ -328,12 +330,15 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
         vertex = edep_tree.Event.Primaries[0]
         labels = get_truth_labels(vertex, groo_tree)
 
-        ## Decide whether to proceed given the number of hits
-        if np.count_nonzero(this_sparse_2d.data) < min_hists:
+        ## Decide whether to proceed given the number of hits in the central region
+        central_mask = (this_sparse_2d.row > (output_size[0]/4)-1) & (this_sparse_2d.row < (output_size[0]*3/4)-1) \
+            & (this_sparse_2d.col > (output_size[1]/4)-1) & (this_sparse_2d.col < (output_size[1]*3/4)-1)
+        
+        if np.count_nonzero(this_sparse_2d.data[central_mask]) < min_hists:
             print("Rejected event with labels:", labels)
             print("Topology =", Topology.name_from_index(labels['topology']))
             print("Mode =", Mode.name_from_index(labels['mode']))
-            print("N. hits =", np.count_nonzero(this_sparse_2d.data))
+            print("N. hits (central) =", np.count_nonzero(this_sparse_2d.data), "(", np.count_nonzero(this_sparse_2d.data[central_mask]), ")")
             nrejected += 1
             continue
         
