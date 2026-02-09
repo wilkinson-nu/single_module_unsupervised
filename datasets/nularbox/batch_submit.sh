@@ -14,13 +14,18 @@ NU_PDG=14
 E_MIN=0.1
 E_MAX=50.0
 GEOM=argon_box_2m.gdml
-NEVENTS=1000
+NEVENTS=5000
 EDEP_MAC=edep.mac
 
 FLUX_NAME=NuMIME
 GEN_NAME=GENIE10a
 TUNE=G18_10a_00_000
 TEMPLATE=batch_GENIEv3_${TUNE}_EDEPSIM_2D_TEMPLATE.sh
+
+## image making
+IMAGE_SIZE=512
+MIN_HITS=1
+THRESHOLD=0.2
 
 ## Loop over jobs
 for N in $(seq ${FIRST_JOB} ${LAST_JOB})
@@ -48,6 +53,9 @@ do
     sed -i "s/__GEOM__/${GEOM}/g" ${THIS_TEMP}
     sed -i "s/__NEVENTS__/${NEVENTS}/g" ${THIS_TEMP}
     sed -i "s/__EDEP_MAC__/${EDEP_MAC}/g" ${THIS_TEMP}
+    sed -i "s/__IMAGE_SIZE__/${IMAGE_SIZE}/g" ${THIS_TEMP}
+    sed -i "s/__MIN_HITS__/${MIN_HITS}/g" ${THIS_TEMP}
+    sed -i "s/__THRESHOLD__/${THRESHOLD}/g" ${THIS_TEMP}
     
     echo "Submitting ${THIS_TEMP}"
 
