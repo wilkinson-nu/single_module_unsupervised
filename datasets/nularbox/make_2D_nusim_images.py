@@ -282,6 +282,8 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
     sparse_image_list = []
     event_id_list = []
     label_list = []
+
+    nrejected = 0
     
     ## Loop over events
     nevts  = edep_tree.GetEntries()
@@ -331,6 +333,8 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
             print("Rejected event with labels:", labels)
             print("Topology =", Topology.name_from_index(labels['topology']))
             print("Mode =", Mode.name_from_index(labels['mode']))
+            print("N. hits =", np.count_nonzero(this_sparse_2d.data))
+            nrejected += 1
             continue
         
         ## At this point, save
@@ -342,7 +346,6 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
         if make_plots:
             plt.imshow(this_sparse_2d.toarray(), origin='lower')
             plt.savefig("plots/image_"+str(evt)+".png")
-
             
     ## Write the images to an hdf5 file
     with h5py.File(output_file_name, 'w') as fout:
@@ -365,7 +368,10 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
             group.create_dataset('label', data=label_struct, dtype=LABEL_DTYPE_EXP)
             group.attrs['shape'] = np.array(sparse_image.shape, dtype=np.uint16)
             group.attrs['event_id'] = np.uint32(event_id)
+
+    print("Rejected", nrejected, "/", nevts, "events")
     ## Done
+    
     
 if __name__ == '__main__':
 
@@ -377,7 +383,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=str)
 
     ## Image size option
-    parser.add_argument('--size', type=int, default=256, nargs='?')    
+    parser.add_argument('--image_size', type=int, default=256, nargs='?')    
     
     ## Allow a minimum number of hits cut
     parser.add_argument('--min_hits', type=int, default=1, nargs='?')
@@ -391,4 +397,4 @@ if __name__ == '__main__':
     ## Report arguments
     for arg in vars(args): print(arg, getattr(args, arg))
 
-    make_images(args.input, args.output, args.size, args.min_hits, args.threshold)
+    make_images(args.input, args.output, args.image_size, args.min_hits, args.threshold)
