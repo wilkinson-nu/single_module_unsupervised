@@ -1,5 +1,7 @@
 import random
 import numpy as np
+import torchvision.transforms.v2 as transforms
+import core.data.augmentations_2d as aug
 
 ## Crop an x by y region from the center of the image, with a jitter on the center position
 class RandomCenterCrop:
@@ -9,6 +11,10 @@ class RandomCenterCrop:
         self.jitter = jitter
 
     def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
         new_feats = feats.copy()
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
@@ -54,6 +60,9 @@ class RandomCentralRotation2D:
 
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
             
@@ -86,6 +95,9 @@ class RandomCentralShear2D:
 
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
         fcoords = coords.astype(float)
@@ -120,6 +132,9 @@ class RandomCentralStretch2D:
         
     def __call__(self, coords, feats):
 
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
         
@@ -144,3 +159,28 @@ class RandomCentralStretch2D:
         stretched_coords = stretched + center
 
         return stretched_coords, feats
+
+
+def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
+
+    x_max=256
+    y_max=256
+
+    x_orig=512
+    y_orig=512
+
+    return transforms.Compose([
+        aug.RandomBlockZeroImproved([5,20], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+        aug.RandomBlockZeroImproved([50,200], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+        aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+        aug.GridJitter(),
+        aug.JitterCoords(),
+        RandomCentralRotation2D(30, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+        RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+        RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+    	aug.RandomGridDistortion2D(50, 4, 2, 10, p=aug_prob),
+    	aug.RandomScaleCharge(0.05, p=aug_prob),
+        aug.RandomJitterCharge(0.05, p=aug_prob),
+    	aug.BilinearSplatMod(0.2, 0.3, p=aug_prob),            
+        RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+    ])
