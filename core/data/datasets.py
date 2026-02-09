@@ -34,6 +34,14 @@ class paired_2d_dataset_ME(Dataset):
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
+    def apply_aug_with_retry(self, coords, feats, max_retries=10):
+        for _ in range(max_retries):
+            out_coords, out_feats = self.aug_transform(coords, feats)
+            if out_feats.size > 0:
+                return out_coords, out_feats
+        ## If no valid augmentation has been found, bail
+        raise RuntimeError("Augmentation failed on initial image with feats.size =", feats.size)
+    
     def __len__(self):
         return self.length
 
@@ -62,9 +70,9 @@ class paired_2d_dataset_ME(Dataset):
             aug1_coords, aug1_feats = self.aug_transform(raw_coords, raw_feats)
             aug2_coords, aug2_feats = self.aug_transform(raw_coords, raw_feats)
 
-            ## Make sure the images aren't empty...
-            while aug1_feats.size == 0: aug1_coords, aug1_feats = self.aug_transform(raw_coords, raw_feats)
-            while aug2_feats.size == 0: aug2_coords, aug2_feats = self.aug_transform(raw_coords, raw_feats)
+            ## Make sure the images aren't empty...            
+            aug1_coords, aug1_feats = self.apply_aug_with_retry(raw_coords, raw_feats)
+            aug2_coords, aug2_feats = self.apply_aug_with_retry(raw_coords, raw_feats)
             raw_coords, raw_feats   = self.nom_transform(raw_coords, raw_feats)
 
         return aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats
@@ -123,6 +131,14 @@ class single_2d_dataset_ME(Dataset):
             f .close()
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
+
+    def apply_aug_with_retry(self, coords, feats, max_retries=10):
+        for _ in range(max_retries):
+            out_coords, out_feats = self.transform(coords, feats)
+            if out_feats.size > 0:
+                return out_coords, out_feats
+        ## If no valid augmentation has been found, bail
+        raise RuntimeError("Augmentation failed on initial image with feats.size =", feats.size)
         
     def __len__(self):
         return self.length
@@ -146,7 +162,7 @@ class single_2d_dataset_ME(Dataset):
         ## And this function is replicated * num_workers
         coords = np.vstack((row, col)).T 
         feats = data.reshape(-1, 1)  # Reshape data to be of shape (N, 1)            
-        coords, feats = self.transform(coords, feats)
+        coords, feats = self.apply_aug_with_retry(coords, feats)
 
         if self.return_metadata:
             event_id = group.attrs.get("event_id", this_idx)
