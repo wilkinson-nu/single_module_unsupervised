@@ -34,7 +34,7 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     N_log_bin_edges = np.logspace(0, 3.7, 100)
     LogE_bin_edges = np.linspace(0, 2.5, 100)    
     SumLogE_bin_edges = np.logspace(0, 3, 100)
-    E_bin_edges = np.logspace(0, 2.4, 125)
+    E_bin_edges = np.logspace(-1, 2.4, 125)
     SumE_bin_edges = np.linspace(0, 5000, 100)
 
     
@@ -63,7 +63,12 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     nmuon_arr     = np.zeros(6, dtype=int)
     nstrange_arr  = np.zeros(6, dtype=int)
     ncharm_arr    = np.zeros(6, dtype=int)
-
+    ndeuteron_arr = np.zeros(6, dtype=int)
+    ntritium_arr  = np.zeros(6, dtype=int)
+    nalpha_arr    = np.zeros(6, dtype=int)
+    nhelium3_arr  = np.zeros(6, dtype=int)
+    nnuclfrag_arr = np.zeros(6, dtype=int)
+    
     enu_bin_edges = np.linspace(0, 50, 100)
     enu_arr,_     = np.histogram([], bins=enu_bin_edges)
     q0_bin_edges  = np.linspace(0, 50, 100)
@@ -127,7 +132,6 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
             these_maxLogE .append(np.max(log_data))
 
             ## Sort out label histograms
-            ## [('cc', '?'), ('topology', 'i1'), ('mode', 'i1'), ('nneutron', 'i1'), ('nantineut', 'i1'), ('nproton', 'i1'), ('nantiprot', 'i1'), ('npipm', 'i1'), ('npi0', 'i1'), ('nkapm', 'i1'), ('nka0', 'i1'), ('nem', 'i1'), ('nmuon', 'i1'), ('nstrange', 'i1'), ('ncharm', 'i1'), ('enu', '<f4'), ('q0', '<f4')]
             label = group['label'][()]
             cc_arr[int(label['cc'])] += 1
             clip_fill_array(nneutron_arr, label['nneutron'])
@@ -142,7 +146,12 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
             clip_fill_array(nmuon_arr, label['nmuon'])    
             clip_fill_array(nstrange_arr, label['nstrange'])
             clip_fill_array(ncharm_arr, label['ncharm'])               
-
+            clip_fill_array(ndeuteron_arr, label['ndeuteron'])
+            clip_fill_array(ntritium_arr, label['ntritium'])
+            clip_fill_array(nalpha_arr, label['nalpha'])
+            clip_fill_array(nhelium3_arr, label['nhelium3'])
+            clip_fill_array(nnuclfrag_arr,label['nnuclfrag'])
+            
             topo_arr[label['topology']-topo_min_val] += 1
             mode_arr[label['mode']-mode_min_val] += 1
             
@@ -345,6 +354,41 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     plt.savefig(output_name_root+"ncharm.png")
     plt.close()
 
+    plt.bar(range(6), ndeuteron_arr, log=True)   
+    plt.ylabel('N. events')
+    plt.xlabel('N. deuteron')
+    plt.tight_layout()
+    plt.savefig(output_name_root+"ndeuteron.png")
+    plt.close()    
+
+    plt.bar(range(6), ntritium_arr, log=True)   
+    plt.ylabel('N. events')
+    plt.xlabel('N. tritium')
+    plt.tight_layout()
+    plt.savefig(output_name_root+"ntritium.png")
+    plt.close()
+
+    plt.bar(range(6), nalpha_arr, log=True)   
+    plt.ylabel('N. events')
+    plt.xlabel('N. alpha')
+    plt.tight_layout()
+    plt.savefig(output_name_root+"nalpha.png")
+    plt.close()
+
+    plt.bar(range(6), nhelium3_arr, log=True)   
+    plt.ylabel('N. events')
+    plt.xlabel(r'N. $^{3}$He')
+    plt.tight_layout()
+    plt.savefig(output_name_root+"nhelium3.png")
+    plt.close()
+
+    plt.bar(range(6), nnuclfrag_arr, log=True)   
+    plt.ylabel('N. events')
+    plt.xlabel('N. nuclear fragments')
+    plt.tight_layout()
+    plt.savefig(output_name_root+"nnuclfrag.png")
+    plt.close()
+    
     plt.hist(enu_bin_edges[:-1], bins=enu_bin_edges, weights=enu_arr, log=False)
     plt.xlabel(r'$E_{\nu}$ (GeV)')
     plt.ylabel('N. events')
