@@ -260,7 +260,7 @@ def get_3D_image_from_event(event, origin, voxel_size):
     return coords, values
 
 
-def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
+def make_images(infilelist, output_file_name, image_size, min_hits, threshold):
 
     output_size = np.array([image_size, image_size, image_size])
     
@@ -346,7 +346,7 @@ def make_images(infilelist, output_file_name, image_size, min_hists, threshold):
         central_mask = (this_sparse_2d.row > (output_size[0]/4)-1) & (this_sparse_2d.row < (output_size[0]*3/4)-1) \
             & (this_sparse_2d.col > (output_size[1]/4)-1) & (this_sparse_2d.col < (output_size[1]*3/4)-1)
         
-        if np.count_nonzero(this_sparse_2d.data[central_mask]) < min_hists:
+        if np.count_nonzero(this_sparse_2d.data[central_mask]) < min_hits:
             print("Rejected event with labels:", labels)
             print("Topology =", Topology.name_from_index(labels['topology']))
             print("Mode =", Mode.name_from_index(labels['mode']))
