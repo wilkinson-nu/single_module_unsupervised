@@ -67,9 +67,6 @@ class paired_2d_dataset_ME(Dataset):
             aug1_coords,aug1_feats = raw_coords,raw_feats
             aug2_coords,aug2_feats = raw_coords,raw_feats
         else:
-            aug1_coords, aug1_feats = self.aug_transform(raw_coords, raw_feats)
-            aug2_coords, aug2_feats = self.aug_transform(raw_coords, raw_feats)
-
             ## Make sure the images aren't empty...            
             aug1_coords, aug1_feats = self.apply_aug_with_retry(raw_coords, raw_feats)
             aug2_coords, aug2_feats = self.apply_aug_with_retry(raw_coords, raw_feats)
