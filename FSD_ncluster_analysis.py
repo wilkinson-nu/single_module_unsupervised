@@ -23,9 +23,12 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Various shared analysis libraries
-from analysis.plotting_utils import run_tsne_skl, plot_cluster_bigblock
+from analysis.plotting_utils import run_tsne_skl
 from analysis.model_utils import load_checkpoint, get_models_from_checkpoint
 from analysis.dataset_utils import get_dataset, image_loop
+from analysis.plotting_utils import run_faiss_spherical_kmeans
+from core.data.augmentations_2d import CenterCrop
+from core.data.augmentations_2d import FirstRegionCrop
 
 ## For paraellising the ncluster runs
 from joblib import Parallel, delayed
@@ -51,33 +54,42 @@ def plot_metric(x_vals, y_vals, metric_name, save_name=False):
     if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
     plt.show()
 
-def process_one(ncluster, latent, ncopies):
+## A stopgap measure, return the nominal transform needed for this experiment (the only specific thing)
+def get_nom_transform(experiment):
+
+    if experiment == 'nularbox':
+        return CenterCrop((512,512), (256,256))
+    if experiment == 'fsd':
+        return FirstRegionCrop((800, 256), (768, 256))
+
+    ## If the experiment name was unrecognised, nope out
+    raise ValueError("Unknown experiment name:", experiment)
+
+def process_one(ncluster, latent, nattempts):
     print("Processing ncluster =", ncluster)
 
-    labels, metrics = run_vMF(latent,
-                              ncluster,
-                              init="k-means++",
-                              n_copies=ncopies,
-                              verbose=True)
+    labels, metrics, _ = run_faiss_spherical_kmeans(latent, 
+                                                    ncluster,
+                                                    nattempts=nattempts,
+                                                    verbose=True
+                                                   )
     print("Finished ncluster =", ncluster)
     return ncluster, labels, metrics
     
 def run_analysis(args):
 
+    ## Define the nominal transform for this experiment type
+    nom_transform = get_nom_transform(args.experiment)
+    
     ## Setup the encoder
     encoder, heads, training_args = get_models_from_checkpoint(args.input_file)
-
-    encoder.to(device)
-    for h in heads.values(): h.to(device)
     
     ## Set up the datasets and loaders
     ntsne=int(args.ntsne)
-    data_dataset, data_loader = get_dataset(training_args.data_dir, ntsne)
+    data_dataset, data_loader = get_dataset(training_args.data_dir, ntsne, nom_transform)
     
     ## Get the processed vectors of interest from the datasets
-    print("Loading inputs...")
-    data_processed = image_loop(encoder, heads, data_loader)
-    print("...inputs loaded!")
+    data_processed = image_loop(encoder, heads, data_loader, device)
     
     ## t-SNE examples
     print("Starting tSNE...")
@@ -88,7 +100,7 @@ def run_analysis(args):
     ncluster_list = [n for n in range(args.clust_min, args.clust_max+1, args.clust_step)]
 
     ## Can more dynamically pick
-    n_jobs = 10
+    n_jobs = 4
     
     ## Spawn parallel clustering jobs
     results = Parallel(
@@ -96,7 +108,7 @@ def run_analysis(args):
         prefer="processes"
     )(
         delayed(process_one)(
-            ncluster, data_processed['latent'][:ntsne].copy(), args.ncopies
+            ncluster, data_processed['latent'][:ntsne].copy(), args.nattempts
         )
         for ncluster in ncluster_list
     )
@@ -112,30 +124,9 @@ def run_analysis(args):
         ch_scores.append(metrics["calinski_harabasz"])
         db_scores.append(metrics["davies_bouldin"])
 
-        _ = run_tsne_skl(data_processed['latent'][:ntsne].copy(), \
+        _ = run_tsne_skl(data_processed['enc_latent'][:ntsne].copy(), \
                          these_labels[:ntsne].copy(), tsne_results=tsne_results, \
                          save_name=args.out_name_root+"_tSNE_"+str(ncluster)+".png")
-        
-    ## Loop over a range of clusters
-    ## for ncluster in ncluster_list:
-    ##     print("Processing ncluster =", ncluster)
-    ##     these_labels, metrics = run_vMF(data_processed['latent'][:ntsne].copy(), ncluster, init="k-means++", n_copies=args.ncopies, verbose=True)
-    ##     _ = run_tsne_skl(data_processed['latent'][:ntsne].copy(), \
-    ##                      these_labels[:ntsne].copy(), tsne_results=tsne_results, \
-    ##                      save_name=args.out_name_root+"_tSNE_"+str(ncluster)+".png")
-    ## 
-    ##     silhouette_scores.append(metrics["silhouette"])
-    ##     ch_scores.append(metrics["calinski_harabasz"])
-    ##     db_scores.append(metrics["davies_bouldin"])
-    ## 
-    ##     ## Plot some examples for each cluster:
-    ##     if args.example_cluster_images:
-    ##         for n in range(training_args.nclusters):
-    ##             plot_cluster_bigblock(data_dataset, data_processed['clust_index'], n, 1, 10, \
-    ##                                   cluster_probs=data_processed['clust_max'], \
-    ##                                   save_name=args.out_name_root+"_data_example"+str(n)+"_top.png")
-    ##             plot_cluster_bigblock(data_dataset, data_processed['clust_index'], n, 1, 10, \
-    ##                                   save_name=args.out_name_root+"_data_example"+str(n)+"_all.png")
 
     ## After the loop over clusters, make some summary plots
     plot_metric(ncluster_list, silhouette_scores, "Silhouette Score", args.out_name_root+"_silhouette.png")
@@ -149,10 +140,14 @@ if __name__ == '__main__':
     ## Parse some args
     parser = argparse.ArgumentParser("Model analysis")
 
-    # Require an input file name and location to dump plots
+    ## Require an input file name and location to dump plots
     parser.add_argument('--input_file', type=str)
     parser.add_argument('--out_name_root', type=str)
 
+    ## This is probably temporary, should switch to an "experiment" model so files know what experiment they're trained on
+    ## For now, require an explicit declaration of the type of data used to train this model
+    parser.add_argument('--experiment', type=str)
+    
     ## Give a sensible default for the number of events to process
     parser.add_argument('--ntsne', type=int, default=20000, nargs='?')
 
@@ -161,13 +156,10 @@ if __name__ == '__main__':
     parser.add_argument('--clust_max', type=int, default=60, nargs='?')
     parser.add_argument('--clust_step', type=int, default=10, nargs='?')  
 
-    ## Options for vMF
-    parser.add_argument('--ncopies', type=int, default=10, nargs='?')    
+    ## Options for faiss
+    parser.add_argument('--nattempts', type=int, default=10, nargs='?')    
     
-    ## Options for controlling the plots to make
-    parser.add_argument('--example_cluster_images', type=int, choices=[0,1], default=0, nargs='?')
-    
-    # Parse arguments from command line
+    ## Parse arguments from command line
     args = parser.parse_args()
 
     ## Report arguments
