@@ -3,14 +3,17 @@ from core.data.augmentations_2d import FirstRegionCrop
 import torch
 import MinkowskiEngine as ME
 import numpy as np
+import time
 
-
-def get_dataset(input_dir, nevents, return_metadata=False):
+def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
 
     print("Loading", nevents," events from", input_dir)
-    nom_transform = transforms.Compose([
+
+    ## This is a relic as this was initially done for the FSD dataset
+    if nom_transform == False:
+        nom_transform = transforms.Compose([
             FirstRegionCrop((800, 256), (768, 256)),
-            ])
+        ])
     
     dataset = single_2d_dataset_ME(input_dir, \
                                    transform=nom_transform, \
@@ -24,11 +27,16 @@ def get_dataset(input_dir, nevents, return_metadata=False):
                                          batch_size=2048,
                                          shuffle=False,
                                          num_workers=8)
+
+    print("Loaded", loader.__len__(), "events")
     return dataset, loader
 
 
-def image_loop(encoder, heads, loader, device, detailed_info=True):
+def image_loop(encoder, heads, loader, device, detailed_info=False):
 
+    ## Record some timing info
+    start = time.time()
+    
     latent = []    ## This is the instance clustering space
     enc_latent = []    ## This is after the encoder (as passed to the clustering head) 
     cluster = []
@@ -42,7 +50,10 @@ def image_loop(encoder, heads, loader, device, detailed_info=True):
     event_ids = []
     
     encoder.eval()
-    for h in heads.values(): h.eval()
+    encoder.to(device)
+    for h in heads.values():
+        h.eval()
+        h.to(device)
     
     ## Loop over the images (discard any extra info returned by loader)
     for batch in loader:
@@ -133,6 +144,8 @@ def image_loop(encoder, heads, loader, device, detailed_info=True):
     ## Add the filename and event id if applicable
     if filenames: out["filename"] = filenames
     if event_ids: out["event_id"] = event_ids
+    
+    print("Time to process events with image_loop:", time.time() - start)
     return out
 
 ## Function to reorder the order of clusters in the processed data
