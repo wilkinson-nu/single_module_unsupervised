@@ -172,13 +172,13 @@ def plot_metric_by_confidence(xvar, confidence, nbinsx=None, x_min=None, x_max=N
 
     
 # Make a histogram broken down into all possible labels, for arbitrary x variables
-def plot_metric_by_label(xvar, labels, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False):
+def plot_metric_by_label(xvar, labels, label_enum, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, label_enum=Label):
 
     ## Deal with binning myself for some reason...
     bins, is_int = parse_binning(xvar, nbinsx, x_min, x_max)
     
-    label_values = [m.value for m in Label]
-    label_names  = [m.name for m in Label]
+    label_values = [m.value for m in label_enum]
+    label_names  = [m.name for m in label_enum]
 
     ## If there are more than 20 labels, this will obviously go a bit funky
     all_colors = (
@@ -294,13 +294,13 @@ def plot_metric_data_vs_alt(data_xvar, alt_xvar, sim_labels, nbinsx=None, x_min=
     plt.close()
 
     
-def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, save_name=None):
+def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, save_name=None, label_enum=Label):
 
     ## Deal with binning myself for some reason...
     bins, is_int = parse_binning(data_xvar, nbinsx, x_min, x_max)
     
-    label_values = [m.value for m in Label]
-    label_names  = [m.name for m in Label]
+    label_values = [m.value for m in label_enum]
+    label_names  = [m.name for m in label_enum]
 
     ## Skip the data label because it's being plotted separately here
     label_values = label_values[1:]
