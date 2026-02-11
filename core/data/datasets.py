@@ -34,7 +34,7 @@ class paired_2d_dataset_ME(Dataset):
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
-    def apply_aug_with_retry(self, coords, feats, max_retries=10):
+    def apply_aug_with_retry(self, coords, feats, max_retries=100):
         for _ in range(max_retries):
             out_coords, out_feats = self.aug_transform(coords, feats)
             if out_feats.size > 0:
@@ -129,7 +129,7 @@ class single_2d_dataset_ME(Dataset):
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
-    def apply_aug_with_retry(self, coords, feats, max_retries=10):
+    def apply_aug_with_retry(self, coords, feats, max_retries=100):
         for _ in range(max_retries):
             out_coords, out_feats = self.transform(coords, feats)
             if out_feats.size > 0:
