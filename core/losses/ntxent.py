@@ -61,18 +61,22 @@ class NTXentMergedMultiGPU(nn.Module):
         # Gather embeddings across GPUs
         z_i_all = self.concat_all_gather(z_i)
         z_j_all = self.concat_all_gather(z_j)
-        total_batch = representations.shape[0]//2
+        total_batch = z_i_all.shape[0]
 
-        negatives_mask = (~torch.eye(total_batch*2, total_batch_size*2, device=emb_cat.device, dtype=torch.bool)).float()        
+        negatives_mask = (~torch.eye(total_batch*2, total_batch*2, device=emb_cat.device, dtype=torch.bool)).float()        
         representations = torch.cat([z_i_all, z_j_all], dim=0)
-        sim_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+        
+        # sim_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
 
+        z = nn.functional.normalize(representations, dim=1)  # (2*B_total, D)
+        sim_matrix = torch.mm(z, z.t())
+        
         sim_ij = torch.diag(sim_matrix, total_batch)
         sim_ji = torch.diag(sim_matrix, -total_batch)
         positives = torch.cat([sim_ij, sim_ji], dim=0)
 
         nominator = torch.exp(positives / self.temperature)
-        denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
+        denominator = negatives_mask * torch.exp(sim_matrix / self.temperature)
 
         loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
         loss = torch.sum(loss_partial) / (total_batch)        
