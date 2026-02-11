@@ -436,7 +436,7 @@ def plot_metric_by_cluster(xvar, cluster_vect, nbinsx=None, x_min=None, x_max=No
     plt.close()
 
 
-def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_probs=None, save_name=None): 
+def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_probs=None, save_name=None, image_size=(768, 256)): 
 
     ## Sort colours
     cmap = cm.turbo.copy()
@@ -465,7 +465,7 @@ def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_pro
         orig_bfeats  = torch.from_numpy(np.concatenate([numpy_feats], 0)).float()
         orig = ME.SparseTensor(orig_bfeats, orig_bcoords)
             
-        inputs  = make_dense_from_tensor(orig, 0, 768, 256)
+        inputs  = make_dense_from_tensor(orig, 0, image_size[0], image_size[1])
         inputs  = inputs .cpu().squeeze().numpy()
         
         plt.imshow(inputs, origin='lower', cmap=cmap, vmin=1e-6)
@@ -557,7 +557,7 @@ def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True)
     ## return labels, metrics
     return 
 
-def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=True, seed=123):
+def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False, seed=123):
     # Normalize embeddings (critical for cosine clustering)
     X = dataset.astype(np.float32)
     X /= np.linalg.norm(X, axis=1, keepdims=True)
@@ -597,11 +597,10 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=True, 
         metrics["calinski_harabasz"] = calinski_harabasz_score(X, labels)
         metrics["davies_bouldin"] = davies_bouldin_score(X, labels)
 
-    if verbose:
-        print("Cluster weights:", weights)
-        print("Silhouette score:", metrics["silhouette"])
-        print("Calinski-Harabasz =", metrics["calinski_harabasz"])
-        print("Davies-Bouldin =", metrics["davies_bouldin"])
+    print("Cluster weights:", weights)
+    print("Silhouette score:", metrics["silhouette"])
+    print("Calinski-Harabasz =", metrics["calinski_harabasz"])
+    print("Davies-Bouldin =", metrics["davies_bouldin"])
 
     return labels, metrics, kmeans.centroids
     
