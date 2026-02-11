@@ -557,7 +557,7 @@ def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True)
     ## return labels, metrics
     return 
 
-def run_faiss_spherical_kmeans(dataset, n_clusters, n_iter=20, verbose=True, seed=123):
+def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=True, seed=123):
     # Normalize embeddings (critical for cosine clustering)
     X = dataset.astype(np.float32)
     X /= np.linalg.norm(X, axis=1, keepdims=True)
@@ -568,9 +568,10 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, n_iter=20, verbose=True, see
     kmeans = faiss.Kmeans(
         d=d,
         k=n_clusters,
-        niter=n_iter,
+        niter=20,
         verbose=verbose,
         seed=seed,
+        nredo=nattempts,
         spherical=True  # ensures centroid normalization
     )
     kmeans.train(X)
