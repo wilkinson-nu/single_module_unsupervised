@@ -28,7 +28,7 @@ def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
                                          shuffle=False,
                                          num_workers=8)
 
-    print("Loaded", loader.__len__(), "events")
+    print("Loaded", dataset.__len__(), "events")
     return dataset, loader
 
 
