@@ -34,7 +34,7 @@ class ProjectionHeadLogitsBN(nn.Module):
             nn.Linear(nchan, self.hidden, bias=False),
             nn.BatchNorm1d(self.hidden),
             hidden_act_fn(),
-            nn.Linear(self.hidden, nlatent, bias=True),
+            nn.Linear(self.hidden, nlatent, bias=False),
         )
         self.initialize_weights()
 
