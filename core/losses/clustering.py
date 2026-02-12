@@ -2,6 +2,7 @@ import math
 import torch
 from torch import nn
 import torch.distributed as dist
+from core.losses.gather import GatherLayer
 
 class ClusteringLossMerged(nn.Module):
     def __init__(self, temperature=0.5, entropy_weight=1.0):
@@ -50,16 +51,6 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         super().__init__()
         self.temperature = temperature
         self.entropy_weight = entropy_weight
-
-    @staticmethod
-    def concat_all_gather(tensor):
-        """Gather tensor from all GPUs without backprop through remote GPUs"""
-        world_size = dist.get_world_size() if dist.is_initialized() else 1
-        if world_size == 1:
-            return tensor
-        tensors_gather = [torch.zeros_like(tensor) for _ in range(world_size)]
-        dist.all_gather(tensors_gather, tensor)
-        return torch.cat(tensors_gather, dim=0)
     
     def forward(self, c_cat):
 
@@ -67,8 +58,8 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         class_num = c_cat.shape[1]
         c_i, c_j = c_cat[:batch_size], c_cat[batch_size:]
 
-        c_i_all = self.concat_all_gather(c_i)
-        c_j_all = self.concat_all_gather(c_j)
+        c_i_all = torch.cat(GatherLayer.apply(c_i), dim=0)
+        c_j_all = torch.cat(GatherLayer.apply(c_j), dim=0)
         total_batch = c_i_all.shape[0]
 
         ## Start with the entropy term
@@ -81,11 +72,15 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         ne_j = math.log(p_j.size(0)) + (p_j * torch.log(p_j + 1e-10)).sum()
         ne_loss = ne_i + ne_j
 
-        c_i = c_i.t()
-        c_j = c_j.t()
+        c_i_all = c_i_all.t()
+        c_j_all = c_j_all.t()
         
         negatives_mask = (~torch.eye(class_num*2, class_num*2, dtype=bool, device=c_cat.device)).float()
-        representations = torch.cat([c_i, c_j], dim=0)
+        representations = torch.cat([c_i_all, c_j_all], dim=0)
+
+        #z = nn.functional.normalize(representations, dim=1)  # (2*B_total, D)
+        #similarity_matrix = torch.mm(z, z.t())
+
         similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
 
         sim_ij = torch.diag(similarity_matrix, class_num)
@@ -98,4 +93,9 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
         loss = torch.sum(loss_partial) / (2*class_num)
 
-        return loss, ne_loss*self.entropy_weight
+        return loss, ne_loss*self.entropy_weight, p_i.max().detach()
+
+
+
+
+    

@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.distributed as dist
+from core.losses.gather import GatherLayer
 
 class NTXentMerged(nn.Module):
     def __init__(self, temperature=0.5):
@@ -37,19 +38,6 @@ class NTXentMergedMultiGPU(nn.Module):
         super().__init__()
         self.temperature = temperature
 
-    @staticmethod
-    def concat_all_gather(tensor):
-        """
-        Gathers a tensor from all GPUs and concatenates along the batch dimension.
-        Gradients do NOT flow through remote GPUs.
-        """
-        world_size = dist.get_world_size() if dist.is_initialized() else 1
-        if world_size == 1:
-            return tensor
-        tensors_gather = [torch.zeros_like(tensor) for _ in range(world_size)]
-        dist.all_gather(tensors_gather, tensor)
-        return torch.cat(tensors_gather, dim=0)
-
     def forward(self, emb_cat):
         """
         emb_cat: concatenated embeddings of shape (2*B_per_gpu, D), stacked as [z_i, z_j]
@@ -59,8 +47,8 @@ class NTXentMergedMultiGPU(nn.Module):
         z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
 
         # Gather embeddings across GPUs
-        z_i_all = self.concat_all_gather(z_i)
-        z_j_all = self.concat_all_gather(z_j)
+        z_i_all = torch.cat(GatherLayer.apply(z_i), dim=0)
+        z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
         total_batch = z_i_all.shape[0]
 
         negatives_mask = (~torch.eye(total_batch*2, total_batch*2, device=emb_cat.device, dtype=torch.bool)).float()        
