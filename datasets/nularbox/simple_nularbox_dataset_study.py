@@ -6,83 +6,286 @@ import matplotlib
 from scipy.sparse import coo_matrix
 from glob import glob
 from truth_labels import Topology, Mode
+from enum import Enum
+
+## Damn I miss ROOT
+class TH1Dish:
+    def __init__(self, bin_edges, dtype=np.int64):
+        self.bin_edges = np.asarray(bin_edges, dtype=float)
+        self.counts = np.zeros(len(self.bin_edges) - 1, dtype=dtype)
+
+        ## Keep track of the min/max
+        self.min_seen = None
+        self.max_seen = None
+
+        ## Add a buffer 
+        self.buffer = []
+
+    def Fill(self, values):
+        arr = np.atleast_1d(np.asarray(values))
+        self.buffer.append(arr)
+
+    def FlushBuffer(self):
+        
+        if not self.buffer: return
+        values = np.concatenate(self.buffer)
+        self.buffer.clear()
+        
+        if values.size:
+            vmin = values.min()
+            vmax = values.max()
+
+            self.min_seen = vmin if self.min_seen is None else min(self.min_seen, vmin)
+            self.max_seen = vmax if self.max_seen is None else max(self.max_seen, vmax)
+
+        hist, _ = np.histogram(values, bins=self.bin_edges)
+        self.counts += hist
+        
+    def Reset(self):
+        self.counts.fill(0)
+        self.buffer.clear()
+        self.min_seen = None
+        self.max_seen = None
+        
+    def GetArray(self):
+        return self.counts.copy(), self.bin_edges.copy()
+
+    def GetMinMax(self):
+        return self.min_seen, self.max_seen
+
+    def Draw(self, filename=None, xtitle=None, ytitle="N. Entries",
+        logx=False, logy=False, show=False):
+
+        ## Flush to make sure nothing is cached
+        self.FlushBuffer()
+        
+        plt.hist(self.bin_edges[:-1],
+                 bins=self.bin_edges,
+                 weights=self.counts)
+
+        if logx: plt.xscale("log")
+        if logy: plt.yscale("log")
+        if xtitle: plt.xlabel(xtitle)
+        if ytitle: plt.ylabel(ytitle)
+        plt.tight_layout()
+
+        if filename:
+            plt.savefig(filename)
+            plt.close()
+        elif show:
+            plt.show()
+        else:
+            plt.close()
+
+            
+class TH1Iish:
+    def __init__(self, nbins, dtype=np.int64):
+        self.nbins = int(nbins)
+        if self.nbins <= 0:
+            raise ValueError("nbins must be positive")
+
+        self.counts = np.zeros(self.nbins, dtype=dtype)
+
+        ## Keep track of the min/max
+        self.min_seen = None
+        self.max_seen = None
+
+        ## Add a buffer 
+        self.buffer = []
+        
+    def Fill(self, values):
+        arr = np.atleast_1d(np.asarray(values))
+        self.buffer.append(arr)
+
+    def FlushBuffer(self):
+
+        if not self.buffer: return
+        values = np.concatenate(self.buffer)
+        self.buffer.clear()
+        
+        if values.size:
+            vmin = values.min()
+            vmax = values.max()
+
+            self.min_seen = vmin if self.min_seen is None else min(self.min_seen, vmin)
+            self.max_seen = vmax if self.max_seen is None else max(self.max_seen, vmax)
+
+        ## Check there are values to put inside the histogram range
+        mask = (values >= 0) & (values < self.nbins)
+        if not np.any(mask): return
+
+        idx, cnt = np.unique(values[mask], return_counts=True)
+        self.counts[idx] += cnt
+        
+    def Reset(self):
+        self.counts.fill(0)
+        self.buffer.clear()
+        self.min_seen = None
+        self.max_seen = None
+        
+    def GetArray(self):
+        return self.counts.copy(), self.bin_edges.copy()
+
+    def GetMinMax(self):
+        return self.min_seen, self.max_seen
+
+    def Draw(self, filename=None, xlabels=None, xtitle=None, ytitle="N. Entries",
+             logy=False, show=False, rotate_labels=0):
+
+        ## Flush to make sure nothing is cached
+        self.FlushBuffer()
+        
+        x = np.arange(self.nbins)
+        plt.bar(x, self.counts, align="center", width=0.8)
+
+        if xlabels is not None:
+            if len(xlabels) != self.nbins:
+                raise ValueError("labels length must match number of bins")
+            
+            plt.xticks(x, xlabels, rotation=rotate_labels)
+        else:
+            plt.xticks(x)
+        
+        if logy: plt.yscale("log")
+
+        if xtitle: plt.xlabel(xtitle)
+        if ytitle: plt.ylabel(ytitle)
+        plt.tight_layout()
+
+        if filename:
+            plt.savefig(filename)
+            plt.close()
+        elif show:
+            plt.show()
+        else:
+            plt.close()            
 
 
-def clip_fill_array(array, value):
-    if 0 <= value < len(array):
-        array[value] += 1
-    
+class TH1Enum:
+    def __init__(self, enum_class):
+
+        if not issubclass(enum_class, Enum):
+            raise TypeError("enum_class must be an Enum")
+
+        self.enum_class = enum_class
+        self.bin_labels = [e.name for e in enum_class]
+
+        values = np.array([e.value for e in enum_class], dtype=int)
+        self.min_val = values.min()
+        self.max_val = values.max()
+        
+        self.nbins = len(enum_class)
+        self.counts = np.zeros(self.nbins, dtype=int)
+
+        ## Add a buffer 
+        self.buffer = []
+
+    def Fill(self, values):
+
+        arr = np.atleast_1d(np.asarray(values))
+
+        ## Turn the enum to an int if it is passed as an enum
+        if issubclass(arr.dtype.type, Enum):
+            arr = np.array([v.value for v in arr], dtype=int)
+        else:
+            arr = arr.astype(int, copy=False)
+            
+        self.buffer.append(arr)
+
+    ## TODO
+    def FlushBuffer(self):
+
+        if not self.buffer: return
+        values = np.concatenate(self.buffer)
+        self.buffer.clear()
+
+        ## Map values to the enum
+        idx = values - self.min_val
+        idx, cnt = np.unique(idx, return_counts=True)
+        self.counts[idx] += cnt
+        
+    def Reset(self):
+        self.counts.fill(0)
+        self.buffer.clear()
+        
+    def GetArray(self):
+        return self.counts.copy(), self.bin_labels.copy()
+
+    ## Not implemented, because who cares?
+    def GetMinMax(self):
+        return None, None
+
+    def Draw(self, filename=None, xtitle=None, ytitle="N. Entries",
+             logy=False, show=False, rotate_labels=90):
+
+        ## Flush to make sure nothing is cached
+        self.FlushBuffer()
+        
+        x = np.arange(self.nbins)
+        plt.bar(x, self.counts, align="center", width=0.8)
+        plt.xticks(x, self.bin_labels, rotation=rotate_labels)
+        
+        if logy: plt.yscale("log")
+
+        if xtitle: plt.xlabel(xtitle)
+        if ytitle: plt.ylabel(ytitle)
+        plt.tight_layout()
+
+        if filename:
+            plt.savefig(filename)
+            plt.close()
+        elif show:
+            plt.show()
+        else:
+            plt.close()            
+
+
 def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     
     max_images = 1e7
     sum_images = 0
-
     
     ## Get some high-level summary information
-    maxN = 0
-    maxSumE = 0
     total_images = 0
-    maxE = 0
-    ndodgy = 0
-    maxLogE = 0
-    maxSumLogE = 0
     nEmpty = 0
-
     
-    ## Binning
-    N_lin_bin_edges = np.linspace(0, 4000, 200)
-    N_log_bin_edges = np.logspace(0, 3.7, 100)
-    LogE_bin_edges = np.linspace(0, 2.5, 100)    
-    SumLogE_bin_edges = np.logspace(0, 3, 100)
-    E_bin_edges = np.logspace(-1, 2.4, 125)
-    SumE_bin_edges = np.linspace(0, 5000, 100)
-
+    ## Setup histograms
+    nhits_lin_hist = TH1Dish(np.linspace(0, 4000, 200))
+    nhits_log_hist = TH1Dish(np.logspace(0, 3.7, 100))
+    E_hist         = TH1Dish(np.logspace(-1, 2.4, 125))
+    SumE_hist      = TH1Dish(np.linspace(0, 5000, 100))
+    maxE_hist      = TH1Dish(np.logspace(-1, 2.4, 125))
+    enu_hist       = TH1Dish(np.linspace(0, 50, 100))
+    q0_hist        = TH1Dish(np.linspace(0, 50, 100))
     
-    ## Bin counts for 1D plots
-    E_arr,_ = np.histogram([], bins=E_bin_edges)
-    LogE_arr,_ = np.histogram([], bins=LogE_bin_edges)
-    SumE_arr,_ = np.histogram([], bins=SumE_bin_edges)    
-    maxLogE_arr,_ = np.histogram([], bins=LogE_bin_edges)
-    SumLogE_arr,_ = np.histogram([], bins=SumLogE_bin_edges)
-    maxE_arr,_ = np.histogram([], bins=E_bin_edges)
-
-    N_lin_arr,_ = np.histogram([], bins=N_lin_bin_edges)
-    N_log_arr,_ = np.histogram([], bins=N_log_bin_edges)
+    ## Test out a range of transforms
+    alpha_min=1
+    alpha_max=10
+    alpha_hist_list = [TH1Dish(np.linspace(0, 5, 100)) for x in range(alpha_min, alpha_max+1)]
 
     ## Label histograms
-    cc_arr        = np.zeros(2, dtype=int)
-    nneutron_arr  = np.zeros(21, dtype=int)
-    nproton_arr   = np.zeros(21, dtype=int)
-    nantineut_arr = np.zeros(6, dtype=int)
-    nantiprot_arr = np.zeros(6, dtype=int)    
-    npipm_arr     = np.zeros(6, dtype=int)
-    npi0_arr      = np.zeros(6, dtype=int)
-    nkapm_arr     = np.zeros(6, dtype=int)
-    nka0_arr      = np.zeros(6, dtype=int)
-    nem_arr       = np.zeros(6, dtype=int)
-    nmuon_arr     = np.zeros(6, dtype=int)
-    nstrange_arr  = np.zeros(6, dtype=int)
-    ncharm_arr    = np.zeros(6, dtype=int)
-    ndeuteron_arr = np.zeros(6, dtype=int)
-    ntritium_arr  = np.zeros(6, dtype=int)
-    nalpha_arr    = np.zeros(6, dtype=int)
-    nhelium3_arr  = np.zeros(6, dtype=int)
-    nnuclfrag_arr = np.zeros(6, dtype=int)
-    
-    enu_bin_edges = np.linspace(0, 50, 100)
-    enu_arr,_     = np.histogram([], bins=enu_bin_edges)
-    q0_bin_edges  = np.linspace(0, 50, 100)
-    q0_arr,_      = np.histogram([], bins=q0_bin_edges)
-    
-    topo_values = [e.value for e in Topology]
-    topo_min_val, topo_max_val = min(topo_values), max(topo_values)
-    topo_num_bins = topo_max_val - topo_min_val + 1
-    topo_arr = np.zeros(topo_num_bins, dtype=int)
+    cc_hist        = TH1Iish(nbins=2)
+    nneutron_hist  = TH1Iish(nbins=21)
+    nproton_hist   = TH1Iish(nbins=21)
+    nantineut_hist = TH1Iish(nbins=6)
+    nantiprot_hist = TH1Iish(nbins=6)    
+    npipm_hist     = TH1Iish(nbins=6)
+    npi0_hist      = TH1Iish(nbins=6)
+    nkapm_hist     = TH1Iish(nbins=6)
+    nka0_hist      = TH1Iish(nbins=6)
+    nem_hist       = TH1Iish(nbins=6)
+    nmuon_hist     = TH1Iish(nbins=6)
+    nstrange_hist  = TH1Iish(nbins=6)
+    ncharm_hist    = TH1Iish(nbins=6)
+    ndeuteron_hist = TH1Iish(nbins=6)
+    ntritium_hist  = TH1Iish(nbins=6)
+    nalpha_hist    = TH1Iish(nbins=6)
+    nhelium3_hist  = TH1Iish(nbins=6)
+    nnuclfrag_hist = TH1Iish(nbins=6)
 
-    mode_values = [e.value for e in Mode]
-    mode_min_val, mode_max_val = min(mode_values), max(mode_values)
-    mode_num_bins = mode_max_val - mode_min_val + 1
-    mode_arr = np.zeros(mode_num_bins, dtype=int)    
+    ## Special enum histograms
+    topo_hist      = TH1Enum(Topology)
+    mode_hist      = TH1Enum(Mode)
     
     ## Loop over all of the files
     for file in glob(input_file_names):
@@ -96,18 +299,7 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
         print("Found", nimages, "images")
 
         total_images += nimages
-        
-        these_N = []
-        these_sumE = []
-        these_maxE = []
-        these_E = []
-        these_logE = []
-        these_sumLogE = []
-        these_maxLogE = []
 
-        these_enu = []
-        these_q0 = []
-        
         ## Loop over the images
         for i in range(nimages):
 
@@ -120,307 +312,97 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
                 nEmpty += 1
                 continue
 
-            ## Sort out data histograms
-            these_E   += list(data)
-            these_N    .append(np.count_nonzero(data))
-            these_sumE .append(np.sum(data))
-            these_maxE .append(np.max(data))
-
-            log_data = np.log10(1 + data)
-            these_logE += list(log_data)
-            these_sumLogE .append(np.sum(log_data))
-            these_maxLogE .append(np.max(log_data))
-
+            ## Fill histograms
+            E_hist         .Fill(data)
+            nhits_lin_hist .Fill(np.count_nonzero(data))
+            nhits_log_hist .Fill(np.count_nonzero(data))
+            SumE_hist      .Fill(np.sum(data))
+            maxE_hist      .Fill(np.max(data))
+            
+            ## Alpha histograms
+            for a in range(alpha_min, alpha_max+1):
+                a_data = np.log10(1 + a*data)/np.log10(1+a)
+                alpha_hist_list[a-alpha_min] .Fill(a_data)
+            
             ## Sort out label histograms
             label = group['label'][()]
-            cc_arr[int(label['cc'])] += 1
-            clip_fill_array(nneutron_arr, label['nneutron'])
-            clip_fill_array(nproton_arr, label['nproton'])
-            clip_fill_array(nantineut_arr, label['nantineut'])
-            clip_fill_array(nantiprot_arr, label['nantiprot'])
-            clip_fill_array(npipm_arr, label['npipm'])
-            clip_fill_array(npi0_arr, label['npi0'])
-            clip_fill_array(nkapm_arr, label['nkapm'])    
-            clip_fill_array(nka0_arr, label['nka0'])     
-            clip_fill_array(nem_arr, label['nem'])      
-            clip_fill_array(nmuon_arr, label['nmuon'])    
-            clip_fill_array(nstrange_arr, label['nstrange'])
-            clip_fill_array(ncharm_arr, label['ncharm'])               
-            clip_fill_array(ndeuteron_arr, label['ndeuteron'])
-            clip_fill_array(ntritium_arr, label['ntritium'])
-            clip_fill_array(nalpha_arr, label['nalpha'])
-            clip_fill_array(nhelium3_arr, label['nhelium3'])
-            clip_fill_array(nnuclfrag_arr,label['nnuclfrag'])
-            
-            topo_arr[label['topology']-topo_min_val] += 1
-            mode_arr[label['mode']-mode_min_val] += 1
-            
-            these_enu .append(label['enu'])
-            these_q0  .append(label['q0'])
+            cc_hist       .Fill(int(label['cc']))            
+            nneutron_hist .Fill(label['nneutron'])
+            nproton_hist  .Fill(label['nproton'])
+            nantineut_hist.Fill(label['nantineut'])
+            nantiprot_hist.Fill(label['nantiprot'])
+            npipm_hist    .Fill(label['npipm'])
+            npi0_hist     .Fill(label['npi0'])
+            nkapm_hist    .Fill(label['nkapm'])    
+            nka0_hist     .Fill(label['nka0'])     
+            nem_hist      .Fill(label['nem'])      
+            nmuon_hist    .Fill(label['nmuon'])    
+            nstrange_hist .Fill(label['nstrange'])
+            ncharm_hist   .Fill(label['ncharm'])               
+            ndeuteron_hist.Fill(label['ndeuteron'])
+            ntritium_hist .Fill(label['ntritium'])
+            nalpha_hist   .Fill(label['nalpha'])
+            nhelium3_hist .Fill(label['nhelium3'])
+            nnuclfrag_hist.Fill(label['nnuclfrag'])
+            topo_hist     .Fill(label['topology'])
+            mode_hist     .Fill(label['mode'])
+            enu_hist      .Fill(label['enu'])
+            q0_hist       .Fill(label['q0'])
             
             ## Increment counter
             sum_images += 1
             
-        ## Now fill the histograms
-        this_E_arr,_ = np.histogram(these_E, bins=E_bin_edges)
-        E_arr += this_E_arr
+        ## Flush the histograms which get filled per hit
+        E_hist        .FlushBuffer()
+        for a in range(alpha_min, alpha_max+1): alpha_hist_list[a-alpha_min] .FlushBuffer()
 
-        this_LogE_arr,_ = np.histogram(these_logE, bins=LogE_bin_edges)
-        LogE_arr += this_LogE_arr
-        
-        this_maxE_arr,_ = np.histogram(these_maxE, bins=E_bin_edges)
-        maxE_arr += this_maxE_arr       
-
-        this_maxLogE_arr,_ = np.histogram(these_maxLogE, bins=LogE_bin_edges)
-        maxLogE_arr += this_maxLogE_arr
-        
-        this_SumE_arr,_ = np.histogram(these_sumE, bins=SumE_bin_edges)
-        SumE_arr += this_SumE_arr
-
-        this_SumLogE_arr,_ = np.histogram(these_sumLogE, bins=SumLogE_bin_edges)
-        SumLogE_arr += this_SumLogE_arr
-        
-        this_lin_N_arr,_ = np.histogram(these_N, bins=N_lin_bin_edges)
-        N_lin_arr += this_lin_N_arr
-
-        this_log_N_arr,_ = np.histogram(these_N, bins=N_log_bin_edges)
-        N_log_arr += this_log_N_arr
-
-        this_enu_arr,_ = np.histogram(these_enu, bins=enu_bin_edges)
-        enu_arr += this_enu_arr
-
-        this_q0_arr,_ = np.histogram(these_q0, bins=q0_bin_edges)
-        q0_arr += this_q0_arr        
-        
-        if max(these_N) > maxN:
-            maxN = max(these_N)
-        if max(these_sumE) > maxSumE:
-            maxSumE = max(these_sumE)
-        if max(these_sumLogE) > maxSumLogE:
-            maxSumLogE = max(these_sumLogE)
-            
         ## End of this file
         f.close()
         
     ## Draw the final histograms
-    plt.hist(N_lin_bin_edges[:-1], bins=N_lin_bin_edges, weights=N_lin_arr, log=True)
-    plt.xlabel('N. hits')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nhits_distribution_linx.png")
-    plt.close()
+    nhits_lin_hist .Draw(output_name_root+"nhits_distribution_linx.png", xtitle='N. hits', logy=True)
+    nhits_log_hist .Draw(output_name_root+"nhits_distribution_logx.png", xtitle='N. hits', logx=True, logy=True)
+    E_hist         .Draw(output_name_root+"E_distribution.png", xtitle=r'Raw E (MeV)', logx=True, logy=True)
+    SumE_hist      .Draw(output_name_root+"sumE_distribution.png", xtitle=r'$\sum$ raw E (MeV)', logy=True)  
+    maxE_hist      .Draw(output_name_root+"maxE_distribution.png", xtitle=r'Max. raw E (MeV)')
+    enu_hist       .Draw(output_name_root+"enu.png", xtitle=r'$E_{\nu}$ (GeV)')   
+    q0_hist        .Draw(output_name_root+"q0.png", xtitle=r'$q_{0}$ (GeV)')
 
-    plt.hist(N_log_bin_edges[:-1], bins=N_log_bin_edges, weights=N_log_arr, log=True)
-    plt.xlabel('N. hits')
-    plt.xscale('log')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nhits_distribution_logx.png")
-    plt.close()
+    for a in range(alpha_min, alpha_max+1):
+        alpha_hist_list[a-alpha_min] .Draw(output_name_root+"LogAlphaE"+str(a)+"_lin_distribution.png", xtitle=r'log$_{10}$(1 + '+str(a)+'E)/log$_{10}$(1 + '+str(a)+')', logy=False)
+        alpha_hist_list[a-alpha_min] .Draw(output_name_root+"LogAlphaE"+str(a)+"_log_distribution.png", xtitle=r'log$_{10}$(1 + '+str(a)+'E)/log$_{10}$(1 + '+str(a)+')', logy=True)       
     
-    plt.hist(E_bin_edges[:-1], bins=E_bin_edges, weights=E_arr, log=True)
-    plt.xlabel(r'Raw E (MeV)')
-    plt.xscale('log')
-    plt.ylabel('N. hits')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"E_distribution.png")
-    plt.close()
-
-    plt.hist(LogE_bin_edges[:-1], bins=LogE_bin_edges, weights=LogE_arr, log=True)
-    plt.xlabel(r'log$_{10}$(1 + E)')
-    plt.ylabel('N. hits')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"LogE_distribution.png")
-    plt.close()
-    
-    plt.hist(E_bin_edges[:-1], bins=E_bin_edges, weights=maxE_arr, log=False)
-    plt.xlabel(r'Max. raw E (MeV)')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"maxE_distribution.png")
-    plt.close()
-
-    plt.hist(LogE_bin_edges[:-1], bins=LogE_bin_edges, weights=maxLogE_arr, log=False)
-    plt.xlabel(r'Max. log$_{10}$(1 + E)')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"maxLogE_distribution.png")
-    plt.close()
-    
-    plt.hist(SumE_bin_edges[:-1], bins=SumE_bin_edges, weights=SumE_arr, log=True)
-    plt.xlabel(r'$\sum$ raw E (MeV)')
-    plt.xscale('linear')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"sumE_distribution.png")
-    plt.close()
-
-    plt.hist(SumLogE_bin_edges[:-1], bins=SumLogE_bin_edges, weights=SumLogE_arr, log=True)
-    plt.xlabel(r'$\sum$log$_{10}$(1 + E)')
-    plt.xscale('log')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"sumLogE_distribution.png")
-    plt.close()
-
     ## Sort out label histograms
-    plt.bar([0, 1], cc_arr, tick_label=['NC', 'CC'])
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"cc.png")
-    plt.close()
-
-    plt.bar(range(21), nneutron_arr)
-    plt.ylabel('N. events')
-    plt.xlabel('N. 2112')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nneutron.png")
-    plt.close()
-
-    plt.bar(range(21), nproton_arr)
-    plt.ylabel('N. events')
-    plt.xlabel('N. 2212')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nproton.png")
-    plt.close()    
+    cc_hist        .Draw(output_name_root+"cc.png", xlabels=['NC', 'CC'])
+    nneutron_hist  .Draw(output_name_root+"nneutron.png", xtitle='N. 2112')
+    nproton_hist   .Draw(output_name_root+"nproton.png", xtitle='N. 2212')
+    nantineut_hist .Draw(output_name_root+"nantineut.png", xtitle='N. -2112', logy=True)
+    nantiprot_hist .Draw(output_name_root+"nantiprot.png", xtitle='N. -2212', logy=True)
+    npipm_hist     .Draw(output_name_root+"npipm.png", xtitle=r'N. $\pi^{\pm}$', logy=True)
+    npi0_hist      .Draw(output_name_root+"npi0.png", xtitle=r'N. $\pi^{0}$', logy=True)
+    nkapm_hist     .Draw(output_name_root+"nkapm.png", xtitle=r'N. $K^{\pm}$', logy=True)
+    nka0_hist      .Draw(output_name_root+"nka0.png", xtitle=r'N. $K^{0}$', logy=True)    
+    nem_hist       .Draw(output_name_root+"nem.png", xtitle='N. EM', logy=True)
+    nmuon_hist     .Draw(output_name_root+"nmuon.png", xtitle=r'N. $\mu^{\pm}$', logy=True)
+    nstrange_hist  .Draw(output_name_root+"nstrange.png", xtitle='N. Strange (not kaon)', logy=True)
+    ncharm_hist    .Draw(output_name_root+"ncharm.png", xtitle='N. Charm', logy=True)
+    ndeuteron_hist .Draw(output_name_root+"ndeuteron.png", xtitle='N. deuteron', logy=True)
+    ntritium_hist  .Draw(output_name_root+"ntritium.png", xtitle='N. tritium', logy=True)
+    nalpha_hist    .Draw(output_name_root+"nalpha.png", xtitle='N. alpha', logy=True)
+    nhelium3_hist  .Draw(output_name_root+"nhelium3.png", xtitle=r'N. $^{3}$He', logy=True)
+    nnuclfrag_hist .Draw(output_name_root+"nnuclfrag.png", xtitle='N. nuclear fragments', logy=True)
+    topo_hist      .Draw(output_name_root+"topology.png")
+    topo_hist      .Draw(output_name_root+"topology_logy.png", logy=True)
+    mode_hist      .Draw(output_name_root+"mode.png")
+    mode_hist      .Draw(output_name_root+"mode_logy.png", logy=True)
     
-    plt.bar(range(6), nantineut_arr, log=True)
-    plt.ylabel('N. events')
-    plt.xlabel('N. -2112')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nantineut.png")
-    plt.close()
-    
-    plt.bar(range(6), nantiprot_arr, log=True)
-    plt.ylabel('N. events')
-    plt.xlabel('N. -2212')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nantiprot.png")
-    plt.close()
-    
-    plt.bar(range(6), npipm_arr, log=True)    
-    plt.ylabel('N. events')
-    plt.xlabel(r'N. $\pi^{\pm}$')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"npipm.png")
-    plt.close()
-    
-    plt.bar(range(6), npi0_arr, log=True)     
-    plt.ylabel('N. events')
-    plt.xlabel(r'N. $\pi^{0}$')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"npi0.png")
-    plt.close()
-    
-    plt.bar(range(6), nkapm_arr, log=True)    
-    plt.ylabel('N. events')
-    plt.xlabel(r'N. $K^{\pm}$')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nkapm.png")
-    plt.close()
-    
-    plt.bar(range(6), nka0_arr, log=True)     
-    plt.ylabel('N. events')
-    plt.xlabel(r'N. $K^{0}$')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nka0.png")
-    plt.close()
-    
-    plt.bar(range(6), nem_arr, log=True)      
-    plt.ylabel('N. events')
-    plt.xlabel('N. EM')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nem.png")
-    plt.close()
-    
-    plt.bar(range(6), nmuon_arr, log=True)    
-    plt.ylabel('N. events')
-    plt.xlabel(r'N. $\mu^{\pm}$')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nmuon.png")
-    plt.close()
-    
-    plt.bar(range(6), nstrange_arr, log=True) 
-    plt.ylabel('N. events')
-    plt.xlabel('N. Strange (not kaon)')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nstrange.png")
-    plt.close()
-    
-    plt.bar(range(6), ncharm_arr, log=True)   
-    plt.ylabel('N. events')
-    plt.xlabel('N. Charm')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"ncharm.png")
-    plt.close()
-
-    plt.bar(range(6), ndeuteron_arr, log=True)   
-    plt.ylabel('N. events')
-    plt.xlabel('N. deuteron')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"ndeuteron.png")
-    plt.close()    
-
-    plt.bar(range(6), ntritium_arr, log=True)   
-    plt.ylabel('N. events')
-    plt.xlabel('N. tritium')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"ntritium.png")
-    plt.close()
-
-    plt.bar(range(6), nalpha_arr, log=True)   
-    plt.ylabel('N. events')
-    plt.xlabel('N. alpha')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nalpha.png")
-    plt.close()
-
-    plt.bar(range(6), nhelium3_arr, log=True)   
-    plt.ylabel('N. events')
-    plt.xlabel(r'N. $^{3}$He')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nhelium3.png")
-    plt.close()
-
-    plt.bar(range(6), nnuclfrag_arr, log=True)   
-    plt.ylabel('N. events')
-    plt.xlabel('N. nuclear fragments')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"nnuclfrag.png")
-    plt.close()
-    
-    plt.hist(enu_bin_edges[:-1], bins=enu_bin_edges, weights=enu_arr, log=False)
-    plt.xlabel(r'$E_{\nu}$ (GeV)')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"enu.png")
-    plt.close()
-
-    plt.hist(q0_bin_edges[:-1], bins=q0_bin_edges, weights=q0_arr, log=False)
-    plt.xlabel(r'$q_{0}$ (GeV)')
-    plt.ylabel('N. events')
-    plt.tight_layout()
-    plt.savefig(output_name_root+"q0.png")
-    plt.close()
-
-    plt.bar([e.name for e in Topology], topo_arr, align='center', log=False)   
-    plt.ylabel('N. events')
-    plt.xticks(rotation=90)
-    plt.tight_layout()
-    plt.savefig(output_name_root+"topology.png")
-    plt.close()    
-    
-    plt.bar([e.name for e in Mode], mode_arr, align='center', log=False)   
-    plt.ylabel('N. events')
-    plt.xticks(rotation=90)
-    plt.tight_layout()
-    plt.savefig(output_name_root+"mode.png")
-    plt.close()
-
+    minN, maxN = nhits_lin_hist.GetMinMax()
+    minSumE, maxSumE = SumE_hist.GetMinMax()
+    minE, maxE = E_hist.GetMinMax()
     print("Total", total_images, "images")
     print("Maximum number of hits:", maxN)
-    print("Maximum sum of E:", maxSumE)
-    print("Maximum sum of log E:", maxSumLogE)
+    print("Sum of E:", minSumE, "--", maxSumE)
+    print("E:", minE, "--", maxE)    
     print("N. empty:", nEmpty)
     
     
