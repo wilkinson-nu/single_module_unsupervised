@@ -160,6 +160,14 @@ class RandomCentralStretch2D:
 
         return stretched_coords, feats
 
+class LogAlphaCharge:
+    def __init__(self, alpha):
+        self.alpha = alpha
+        
+    def __call__(self, coords, feats):
+        Z = np.log10(1.0 + self.alpha*np.maximum(feats, 0.0))/np.log10(1.0 + self.alpha)
+        return coords, Z
+    
 
 def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
 
@@ -181,6 +189,7 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
     	aug.RandomGridDistortion2D(50, 4, 2, 10, p=aug_prob),
     	aug.RandomScaleCharge(0.05, p=aug_prob),
         aug.RandomJitterCharge(0.05, p=aug_prob),
-    	aug.BilinearSplatMod(0.2, 0.3, p=aug_prob),            
+    	aug.BilinearSplatMod(0.2, 0.3, p=aug_prob),
+        LogAlphaCharge(5),
         RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
     ])
