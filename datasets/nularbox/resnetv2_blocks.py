@@ -27,10 +27,10 @@ class PreActBasicBlock(nn.Module):
         self.relu = ME.MinkowskiReLU(inplace=True)
 
         ## Change downsample to a 2x2 patch avg pooling layer and 1x1 convolution
-        if stride != 1 or in_planes != self.expansion*planes:
+        if stride != 1 or inplanes != self.expansion*planes:
             self.shortcut = nn.Sequential(
                 ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=dimension),
-                ME.MinkowskiConvolution(in_planes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
+                ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             )
 
     def forward(self, x):
@@ -79,10 +79,10 @@ class PreActBottleneck(nn.Module):
         self.relu = ME.MinkowskiReLU(inplace=True)
 
         ## Change downsample to a 2x2 patch avg pooling layer and 1x1 convolution
-        if stride != 1 or in_planes != self.expansion*planes:
+        if stride != 1 or inplanes != self.expansion*planes:
             self.shortcut = nn.Sequential(
                 ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=dimension),
-                ME.MinkowskiConvolution(in_planes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
+                ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             )
             
     def forward(self, x):

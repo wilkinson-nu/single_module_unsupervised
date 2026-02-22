@@ -1,8 +1,8 @@
 from torch import nn
 import torch
 import MinkowskiEngine as ME
-from resnetv2_blocks import PreActBasicBlock, PreActBottleneck
-
+from datasets.nularbox.resnetv2_blocks import PreActBasicBlock, PreActBottleneck
+from collections import OrderedDict
 
 ## This is taken from the MinkowskiEngine implementation, but modified for v2 blocks
 ## Some inspiration + error checking against https://github.com/kuangliu/pytorch-cifar/blob/master/models/preact_resnet.py
@@ -91,7 +91,7 @@ class ResNetBase(nn.Module):
             self.inplanes = planes * block.expansion
         return nn.Sequential(*layers)
     
-    def forward(self, x: ME.SparseTensor):
+    def forward(self, x, batch_size=None):
         x = self.stem(x)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -102,9 +102,9 @@ class ResNetBase(nn.Module):
 
     ## These are relics based on how things used to work, but... okay...
     def get_nchan_instance(self):
-        return self.BLOCK.expansion * self.planes[-1]
+        return self.BLOCK.expansion * self.PLANES[-1]
     def get_nchan_cluster(self):
-        return self.BLOCK.expansion * self.planes[-1]    
+        return self.BLOCK.expansion * self.PLANES[-1]    
 
     
 class ResNet18(ResNetBase):
