@@ -18,12 +18,14 @@ class PreActBasicBlock(nn.Module):
         super(PreActBasicBlock, self).__init__()
         assert dimension > 0
 
+        self.norm1 = ME.MinkowskiBatchNorm(inplanes, momentum=bn_momentum)        
         self.conv1 = ME.MinkowskiConvolution(
             inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, dimension=dimension)
-        self.norm1 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
+
+        self.norm2 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
         self.conv2 = ME.MinkowskiConvolution(
             planes, planes, kernel_size=3, stride=1, dilation=dilation, dimension=dimension)
-        self.norm2 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
+
         self.relu = ME.MinkowskiReLU(inplace=True)
 
         ## Change downsample to a 2x2 patch avg pooling layer and 1x1 convolution
@@ -63,18 +65,17 @@ class PreActBottleneck(nn.Module):
         super(PreActBottleneck, self).__init__()
         assert dimension > 0
 
+        self.norm1 = ME.MinkowskiBatchNorm(inplanes, momentum=bn_momentum)
         self.conv1 = ME.MinkowskiConvolution(
             inplanes, planes, kernel_size=1, dimension=dimension)
-        self.norm1 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
 
+        self.norm2 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
         self.conv2 = ME.MinkowskiConvolution(
             planes, planes, kernel_size=3, stride=stride, dilation=dilation, dimension=dimension)
-        self.norm2 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
 
+        self.norm3 = ME.MinkowskiBatchNorm(planes, momentum=bn_momentum)
         self.conv3 = ME.MinkowskiConvolution(
             planes, planes * self.expansion, kernel_size=1, dimension=dimension)
-        self.norm3 = ME.MinkowskiBatchNorm(
-            planes * self.expansion, momentum=bn_momentum)
 
         self.relu = ME.MinkowskiReLU(inplace=True)
 
