@@ -31,7 +31,11 @@ class ClusteringLossMerged(nn.Module):
         
         negatives_mask = (~torch.eye(class_num*2, class_num*2, dtype=bool, device=c_cat.device)).float()
         representations = torch.cat([c_i, c_j], dim=0)
-        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+
+        c = nn.functional.normalize(representations, dim=1)
+        similarity_matrix = torch.mm(c, c.t())
+
+        # similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
 
         sim_ij = torch.diag(similarity_matrix, class_num)
         sim_ji = torch.diag(similarity_matrix, -class_num)
@@ -78,10 +82,10 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         negatives_mask = (~torch.eye(class_num*2, class_num*2, dtype=bool, device=c_cat.device)).float()
         representations = torch.cat([c_i_all, c_j_all], dim=0)
 
-        #z = nn.functional.normalize(representations, dim=1)  # (2*B_total, D)
-        #similarity_matrix = torch.mm(z, z.t())
+        c = nn.functional.normalize(representations, dim=1)
+        similarity_matrix = torch.mm(c, c.t())
 
-        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+        # similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
 
         sim_ij = torch.diag(similarity_matrix, class_num)
         sim_ji = torch.diag(similarity_matrix, -class_num)
@@ -93,7 +97,7 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
         loss = torch.sum(loss_partial) / (2*class_num)
 
-        return loss, ne_loss*self.entropy_weight, p_i.max().detach()
+        return loss, ne_loss*self.entropy_weight
 
 
 
