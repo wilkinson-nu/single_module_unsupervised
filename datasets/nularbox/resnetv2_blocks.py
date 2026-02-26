@@ -36,7 +36,6 @@ class PreActBasicBlock(nn.Module):
             )
 
     def forward(self, x):
-        residual = x
 
         out = self.norm1(x)
         out = self.relu(out)
@@ -44,7 +43,7 @@ class PreActBasicBlock(nn.Module):
         ## Apply the downsampling shortcut after the normalization and relu in this version
         residual = self.shortcut(out) if hasattr(self, 'shortcut') else x
         
-        out = self.conv1(x)
+        out = self.conv1(out)
         out = self.norm2(out)
         out = self.relu(out)
         out = self.conv2(out)
@@ -82,7 +81,7 @@ class PreActBottleneck(nn.Module):
         ## Change downsample to a 2x2 patch avg pooling layer and 1x1 convolution
         if stride != 1 or inplanes != self.expansion*planes:
             self.shortcut = nn.Sequential(
-                ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=dimension),
+                ME.MinkowskiAvgPooling(kernel_size=2, stride=stride, dimension=dimension),
                 ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             )
             
@@ -94,7 +93,7 @@ class PreActBottleneck(nn.Module):
         ## Apply the downsampling shortcut after the normalization and relu in this version
         residual = self.shortcut(out) if hasattr(self, 'shortcut') else x
         
-        out = self.conv1(x)
+        out = self.conv1(out)
         out = self.norm2(out)
         out = self.relu(out)
         out = self.conv2(out)
