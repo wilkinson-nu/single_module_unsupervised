@@ -18,7 +18,10 @@ class NTXentMerged(nn.Module):
 
         negatives_mask = (~torch.eye(batch_size*2, batch_size*2, dtype=bool, device=emb_cat.device)).float()
         representations = torch.cat([z_i, z_j], dim=0)
-        similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
+
+        z = nn.functional.normalize(representations, dim=1)
+        similarity_matrix = torch.mm(z, z.t())
+        # similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
 
         sim_ij = torch.diag(similarity_matrix, batch_size)
         sim_ji = torch.diag(similarity_matrix, -batch_size)
@@ -28,7 +31,7 @@ class NTXentMerged(nn.Module):
         denominator = negatives_mask * torch.exp(similarity_matrix / self.temperature)
 
         loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
-        loss = torch.sum(loss_partial) / (2*batch_size)
+        loss = torch.mean(loss_partial)
 
         return loss
 
@@ -67,7 +70,7 @@ class NTXentMergedMultiGPU(nn.Module):
         denominator = negatives_mask * torch.exp(sim_matrix / self.temperature)
 
         loss_partial = -torch.log(nominator / torch.sum(denominator, dim=1))
-        loss = torch.sum(loss_partial) / (total_batch)        
+        loss = torch.mean(loss_partial)
         
         return loss
 
