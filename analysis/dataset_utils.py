@@ -32,7 +32,7 @@ def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
     return dataset, loader
 
 
-def image_loop(encoder, heads, loader, device, detailed_info=False):
+def image_loop(encoder, heads, loader, device, detailed_info=False, use_train=False):
 
     ## Record some timing info
     start = time.time()
@@ -48,11 +48,19 @@ def image_loop(encoder, heads, loader, device, detailed_info=False):
     x_range = []
     filenames = []
     event_ids = []
-    
-    encoder.eval()
+
+    ## Temporarily force into train mode to explore possible BN issues
+
+    if use_train:
+        encoder.train()
+    else:
+        encoder.eval()
     encoder.to(device)
     for h in heads.values():
-        h.eval()
+        if use_train:
+            h.train()
+        else:
+            h.eval()
         h.to(device)
     
     ## Loop over the images (discard any extra info returned by loader)
