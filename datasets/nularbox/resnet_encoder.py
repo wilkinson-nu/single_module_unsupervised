@@ -13,18 +13,33 @@ class ResNetBase(nn.Module):
     PLANES = (64, 128, 256, 512)
 
     ## In channels = 1 and outchannels are set by the network
-    def __init__(self, stem_pool=False, stem_norm=False, D=2):
+    def __init__(self, stem_pool=False, stem_norm=False, stem_deep=False, D=2):
         nn.Module.__init__(self)
         self.D = D
         assert self.BLOCK is not None
 
         self.stem_pool = stem_pool
         self.stem_norm = stem_norm
+        self.stem_deep = stem_deep
         self.network_initialization(D)
         self.weight_initialization()
 
+
+    def make_shallow_stem(self):
+        stem = OrderedDict()
+        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.INIT_DIM, kernel_size=3, stride=2, dimension=self.D)
+        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(self.INIT_DIM)
+        stem['relu1'] = ME.MinkowskiReLU(inplace=True)
+
+        ## Option of having a pooling layer or an extra downsampling convolution
+        if self.stem_pool:
+            stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=self.D)
+        else:
+            stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.INIT_DIM, out_channels=self.INIT_DIM, kernel_size=3, stride=2, dimension=self.D)
+
+        return nn.Sequential(stem)
         
-    def make_stem(self):
+    def make_deep_stem(self):
         
         stem = OrderedDict()
         ch = (self.INIT_DIM//2, self.INIT_DIM)
@@ -32,13 +47,13 @@ class ResNetBase(nn.Module):
         
         ## As is common for ResNet implementations, use 3 3x3 convoutions instead of an initial 7x7 one
         stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=ch[0], kernel_size=3, stride=2, dimension=self.D)
-        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(ch[0]),
+        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(ch[0])
         stem['relu1'] = ME.MinkowskiReLU(inplace=True)
         stem['conv2'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[0], kernel_size=3, stride=1, dimension=self.D)
-        if self.stem_norm: stem['norm2'] = ME.MinkowskiInstanceNorm(ch[0]),
+        if self.stem_norm: stem['norm2'] = ME.MinkowskiInstanceNorm(ch[0])
         stem['relu2'] = ME.MinkowskiReLU(inplace=True)
         stem['conv3'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[0], kernel_size=3, stride=1, dimension=self.D)
-        if self.stem_norm: stem['norm3'] = ME.MinkowskiInstanceNorm(ch[0]),
+        if self.stem_norm: stem['norm3'] = ME.MinkowskiInstanceNorm(ch[0])
         stem['relu3'] = ME.MinkowskiReLU(inplace=True)
         
         ## Option of having a pooling layer or an extra downsampling convolution
@@ -53,7 +68,11 @@ class ResNetBase(nn.Module):
     def network_initialization(self, D):
 
         self.inplanes = self.INIT_DIM
-        self.stem = self.make_stem()
+
+        if self.stem_deep:
+            self.stem = self.make_deep_stem()
+        else:
+            self.stem = self.make_shallow_stem()
 
         ## In the original ME implementation, layer 1 has stride 2, which is nonstandard
         self.layer1 = self._make_layer(
@@ -98,7 +117,7 @@ class ResNetBase(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
         x = self.glob_pool(x)
-        return x.F
+        return x.F, x.F
 
     ## These are relics based on how things used to work, but... okay...
     def get_nchan_instance(self):
@@ -136,6 +155,7 @@ def get_encoder(args):
 
     stem_pool = False
     stem_norm = False
+    stem_deep = True
     
     ## Only one architecture for now
     if args.enc_arch == "ResNet18":
@@ -150,5 +170,6 @@ def get_encoder(args):
         enc = ResNet152
 
     encoder = enc(stem_pool=stem_pool,
-                  stem_norm=stem_norm)
+                  stem_norm=stem_norm,
+                  stem_deep=stem_deep)
     return encoder
