@@ -12,7 +12,7 @@ class ClusteringHeadTwoLayer(nn.Module):
         self.middle_layer = max(nchan//2, nclusters*2)
         self.softmax_temp = softmax_temp
         
-        self.proj = nn.Sequential(
+        self.clust = nn.Sequential(
             nn.Linear(nchan, self.middle_layer),
             hidden_act_fn(),
             nn.Linear(self.middle_layer, nclusters),
@@ -27,7 +27,7 @@ class ClusteringHeadTwoLayer(nn.Module):
                 nn.init.zeros_(m.bias)
                 
     def forward(self, x):
-        x = self.proj(x)
+        x = self.clust(x)
         x = self.softmax(x/self.softmax_temp)
         return x
 
@@ -46,7 +46,7 @@ class ClusteringHeadTwoLayerBN(nn.Module):
 
         self.softmax_temp = softmax_temp
 
-        self.proj = nn.Sequential(
+        self.clust = nn.Sequential(
             nn.Linear(nchan, self.hidden, bias=False),
             nn.BatchNorm1d(self.hidden),
             hidden_act_fn(),
@@ -65,7 +65,7 @@ class ClusteringHeadTwoLayerBN(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        x = self.proj(x)
+        x = self.clust(x)
         x = self.softmax(x/self.softmax_temp)
         return x
     
