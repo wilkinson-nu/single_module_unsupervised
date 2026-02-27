@@ -294,7 +294,7 @@ def plot_metric_data_vs_alt(data_xvar, alt_xvar, sim_labels, nbinsx=None, x_min=
     plt.close()
 
     
-def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, save_name=None, label_enum=Label):
+def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, save_name=None, label_enum=Label, max_val=None):
 
     ## Deal with binning myself for some reason...
     bins, is_int = parse_binning(data_xvar, nbinsx, x_min, x_max)
@@ -368,6 +368,8 @@ def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=
         bbox_to_anchor=(0.5, 1.),
         frameon=False
     )
+
+    if max_val: ax.set_ylim(top=max_val) 
     plt.tight_layout()  # prevents clipping
     # plt.grid(True)
     if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
