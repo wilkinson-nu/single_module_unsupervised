@@ -2,6 +2,7 @@ from torch import nn
 import torch
 import MinkowskiEngine as ME
 from datasets.nularbox.resnetv2_blocks import PreActBasicBlock, PreActBottleneck
+from datasets.nularbox.resnetv1_blocks import BasicBlock, Bottleneck
 from collections import OrderedDict
 
 ## This is taken from the MinkowskiEngine implementation, but modified for v2 blocks
@@ -13,7 +14,7 @@ class ResNetBase(nn.Module):
     PLANES = (64, 128, 256, 512)
 
     ## In channels = 1 and outchannels are set by the network
-    def __init__(self, stem_pool=False, stem_norm=False, stem_deep=False, D=2):
+    def __init__(self, stem_pool=False, stem_norm=False, stem_deep=False, pool="avg", D=2):
         nn.Module.__init__(self)
         self.D = D
         assert self.BLOCK is not None
@@ -23,7 +24,14 @@ class ResNetBase(nn.Module):
         self.stem_deep = stem_deep
         self.network_initialization(D)
         self.weight_initialization()
+        self.pool = pool
 
+        if self.pool == "max":
+            self.global_pool = ME.MinkowskiGlobalMaxPooling()
+        elif self.pool == "avg":
+            self.global_pool = ME.MinkowskiGlobalAvgPooling()
+        else:
+            raise ValueError("A pooling layer is required")
 
     def make_shallow_stem(self):
         stem = OrderedDict()
@@ -33,7 +41,7 @@ class ResNetBase(nn.Module):
 
         ## Option of having a pooling layer or an extra downsampling convolution
         if self.stem_pool:
-            stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=self.D)
+            stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
         else:
             stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.INIT_DIM, out_channels=self.INIT_DIM, kernel_size=3, stride=2, dimension=self.D)
 
@@ -58,7 +66,7 @@ class ResNetBase(nn.Module):
         
         ## Option of having a pooling layer or an extra downsampling convolution
         if self.stem_pool:
-            stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=2, stride=2, dimension=self.D)
+            stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
         else:
             stem['conv4'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[1], kernel_size=3, stride=2, dimension=self.D)
 
@@ -90,7 +98,6 @@ class ResNetBase(nn.Module):
 
         ## Note that I removed the conv5 from the original ME implementation, there was no need for such an aggressive downsampling for this purpose
         ## So removed for simplicity        
-        self.glob_pool = ME.MinkowskiGlobalMaxPooling()
 
     def weight_initialization(self):
         for m in self.modules():
@@ -116,7 +123,9 @@ class ResNetBase(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.glob_pool(x)
+        x = self.global_pool(x)
+
+        ## Return 2 copies for compatibility with older, slightly silly encoder
         return x.F, x.F
 
     ## These are relics based on how things used to work, but... okay...
@@ -126,50 +135,42 @@ class ResNetBase(nn.Module):
         return self.BLOCK.expansion * self.PLANES[-1]    
 
     
-class ResNet18(ResNetBase):
+class ResNet18v2(ResNetBase):
     BLOCK = PreActBasicBlock
     LAYERS = (2, 2, 2, 2)
 
-
-class ResNet34(ResNetBase):
+class ResNet34v2(ResNetBase):
     BLOCK = PreActBasicBlock
     LAYERS = (3, 4, 6, 3)
 
-
-class ResNet50(ResNetBase):
+class ResNet50v2(ResNetBase):
     BLOCK = PreActBottleneck
     LAYERS = (3, 4, 6, 3)
 
-
-class ResNet101(ResNetBase):
+class ResNet101v2(ResNetBase):
     BLOCK = PreActBottleneck
     LAYERS = (3, 4, 23, 3)
 
-
-class ResNet152(ResNetBase):
+class ResNet152v2(ResNetBase):
     BLOCK = PreActBottleneck
     LAYERS = (3, 8, 36, 3)
     
+class ResNet18v1(ResNetBase):
+    BLOCK = BasicBlock
+    LAYERS = (2, 2, 2, 2)
 
-def get_encoder(args):
+class ResNet34v1(ResNetBase):
+    BLOCK = BasicBlock
+    LAYERS = (3, 4, 6, 3)
 
-    stem_pool = False
-    stem_norm = False
-    stem_deep = True
-    
-    ## Only one architecture for now
-    if args.enc_arch == "ResNet18":
-        enc = ResNet18
-    elif args.enc_arch == "ResNet34":
-        enc = ResNet34
-    elif args.enc_arch == "ResNet50":
-        enc = ResNet50
-    elif args.enc_arch == "ResNet101":
-        enc = ResNet101
-    elif args.enc_arch == "ResNet152":
-        enc = ResNet152
+class ResNet50v1(ResNetBase):
+    BLOCK = Bottleneck
+    LAYERS = (3, 4, 6, 3)
 
-    encoder = enc(stem_pool=stem_pool,
-                  stem_norm=stem_norm,
-                  stem_deep=stem_deep)
-    return encoder
+class ResNet101v1(ResNetBase):
+    BLOCK = Bottleneck
+    LAYERS = (3, 4, 23, 3)
+
+class ResNet152v1(ResNetBase):
+    BLOCK = Bottleneck
+    LAYERS = (3, 8, 36, 3)
