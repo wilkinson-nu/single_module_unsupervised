@@ -14,7 +14,7 @@ class BasicBlock(nn.Module):
                  dilation=1,
                  bn_momentum=0.1,
                  dimension=2):
-        super(PreActBasicBlock, self).__init__()
+        super(BasicBlock, self).__init__()
         assert dimension > 0
 
         self.conv1 = ME.MinkowskiConvolution(
@@ -35,7 +35,7 @@ class BasicBlock(nn.Module):
             )
 
     def forward(self, x):
-        residual = self.shortcut(out) if hasattr(self, 'shortcut') else x
+        residual = self.shortcut(x) if hasattr(self, 'shortcut') else x
         out = self.conv1(x)
         out = self.norm1(out)
         out = self.relu(out)
@@ -56,7 +56,7 @@ class Bottleneck(nn.Module):
                  dilation=1,
                  bn_momentum=0.1,
                  dimension=2):
-        super(PreActBottleneck, self).__init__()
+        super(Bottleneck, self).__init__()
         assert dimension > 0
 
         self.conv1 = ME.MinkowskiConvolution(
@@ -81,7 +81,7 @@ class Bottleneck(nn.Module):
             )
             
     def forward(self, x):
-        residual = self.shortcut(out) if hasattr(self, 'shortcut') else x
+        residual = self.shortcut(x) if hasattr(self, 'shortcut') else x
         out = self.conv1(x)
         out = self.norm1(out)
         out = self.relu(out)

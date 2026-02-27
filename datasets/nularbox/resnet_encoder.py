@@ -28,10 +28,8 @@ class ResNetBase(nn.Module):
 
         if self.pool == "max":
             self.global_pool = ME.MinkowskiGlobalMaxPooling()
-        elif self.pool == "avg":
-            self.global_pool = ME.MinkowskiGlobalAvgPooling()
         else:
-            raise ValueError("A pooling layer is required")
+            self.global_pool = ME.MinkowskiGlobalAvgPooling()
 
     def make_shallow_stem(self):
         stem = OrderedDict()

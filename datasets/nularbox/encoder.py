@@ -21,7 +21,7 @@ def get_encoder(args):
         elif args.enc_arch in ["ResNet50", "ResNet50v2"]:
             enc = resnet.ResNet50v2
         elif args.enc_arch in ["ResNet101", "ResNet101v2"]:
-	    enc = resnet.ResNet101v2
+            enc = resnet.ResNet101v2
         elif args.enc_arch in ["ResNet152", "ResNet152v2"]:
             enc = resnet.ResNet152v2
         elif args.enc_arch == "ResNet18v1":
