@@ -461,6 +461,9 @@ if __name__ == '__main__':
     parser.add_argument('--enc_arch_first_kernel', type=int, default=3, nargs='?')
     parser.add_argument('--enc_arch_sep_heads', type=int, choices=[0,1], default=0, nargs='?')
     parser.add_argument('--enc_arch_final_linear', type=int, default=256, nargs='?')
+
+    ## Testing for resnet
+    parser.add_argument('--enc_skip_pool', type=int, choices=[0,1], default=0, nargs='?')
     
     parser.add_argument('--clust_arch', type=str, default="none", nargs='?')
     parser.add_argument('--proj_arch', type=str, default="logits", nargs='?')
