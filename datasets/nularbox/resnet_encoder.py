@@ -14,14 +14,18 @@ class ResNetBase(nn.Module):
     PLANES = (64, 128, 256, 512)
 
     ## In channels = 1 and outchannels are set by the network
-    def __init__(self, stem_pool=False, stem_norm=False, stem_deep=False, pool="avg", D=2):
+    def __init__(self, stem_pool=False, stem_norm=False, stem_deep=False, skip_pool=False, layer1_norm=True, pool="avg", D=2):
         nn.Module.__init__(self)
         self.D = D
         assert self.BLOCK is not None
 
+        print("Setting up resnet with block", self.BLOCK.__name__, "stem_pool", stem_pool, "stem_norm", stem_norm, "stem_deep", stem_deep, "skip_pool", skip_pool, "layer1_norm", layer1_norm, "pool", pool)
+        
         self.stem_pool = stem_pool
+        self.skip_pool = skip_pool
         self.stem_norm = stem_norm
         self.stem_deep = stem_deep
+        self.layer1_norm = layer1_norm
         self.network_initialization(D)
         self.weight_initialization()
         self.pool = pool
@@ -42,6 +46,10 @@ class ResNetBase(nn.Module):
             stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
         else:
             stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.INIT_DIM, out_channels=self.INIT_DIM, kernel_size=3, stride=2, dimension=self.D)
+
+            ## Allow for v1 style
+            if self.BLOCK in (Bottleneck, BasicBlock):
+                stem['relu2'] = ME.MinkowskiReLU(inplace=True)
 
         return nn.Sequential(stem)
         
@@ -67,6 +75,10 @@ class ResNetBase(nn.Module):
             stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
         else:
             stem['conv4'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[1], kernel_size=3, stride=2, dimension=self.D)
+
+            ## Allow for v1 blocks later
+            if self.BLOCK in (Bottleneck, BasicBlock):
+                stem['relu4'] =	ME.MinkowskiReLU(inplace=True)
 
         return nn.Sequential(stem)
 
@@ -108,10 +120,16 @@ class ResNetBase(nn.Module):
 
 
     def _make_layer(self, block, planes, num_blocks, stride, dilation=1):
+
+        ## A bit of a hack to remove BN from the first layer
+        apply_bn = True
+        if stride == 1: apply_bn = False
+
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
         for stride in strides:
-            layers.append(block(self.inplanes, planes, stride=stride, dilation=dilation, dimension=self.D))
+            layers.append(block(self.inplanes, planes, stride=stride, dilation=dilation,
+                                skip_pool=self.skip_pool, apply_norm=apply_bn, dimension=self.D))
             self.inplanes = planes * block.expansion
         return nn.Sequential(*layers)
     
