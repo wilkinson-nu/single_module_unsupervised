@@ -7,10 +7,12 @@ from core.models.utils import get_act_from_string_ME
 
 def get_encoder(args):
 
-    stem_norm = getattr(args, "stem_norm", False)
-    stem_pool = getattr(args, "stem_pool", False)
-    stem_deep = getattr(args, "stem_deep", True)
+    stem_norm = bool(getattr(args, "enc_stem_norm", 0))
+    stem_pool = bool(getattr(args, "enc_stem_pool", 0))
+    stem_deep = bool(getattr(args, "enc_stem_deep", 0))
+    res_pool = bool(getattr(args, "enc_res_pool", 0))
     final_pool = getattr(args, "enc_arch_pool", "avg")
+    layer1_norm = bool(getattr(args, "enc_layer1_norm", 1))
     
     ## Check for ResNet
     if "ResNet" in args.enc_arch:    
@@ -38,7 +40,9 @@ def get_encoder(args):
         encoder = enc(stem_pool=stem_pool,
 	              stem_norm=stem_norm,
                       stem_deep=stem_deep,
-                      pool=final_pool)
+                      res_pool=res_pool,
+                      pool=final_pool,
+                      layer1_norm=layer1_norm)
         
         return encoder
 
