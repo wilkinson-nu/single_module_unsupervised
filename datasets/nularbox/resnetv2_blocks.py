@@ -15,7 +15,7 @@ class PreActBasicBlock(nn.Module):
                  stride=1,
                  dilation=1,
                  bn_momentum=0.1,
-                 skip_pool=False,
+                 res_pool=False,
                  apply_norm=True,
                  dimension=2):
         super(PreActBasicBlock, self).__init__()
@@ -40,13 +40,13 @@ class PreActBasicBlock(nn.Module):
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
-            skip = OrderedDict()
-            if skip_pool and stride != 1:
-                skip['skip_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
+            res = OrderedDict()
+            if res_pool and stride != 1:
+                res['res_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            self.shortcut = nn.Sequential(skip)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
+            self.shortcut = nn.Sequential(res)
 
     def forward(self, x):
         out = x
@@ -73,7 +73,7 @@ class PreActBottleneck(nn.Module):
                  stride=1,
                  dilation=1,
                  bn_momentum=0.1,
-                 skip_pool=False,
+                 res_pool=False,
                  apply_norm=True,
                  dimension=2):
         super(PreActBottleneck, self).__init__()
@@ -105,13 +105,13 @@ class PreActBottleneck(nn.Module):
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
-            skip = OrderedDict()
-            if skip_pool and stride != 1:
-                skip['skip_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
+            res = OrderedDict()
+            if res_pool and stride != 1:
+                res['res_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            self.shortcut = nn.Sequential(skip)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
+            self.shortcut = nn.Sequential(res)
             
     def forward(self, x):
 

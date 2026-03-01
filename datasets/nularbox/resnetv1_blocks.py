@@ -14,7 +14,7 @@ class BasicBlock(nn.Module):
                  stride=1,
                  dilation=1,
                  bn_momentum=0.1,
-                 skip_pool=False,
+                 res_pool=False,
                  apply_norm=True,
                  dimension=2):
         super(BasicBlock, self).__init__()
@@ -41,14 +41,14 @@ class BasicBlock(nn.Module):
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
-            skip = OrderedDict()
-            if skip_pool and stride != 1:
-                skip['skip_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
+            res = OrderedDict()
+            if res_pool and stride != 1:
+                res['res_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            if self.apply_norm: skip['skip_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
-            self.shortcut = nn.Sequential(skip)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
+            if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
+            self.shortcut = nn.Sequential(res)
 
 
     def forward(self, x):
@@ -72,7 +72,7 @@ class Bottleneck(nn.Module):
                  stride=1,
                  dilation=1,
                  bn_momentum=0.1,
-                 skip_pool=False,
+                 res_pool=False,
                  apply_norm=True,
                  dimension=2):
         super(Bottleneck, self).__init__()
@@ -108,14 +108,14 @@ class Bottleneck(nn.Module):
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
-            skip = OrderedDict()
-            if skip_pool and stride != 1:
-                skip['skip_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
+            res = OrderedDict()
+            if res_pool and stride != 1:
+                res['res_pool'] = ME.MinkowskiAvgPooling(kernel_size=stride, stride=stride, dimension=dimension)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
-                skip['skip_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            if self.apply_norm: skip['skip_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
-            self.shortcut = nn.Sequential(skip)
+                res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
+            if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
+            self.shortcut = nn.Sequential(res)
 
                 
     def forward(self, x):
