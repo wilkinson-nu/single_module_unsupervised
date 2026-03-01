@@ -24,7 +24,7 @@ from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMul
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
-from core.analysis.metrics import argmax_consistency
+from core.analysis.metrics import argmax_consistency, uniformity, alignment
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -165,10 +165,10 @@ def log_grad_norm(module, tag, writer, iteration):
         if p.grad is None:
             continue
         grad_l2 = p.grad.data.norm(2).item() ** 2
-        writer.add_scalar(f'monitor/{tag}/{name}_grad_l2', grad_l2, iteration)
+        writer.add_scalar(f'grads/{tag}/{name}_grad_l2', grad_l2, iteration)
         total += grad_l2
 
-    writer.add_scalar(f'monitor/{tag}/sqrt_sum_grad_l2', total**0.5, iteration)
+    writer.add_scalar(f'grads/{tag}/sqrt_sum_grad_l2', total**0.5, iteration)
     return
 
 @torch.no_grad()
@@ -178,10 +178,10 @@ def log_grad_rms(module, tag, writer, iteration):
         if p.grad is None:
             continue
         grad_rms = p.grad.pow(2).mean().sqrt().item()
-        writer.add_scalar(f'monitor/{tag}/{name}_grad_rms', grad_rms, iteration)
+        writer.add_scalar(f'grads/{tag}/{name}_grad_rms', grad_rms, iteration)
         vals.append(grad_rms)
 
-    writer.add_scalar(f'monitor/{tag}/mean_grad_rms', sum(vals)/len(vals), iteration)
+    writer.add_scalar(f'grads/{tag}/mean_grad_rms', sum(vals)/len(vals), iteration)
     return
 
 @torch.no_grad()
@@ -195,11 +195,11 @@ def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
 
         this_g2 = p.grad.norm(2).item() ** 2
         this_w2 = p.data.norm(2).item() ** 2
-        writer.add_scalar(f'monitor/{tag}/{name}_grad_over_wgt', (this_g2**0.5)/(this_w2**0.5 + eps), iteration)
+        writer.add_scalar(f'grads/{tag}/{name}_grad_over_wgt', (this_g2**0.5)/(this_w2**0.5 + eps), iteration)
         g2 += this_g2
         w2 += this_w2
 
-    writer.add_scalar(f'monitor/{tag}/sum_grad_over_wgt', (g2**0.5)/(w2**0.5 + eps), iteration)
+    writer.add_scalar(f'grads/{tag}/sum_grad_over_wgt', (g2**0.5)/(w2**0.5 + eps), iteration)
     return
     
 ## Wrapped training function
@@ -292,10 +292,16 @@ def run_training(rank, world_size, args):
         tot_loss_tensor = torch.tensor(0.0, device=device)  
         losses_tensor = {name: torch.tensor(0.0, device=device) for name in heads.keys()}       
         entropy_tensor = torch.tensor(0.0, device=device)
-
+        
         ## For monitoring
         total_acc_tensor = torch.tensor(0.0, device=device)
-        
+        total_enc_align_tensor = torch.tensor(0.0, device=device)
+        total_enc_unif_tensor = torch.tensor(0.0, device=device)
+        total_proj_align_tensor = torch.tensor(0.0, device=device)
+        total_proj_unif_tensor = torch.tensor(0.0, device=device)
+        total_clust_align_tensor = torch.tensor(0.0, device=device)
+        total_clust_unif_tensor = torch.tensor(0.0, device=device)
+
         nbatches   = len(train_loader)
         
         # Set train mode for the encoder and any heads
@@ -321,6 +327,12 @@ def run_training(rank, world_size, args):
             proj_loss = loss_fns["proj"](proj_batch)*instance_scale
             tot_loss += proj_loss
             losses_tensor["proj"] += proj_loss.detach()
+
+            ## Add to metrics
+            total_enc_align_tensor += alignment(encoded_instance_batch)
+            total_enc_unif_tensor += uniformity(encoded_instance_batch)
+            total_proj_align_tensor += alignment(proj_batch)
+            total_proj_unif_tensor += uniformity(proj_batch)
             
             ## Optionally deal with clustering loss
             if "clust" in heads:
@@ -329,7 +341,9 @@ def run_training(rank, world_size, args):
                 tot_loss += clust_loss + clust_entropy
                 losses_tensor["clust"] += clust_loss.detach()
                 entropy_tensor += clust_entropy.detach()
-                total_acc_tensor += argmax_consistency(clust_batch).detach()
+                total_acc_tensor += argmax_consistency(clust_batch)
+                total_clust_align_tensor += alignment(clust_batch)
+                total_clust_unif_tensor += uniformity(clust_batch)
 
             # Backward pass
             optimizer.zero_grad()
@@ -349,7 +363,13 @@ def run_training(rank, world_size, args):
         for name in heads.keys(): dist.all_reduce(losses_tensor[name], op=dist.ReduceOp.SUM)
         dist.all_reduce(entropy_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_acc_tensor, op=dist.ReduceOp.SUM)
-
+        dist.all_reduce(total_enc_align_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_enc_unif_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_proj_align_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_proj_unif_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_clust_align_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_clust_unif_tensor, op=dist.ReduceOp.SUM)        
+        
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size)
         av_losses = {
             name: losses_tensor[name].item() / (nbatches * world_size)
@@ -357,7 +377,13 @@ def run_training(rank, world_size, args):
         }
         av_entropy = entropy_tensor.item() / (nbatches * world_size)
         av_acc = total_acc_tensor.item() / (nbatches * world_size)
-        
+        av_enc_unif = total_enc_unif_tensor.item() / (nbatches * world_size)
+        av_enc_align = total_enc_align_tensor.item() / (nbatches * world_size)
+        av_proj_unif = total_proj_unif_tensor.item() / (nbatches * world_size)
+        av_proj_align = total_proj_align_tensor.item() / (nbatches * world_size)
+        av_clust_unif = total_clust_unif_tensor.item() / (nbatches * world_size)
+        av_clust_align = total_clust_align_tensor.item() / (nbatches * world_size)
+
         ## See if we have an LR scheduler...
         if scheduler:
             if args.scheduler == "plateau": scheduler.step(av_tot_loss)
@@ -370,6 +396,12 @@ def run_training(rank, world_size, args):
                 writer.add_scalar('loss/total', av_tot_loss, iteration)              
                 writer.add_scalar('loss/proj', av_losses["proj"], iteration)
 
+                ## Add metrics for debugging/training diagnostics
+                writer.add_scalar('monitor/proj_alignment', av_proj_align, iteration)
+                writer.add_scalar('monitor/proj_uniformity', av_proj_unif, iteration)
+                writer.add_scalar('monitor/enc_alignment', av_enc_align, iteration)
+                writer.add_scalar('monitor/enc_uniformity', av_enc_unif, iteration)
+                
                 ## Extensive logging for gradient debugging
                 log_grad_norm(encoder.module, "encoder", writer, iteration)
                 log_grad_rms(encoder.module, "encoder", writer, iteration)
@@ -384,6 +416,8 @@ def run_training(rank, world_size, args):
                     writer.add_scalar('loss/entropy', av_entropy, iteration)
                     writer.add_scalar('loss/clust_only', av_losses["clust"], iteration)
                     writer.add_scalar('monitor/acc', av_acc, iteration)
+                    writer.add_scalar('monitor/clust_alignment', av_clust_align, iteration)
+                    writer.add_scalar('monitor/clust_uniformity', av_clust_unif, iteration)
 
                     ## Extensive logging for gradient debugging
                     log_grad_norm(heads["clust"].module, "clust", writer, iteration)
