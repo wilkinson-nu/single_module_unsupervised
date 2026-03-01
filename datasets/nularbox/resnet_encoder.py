@@ -11,18 +11,25 @@ class ResNetBase(nn.Module):
     BLOCK = None
     LAYERS = ()
     INIT_DIM = 64
-    PLANES = (64, 128, 256, 512)
+    PLANES = (64, 128, 256, 256)
 
     ## In channels = 1 and outchannels are set by the network
-    def __init__(self, stem_pool=False, stem_norm=False, stem_deep=False, skip_pool=False, layer1_norm=True, pool="avg", D=2):
+    def __init__(self,
+                 stem_pool=False,
+                 stem_norm=False,
+                 stem_deep=False,
+                 res_pool=False,
+                 layer1_norm=True,
+                 pool="avg",
+                 D=2):
         nn.Module.__init__(self)
         self.D = D
         assert self.BLOCK is not None
 
-        print("Setting up resnet with block", self.BLOCK.__name__, "stem_pool", stem_pool, "stem_norm", stem_norm, "stem_deep", stem_deep, "skip_pool", skip_pool, "layer1_norm", layer1_norm, "pool", pool)
+        print("Setting up resnet with block", self.BLOCK.__name__, "stem_pool", stem_pool, "stem_norm", stem_norm, "stem_deep", stem_deep, "res_pool", res_pool, "layer1_norm", layer1_norm, "pool", pool)
         
         self.stem_pool = stem_pool
-        self.skip_pool = skip_pool
+        self.res_pool = res_pool
         self.stem_norm = stem_norm
         self.stem_deep = stem_deep
         self.layer1_norm = layer1_norm
@@ -129,7 +136,7 @@ class ResNetBase(nn.Module):
         layers = []
         for stride in strides:
             layers.append(block(self.inplanes, planes, stride=stride, dilation=dilation,
-                                skip_pool=self.skip_pool, apply_norm=apply_bn, dimension=self.D))
+                                res_pool=self.res_pool, apply_norm=apply_bn, dimension=self.D))
             self.inplanes = planes * block.expansion
         return nn.Sequential(*layers)
     
@@ -153,40 +160,65 @@ class ResNetBase(nn.Module):
     
 class ResNet18v2(ResNetBase):
     BLOCK = PreActBasicBlock
+    INIT_DIM=64
     LAYERS = (2, 2, 2, 2)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
 class ResNet34v2(ResNetBase):
     BLOCK = PreActBasicBlock
+    INIT_DIM=64
     LAYERS = (3, 4, 6, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
 class ResNet50v2(ResNetBase):
     BLOCK = PreActBottleneck
+    INIT_DIM=64
     LAYERS = (3, 4, 6, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
+## Sized for a 40GB GPU node
 class ResNet101v2(ResNetBase):
     BLOCK = PreActBottleneck
+    INIT_DIM=40
     LAYERS = (3, 4, 23, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
+## Needs 80GB GPU node
 class ResNet152v2(ResNetBase):
     BLOCK = PreActBottleneck
+    INIT_DIM=48
     LAYERS = (3, 8, 36, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
     
 class ResNet18v1(ResNetBase):
     BLOCK = BasicBlock
+    INIT_DIM=64
     LAYERS = (2, 2, 2, 2)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
 class ResNet34v1(ResNetBase):
     BLOCK = BasicBlock
+    INIT_DIM=64
     LAYERS = (3, 4, 6, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
 class ResNet50v1(ResNetBase):
     BLOCK = Bottleneck
+    INIT_DIM=64
     LAYERS = (3, 4, 6, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
+## Sized for a 40GB GPU node
 class ResNet101v1(ResNetBase):
     BLOCK = Bottleneck
+    INIT_DIM=40
     LAYERS = (3, 4, 23, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
 
+## Needs 80GB GPU node
 class ResNet152v1(ResNetBase):
     BLOCK = Bottleneck
+    INIT_DIM=48
     LAYERS = (3, 8, 36, 3)
+    PLANES=(INIT_DIM, INIT_DIM*2, INIT_DIM*4, INIT_DIM*8)
+    
