@@ -26,8 +26,6 @@ class ResNetBase(nn.Module):
         self.D = D
         assert self.BLOCK is not None
 
-        print("Setting up resnet with block", self.BLOCK.__name__, "stem_pool", stem_pool, "stem_norm", stem_norm, "stem_deep", stem_deep, "res_pool", res_pool, "layer1_norm", layer1_norm, "pool", pool)
-        
         self.stem_pool = stem_pool
         self.res_pool = res_pool
         self.stem_norm = stem_norm
