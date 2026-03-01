@@ -1,59 +1,91 @@
 from torch import nn
 from core.models.utils import get_act_from_string
+from collections import OrderedDict
 
 class ClusteringHeadTwoLayer(nn.Module):
     def __init__(self, 
                  nchan : int, 
                  nclusters : int,
-                 softmax_temp : float,
-                 hidden_act_fn : object = nn.ReLU):
+                 nhidden : int = -1,
+                 softmax_temp : float = 1.0,
+                 hidden_act_fn : object = nn.ReLU,
+                 apply_bn : bool = False):
         super().__init__()
 
-        self.middle_layer = max(nchan//2, nclusters*2)
+        self.nchan = nchan
+        self.nclusters = nclusters
+        self.nhidden = nhidden if nhidden != -1 else nchan//4
         self.softmax_temp = softmax_temp
+        self.apply_bn = apply_bn
+        self.hidden_act_fn = hidden_act_fn
         
-        self.clust = nn.Sequential(
-            nn.Linear(nchan, self.middle_layer),
-            hidden_act_fn(),
-            nn.Linear(self.middle_layer, nclusters),
-        )
+        self.clust = self.make_network()
         self.initialize_weights()
         self.softmax = nn.Softmax(dim=1)
+
+    def make_network(self):
+        clust = OrderedDict()
+        clust['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=True)
+        if self.apply_bn: proj['norm1'] = nn.BatchNorm1d(self.nhidden)
+        clust['act1'] = self.hidden_act_fn()
+        clust['lin2'] = nn.Linear(self.nhidden, self.nclusters, bias=False)
+        return nn.Sequential(clust)
         
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+                if m.bias is not None: nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
                 
-    def forward(self, x):
-        x = self.clust(x)
-        x = self.softmax(x/self.softmax_temp)
-        return x
+    def forward(self, x, return_hidden=False):
+
+        ## Separate execution so hidden layers can be returned
+        h1_logits = self.clust.lin1(x)
+        h1 = h1_logits
+
+        if self.apply_bn: h1 = self.clust.norm1(h1)
+        h1 = self.clust.act1(h1)
+        h2 = self.clust.lin2(h1)
+        out = self.softmax(h2/self.softmax_temp)
+
+        if return_hidden: return [h1_logits, out]
+        return out
 
     
-class ClusteringHeadTwoLayerBN(nn.Module):
+class ClusteringHeadThreeLayer(nn.Module):
     def __init__(self,
                  nchan : int,
                  nclusters : int,
-                 nhidden: int = -1,
+                 nhidden : int = -1,
                  softmax_temp : float = 1.0,
-                 hidden_act_fn : object = nn.ReLU):
+                 hidden_act_fn : object = nn.ReLU,
+	         apply_bn : bool = False):
         super().__init__()
 
-        ## Slightly dodgy to retain previous default behaviour
-        self.hidden = nhidden if nhidden != -1 else nchan//2
-
+        self.nchan = nchan
+        self.nclusters = nclusters
+        self.nhidden = nhidden if nhidden != -1 else nchan//4
         self.softmax_temp = softmax_temp
-
-        self.clust = nn.Sequential(
-            nn.Linear(nchan, self.hidden, bias=False),
-            nn.BatchNorm1d(self.hidden),
-            hidden_act_fn(),
-            nn.Linear(self.hidden, nclusters, bias=True),
-        )
+        self.apply_bn = apply_bn
+        self.hidden_act_fn = hidden_act_fn
+        
+        self.clust = self.make_network()
         self.initialize_weights()
         self.softmax = nn.Softmax(dim=1)
+
+    def make_network(self):
+        clust = OrderedDict()
+        clust['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=True)
+        if self.apply_bn: proj['norm1'] = nn.BatchNorm1d(self.nhidden)
+        clust['act1'] = self.hidden_act_fn()
+        clust['lin2'] = nn.Linear(self.nhidden, self.nhidden, bias=True)
+        if self.apply_bn: proj['norm2'] = nn.BatchNorm1d(self.nhidden)
+        clust['act2'] = self.hidden_act_fn()
+        clust['lin3'] = nn.Linear(self.nhidden, self.nclusters, bias=False)
+        return nn.Sequential(clust)
 
     def initialize_weights(self):
         for m in self.modules():
@@ -64,12 +96,26 @@ class ClusteringHeadTwoLayerBN(nn.Module):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x):
-        x = self.clust(x)
-        x = self.softmax(x/self.softmax_temp)
-        return x
-    
+    def forward(self, x, return_hidden=False):
 
+	## Separate execution so hidden layers can be returned
+        h1_logits = self.clust.lin1(x)
+        h1 = h1_logits
+
+        if self.apply_bn: h1 = self.clust.norm1(h1)
+        h1 = self.clust.act1(h1)
+        h2_logits = self.clust.lin2(h1)
+        h2 = h2_logits
+
+        if self.apply_bn: h2 = self.clust.norm1(h2)
+        h2 = self.clust.act2(h2)
+        h3_logits = self.clust.lin3(h2)
+        out = self.softmax(h3_logits/self.softmax_temp)
+
+        if return_hidden: return [h1_logits, h2_logits, out]
+        return out
+
+    
     
 class ClusteringHeadOneLayer(nn.Module):
     def __init__(self,
@@ -87,9 +133,9 @@ class ClusteringHeadOneLayer(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
-                nn.init.zeros_(m.bias)
+                if m.bias is not None: nn.init.zeros_(m.bias)
 
-    def forward(self, x):
+    def forward(self, x, return_hidden=False):
         x = self.linear(x)
         x = self.softmax(x/self.softmax_temp)
         return x
@@ -102,7 +148,12 @@ def get_clusthead(nchan, args):
     elif args.clust_arch == "one":
         clust_head = ClusteringHeadOneLayer(nchan, args.nclusters, args.softmax_temp)
     elif args.clust_arch == "twobn":
-        clust_head = ClusteringHeadTwoLayerBN(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn)
-    else:
-        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, args.softmax_temp)
+        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn, apply_bn=True)
+    elif args.clust_arch == "two":
+        clust_head = ClusteringHeadTwoLayer(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn, apply_bn=False)
+    elif args.clust_arch == "threebn":
+        clust_head = ClusteringHeadThreeLayer(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn, apply_bn=True)
+    elif args.clust_arch == "three":
+        clust_head = ClusteringHeadThreeLayer(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn, apply_bn=False)
+
     return clust_head
