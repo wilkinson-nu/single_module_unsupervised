@@ -605,7 +605,45 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False,
     print("Davies-Bouldin =", metrics["davies_bouldin"])
 
     return labels, metrics, kmeans.centroids
-    
+
+def compute_tsne(input_vect,
+                 perp=30,
+                 exag=6,
+                 lr=2000.0,
+                 n_iter=2000,
+                 norm=True,
+                 metric='cosine',
+                 method='barnes_hut',
+                 init='pca',
+                 random_state=None,
+                 verbose=0):
+
+    print("Running scikit-learn t-SNE with:",
+          "perplexity =", perp,
+          "early exaggeration =", exag)
+
+    if norm:
+        norms = np.linalg.norm(input_vect, axis=1, keepdims=True)
+        input_vect = input_vect / (norms + 1e-10)
+
+    tsne = TSNE(
+        n_components=2,
+        perplexity=perp,
+        early_exaggeration=exag,
+        learning_rate=lr,
+        n_iter=n_iter,
+        init=init,
+        metric=metric,
+        method=method,
+        random_state=random_state,
+        verbose=verbose
+    )
+
+    tsne_results = tsne.fit_transform(input_vect)
+
+    print("Found:", tsne_results.shape[0], "points")
+    return tsne_results
+
 def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
                  lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None, tsne_results=None):
     
@@ -673,8 +711,87 @@ def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
     plt.close()
 
     return tsne_results
-    
-    
+
+
+def plot_tsne(tsne_results,
+              zvect=None,
+              alpha_vect=None,
+              ztitle="Cluster ID",
+              ax=None,
+              add_colorbar=True,
+              save_name=None):
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    unique_labels = np.unique(zvect)
+    n_clusters = len(unique_labels)
+
+    all_colors = (
+        plt.cm.tab20.colors +
+        plt.cm.tab20b.colors +
+        plt.cm.tab20c.colors +
+        plt.cm.tab10.colors
+    )
+
+    if n_clusters > 70:
+        n_extra = n_clusters - 70
+        all_colors += tuple(
+            plt.cm.nipy_spectral(i / n_extra)
+            for i in range(n_extra)
+        )
+
+    cmap = mcolors.ListedColormap(all_colors[:n_clusters])
+    norm_cmap = mcolors.BoundaryNorm(
+        boundaries=np.arange(n_clusters + 1),
+        ncolors=n_clusters
+    )
+
+    if alpha_vect is not None:
+        alpha_vect = alpha_vect**3
+        rgb_colors = np.array(
+            [cmap(i % n_clusters)[:3] for i in zvect]
+        )
+        rgb_colors = np.concatenate(
+            [rgb_colors, alpha_vect[:, None]],
+            axis=1
+        )
+    else:
+        rgb_colors = [cmap(i % n_clusters) for i in zvect]
+
+    npts = tsne_results.shape[0]
+    s = 0.1
+    if npts <= 25000: s = 0.5
+    if npts <= 10000: s = 2
+
+    ax.scatter(tsne_results[:, 0],
+               tsne_results[:, 1],
+               s=s,
+               c=rgb_colors)
+
+    ax.set_xlabel("t-SNE #0")
+    ax.set_ylabel("t-SNE #1")
+    ax.set_title(ztitle)
+    ax.grid(False)
+
+    if add_colorbar:
+        cbar = fig.colorbar(
+            plt.cm.ScalarMappable(norm=norm_cmap, cmap=cmap),
+            ax=ax
+        )
+        cbar.set_label(ztitle)
+
+    if save_name:
+        plt.savefig(save_name,
+                    dpi=300,
+                    bbox_inches='tight')
+
+    return ax
+
+
+
 ## Define a function for running t-SNE using the cuml version
 def run_tsne_cuml(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6, lr=2000.0, tsne_results=None, ztitle="Cluster ID", save_name=None, norm=True):
 
