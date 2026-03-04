@@ -4,6 +4,8 @@ import torch
 import MinkowskiEngine as ME
 import numpy as np
 import time
+from collections import defaultdict
+
 
 def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
 
@@ -32,35 +34,27 @@ def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
     return dataset, loader
 
 
-def image_loop(encoder, heads, loader, device, detailed_info=False, use_train=False):
+def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidden=False):
 
     ## Record some timing info
     start = time.time()
-    
+
+    representations = defaultdict(list)     
     latent = []    ## This is the instance clustering space
     enc_latent = []    ## This is after the encoder (as passed to the clustering head) 
+    hidden_latent = []
     cluster = []
     nhits = []
     maxQ = []
     sumQ = []
     labels = []
-    y_range = []
-    x_range = []
     filenames = []
     event_ids = []
 
-    ## Temporarily force into train mode to explore possible BN issues
-
-    if use_train:
-        encoder.train()
-    else:
-        encoder.eval()
+    encoder.eval()
     encoder.to(device)
     for h in heads.values():
-        if use_train:
-            h.train()
-        else:
-            h.eval()
+        h.eval()
         h.to(device)
     
     ## Loop over the images (discard any extra info returned by loader)
@@ -83,13 +77,22 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, use_train=Fa
         ## Now do the forward passes            
         with torch.no_grad(): 
             encoded_instance_batch, encoded_cluster_batch = encoder(orig_batch, batch_size)
-            if "clust" in heads: clust_batch = heads["clust"](encoded_cluster_batch)
-            proj_batch = heads["proj"](encoded_instance_batch)
+            if "clust" in heads: clust_batch = heads["clust"](encoded_cluster_batch, return_hidden=return_hidden)
+            proj_batch = heads["proj"](encoded_instance_batch, return_hidden=return_hidden)
 
-        ## Move to the CPU
-        if "clust" in heads: cluster.append(clust_batch.detach().cpu())
-        latent.append(proj_batch.detach().cpu())
-        enc_latent.append(encoded_cluster_batch.detach().cpu())
+        ## Normalize the output (this is a bit fragile, but backwards compatible)
+        if not return_hidden:
+            proj_batch = {"proj_final": proj_batch}
+            if "clust" in heads: clust_batch = {"clust_final": clust_batch}
+
+        ## Get the representations all in one place
+        for k, v in proj_batch.items():
+            representations[k].append(v.detach().cpu())
+        if "clust" in heads:
+            for k, v in clust_batch.items():
+                representations[k].append(v.detach().cpu())
+        representations["encoder"].append(encoded_cluster_batch.detach().cpu())
+
         labels.extend(batch_labels)
         
         ## If desired, add a load more info, but this slows things down a lot...
@@ -98,20 +101,10 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, use_train=Fa
             sumQ_batch  = torch.stack([f.sum() for f in dec_feats])
             maxQ_batch  = torch.stack([f.max() for f in dec_feats])
         
-            y_max_batch = torch.stack([c[:,0].max() for c in dec_coords])
-            y_min_batch = torch.stack([c[:,0].min() for c in dec_coords])
-            x_max_batch = torch.stack([c[:,1].max() for c in dec_coords])
-            x_min_batch = torch.stack([c[:,1].min() for c in dec_coords])
-
-            y_range_batch = y_max_batch - y_min_batch
-            x_range_batch = x_max_batch - x_min_batch
-
             # Move everything to the CPU
             nhits.append(nhits_batch.cpu())
             sumQ.append(sumQ_batch.cpu())
             maxQ.append(maxQ_batch.cpu())
-            y_range.append(y_range_batch.cpu())
-            x_range.append(x_range_batch.cpu())
 
         if batch_filenames is not None:
             filenames.extend(batch_filenames)
@@ -119,35 +112,26 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, use_train=Fa
             event_ids.extend(batch_eventids)
 
     ## Turn into numpy arrays 
-    latent = torch.cat(latent).numpy()
-    enc_latent = torch.cat(enc_latent).numpy()
+    representations = {k: torch.cat(v).numpy() for k, v in representations.items()}
 
     ## Return a dictionary to make my life easier
     out = {
         "labels": np.array(labels),
-        "latent": latent,
-        "enc_latent": enc_latent,
     }
+
+    ## Merge in the encoded features
+    out .update(representations)
     
     if "clust" in heads:
-        cluster = torch.cat(cluster).numpy()
-
-        ## Derive some other useful quantities
-        sorted_idx  = np.argsort(cluster, axis=1)[:, ::-1]
-        top3_idx = sorted_idx[:, :3]
-        clust_top3 = np.take_along_axis(cluster, top3_idx, axis=1)
-
+        cluster = out["clust_final"]
         out["clust"] = cluster
         out["clust_index"] = np.argmax(cluster, axis=1)
-        out["clust_top3"] = clust_top3
         out["clust_max"] = np.max(cluster, axis=1)
     
     if detailed_info is True:
         out["nhits"] = torch.cat(nhits).numpy()
         out["sumQ"] = torch.cat(sumQ).numpy()
         out["maxQ"] = torch.cat(maxQ).numpy()
-        out["yrange"] = torch.cat(y_range).numpy()
-        out["xrange"] = torch.cat(x_range).numpy()
     
     ## Add the filename and event id if applicable
     if filenames: out["filename"] = filenames
@@ -155,6 +139,7 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, use_train=Fa
     
     print("Time to process events with image_loop:", time.time() - start)
     return out
+
 
 ## Function to reorder the order of clusters in the processed data
 def reorder_clusters(data_processed, sim_processed):
