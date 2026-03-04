@@ -1,5 +1,4 @@
 import torch
-from sklearn.manifold import TSNE
 import MinkowskiEngine as ME
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,10 +6,6 @@ import matplotlib.colors as mcolors
 from matplotlib import cm
 from core.analysis.image_utils import make_dense, make_dense_from_tensor
 from datasets.fsd.truth_labels import Label
-from cuml.manifold import TSNE as cuML_TSNE
-import cupy as cp
-from cuml.preprocessing import StandardScaler as cuMLScaler
-from cuml.manifold import UMAP as cuML_UMAP
 from matplotlib.ticker import MaxNLocator
 import faiss
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
@@ -71,42 +66,6 @@ def parse_binning(x, nbins=None, x_min=None, x_max=None):
         if nbins is None: return 50, False
         else: return np.linspace(x_min, x_max, nbins+1), False
 
-# Make a histogram broken down into simulation and data, for arbitrary x variables
-def plot_metric_pass_fail(xvar, mask, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", save_name=None):
-   
-    ## Deal with binning myself for some reason...
-    bins, is_int = parse_binning(xvar, nbinsx, x_min, x_max)
-        
-    xvar_pass = xvar[mask]
-    xvar_fail = xvar[~mask]
-
-    plt.hist([xvar_pass, xvar_fail], bins=bins,
-             stacked=True,
-             histtype='stepfilled',
-             align='mid',
-             label=['Pass', 'Fail'],
-             color=['lightcoral', 'mediumseagreen'])
-
-    ## More fun with integers
-    if is_int:
-        ax = plt.gca()
-        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-        #ax.grid(False)
-
-    plt.xlabel(xtitle)
-    plt.ylabel(ytitle)
-    plt.legend(
-        ncol=2,
-        fontsize="medium",
-        loc="lower right",
-        bbox_to_anchor=(0.5, 1.),
-        frameon=False
-    )
-    plt.tight_layout()
-    # plt.grid(True)
-    if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
-    plt.show()
-    plt.close()
 
 def plot_metric_by_confidence(xvar, confidence, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, save_name=None):
 
@@ -294,7 +253,9 @@ def plot_metric_data_vs_alt(data_xvar, alt_xvar, sim_labels, nbinsx=None, x_min=
     plt.close()
 
     
-def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=None, x_max=None, xtitle="xvar", ytitle="N. images", normalize=False, save_name=None, label_enum=Label, max_val=None):
+def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None,
+                            x_min=None, x_max=None, xtitle="xvar", ytitle="N. images",
+                            normalize=True, save_name=None, label_enum=Label, logy=False):
 
     ## Deal with binning myself for some reason...
     bins, is_int = parse_binning(data_xvar, nbinsx, x_min, x_max)
@@ -369,8 +330,8 @@ def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None, x_min=
         frameon=False
     )
 
-    if max_val: ax.set_ylim(top=max_val) 
     plt.tight_layout()  # prevents clipping
+    if logy: plt.yscale("log")
     # plt.grid(True)
     if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
     plt.show()
@@ -478,7 +439,7 @@ def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_pro
     plt.close()
 
 
-def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, cluster_probs=None, save_name=None): 
+def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, cluster_probs=None, save_name=None, image_size=(768, 256)): 
 
     ## Sort colours
     cmap = cm.turbo.copy()
@@ -505,7 +466,7 @@ def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, clust
         orig_bfeats  = torch.from_numpy(np.concatenate([numpy_feats], 0)).float()
         orig = ME.SparseTensor(orig_bfeats, orig_bcoords)
             
-        inputs  = make_dense_from_tensor(orig, 0, 768, 256)
+        inputs  = make_dense_from_tensor(orig, 0, image_size[0], image_size[1])
         inputs  = inputs .cpu().squeeze().numpy()
 
         nonzero_vals = inputs[inputs > 0]
@@ -605,308 +566,3 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False,
     print("Davies-Bouldin =", metrics["davies_bouldin"])
 
     return labels, metrics, kmeans.centroids
-
-def compute_tsne(input_vect,
-                 perp=30,
-                 exag=6,
-                 lr=2000.0,
-                 n_iter=2000,
-                 norm=True,
-                 metric='cosine',
-                 method='barnes_hut',
-                 init='pca',
-                 random_state=None,
-                 verbose=0):
-
-    print("Running scikit-learn t-SNE with:",
-          "perplexity =", perp,
-          "early exaggeration =", exag)
-
-    if norm:
-        norms = np.linalg.norm(input_vect, axis=1, keepdims=True)
-        input_vect = input_vect / (norms + 1e-10)
-
-    tsne = TSNE(
-        n_components=2,
-        perplexity=perp,
-        early_exaggeration=exag,
-        learning_rate=lr,
-        init=init,
-        metric=metric,
-        method=method,
-        random_state=random_state,
-        verbose=verbose
-    )
-
-    tsne_results = tsne.fit_transform(input_vect)
-
-    print("Found:", tsne_results.shape[0], "points")
-    return tsne_results
-
-def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
-                 lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None, tsne_results=None):
-    
-    print("Running scikit-learn t-SNE with: perplexity =", perp, "early exaggeration =", exag)
-
-    # L2 normalize vectors if desired (for cosine similarity)
-    if norm:
-        norms = np.linalg.norm(input_vect, axis=1, keepdims=True)
-        input_vect = input_vect / (norms + 1e-10)
-
-    # Create the TSNE object
-    if tsne_results is None:
-        tsne = TSNE(n_components=2,
-                    perplexity=perp,
-                    # n_iter=n_iter,
-                    early_exaggeration=exag,
-                    learning_rate=lr,
-                    init='pca',
-                    metric='cosine',
-                    method='barnes_hut',
-                    verbose=0)
-    
-        tsne_results = tsne.fit_transform(input_vect)
-
-    # Colors   
-    unique_labels = np.unique(zvect)
-    n_clusters = len(unique_labels)
-    # all_colors = [plt.cm.nipy_spectral(i / n_clusters) for i in range(n_clusters)]
-    all_colors = (
-        plt.cm.tab20.colors +
-        plt.cm.tab20b.colors +
-        plt.cm.tab20c.colors +
-        plt.cm.tab10.colors
-    )
-    if n_clusters > 70:
-        n_extra = n_clusters - 70
-        all_colors += tuple(plt.cm.nipy_spectral(i / n_extra) for i in range(n_extra))
-        
-    cmap = mcolors.ListedColormap(all_colors[:n_clusters])
-    norm_cmap = mcolors.BoundaryNorm(boundaries=np.arange(n_clusters + 1), ncolors=n_clusters)
-
-    # Make alphas more distinct
-    if alpha_vect is not None:
-        alpha_vect = alpha_vect**3
-        rgb_colors = np.array([cmap(i % n_clusters)[:3] for i in zvect])
-        rgb_colors = np.concatenate([rgb_colors, alpha_vect[:, None]], axis=1)
-    else:
-        rgb_colors = [cmap(i % n_clusters) for i in zvect]
-
-    # Plot
-    print("Found:", input_vect.shape[0], "points")
-    s=0.1
-    if input_vect.shape[0]<=25000: s=0.5
-    if input_vect.shape[0]<=10000: s=2
-    
-    fig, ax = plt.subplots()
-    ax.scatter(tsne_results[:, 0], tsne_results[:, 1], s=s, c=rgb_colors)
-    ax.grid(False)
-    cbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm_cmap, cmap=cmap), ax=ax)
-    cbar.set_label(ztitle)
-    plt.xlabel('t-SNE #0')
-    plt.ylabel('t-SNE #1')
-    if save_name: plt.savefig(save_name, dpi=300, bbox_inches='tight')
-    plt.show()
-    plt.close()
-
-    return tsne_results
-
-
-def plot_tsne(tsne_results,
-              zvect=None,
-              alpha_vect=None,
-              ztitle="Cluster ID",
-              ax=None,
-              add_colorbar=True,
-              save_name=None):
-
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.figure
-
-    unique_labels = np.unique(zvect)
-    n_clusters = len(unique_labels)
-
-    all_colors = (
-        plt.cm.tab20.colors +
-        plt.cm.tab20b.colors +
-        plt.cm.tab20c.colors +
-        plt.cm.tab10.colors
-    )
-
-    if n_clusters > 70:
-        n_extra = n_clusters - 70
-        all_colors += tuple(
-            plt.cm.nipy_spectral(i / n_extra)
-            for i in range(n_extra)
-        )
-
-    cmap = mcolors.ListedColormap(all_colors[:n_clusters])
-    norm_cmap = mcolors.BoundaryNorm(
-        boundaries=np.arange(n_clusters + 1),
-        ncolors=n_clusters
-    )
-
-    if alpha_vect is not None:
-        alpha_vect = alpha_vect**3
-        rgb_colors = np.array(
-            [cmap(i % n_clusters)[:3] for i in zvect]
-        )
-        rgb_colors = np.concatenate(
-            [rgb_colors, alpha_vect[:, None]],
-            axis=1
-        )
-    else:
-        rgb_colors = [cmap(i % n_clusters) for i in zvect]
-
-    npts = tsne_results.shape[0]
-    s = 0.1
-    if npts <= 25000: s = 0.5
-    if npts <= 10000: s = 2
-
-    ax.scatter(tsne_results[:, 0],
-               tsne_results[:, 1],
-               s=s,
-               c=rgb_colors)
-
-    ax.set_xlabel("t-SNE #0")
-    ax.set_ylabel("t-SNE #1")
-    ax.set_title(ztitle)
-    ax.grid(False)
-
-    if add_colorbar:
-        cbar = fig.colorbar(
-            plt.cm.ScalarMappable(norm=norm_cmap, cmap=cmap),
-            ax=ax
-        )
-        cbar.set_label(ztitle)
-
-    if save_name:
-        plt.savefig(save_name,
-                    dpi=300,
-                    bbox_inches='tight')
-
-    return ax
-
-
-
-## Define a function for running t-SNE using the cuml version
-def run_tsne_cuml(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6, lr=2000.0, tsne_results=None, ztitle="Cluster ID", save_name=None, norm=True):
-
-    print("Running cuML t-SNE with: perplexity =", perp, "early exaggeration =", exag)
-    input_vect = cp.asarray(input_vect, dtype=cp.float32)
-
-    if norm:
-        norms = cp.linalg.norm(input_vect, axis=1, keepdims=True)
-        input_vect = input_vect / (norms + 1e-10)
-
-    n_neighbors = 2*perp
-    if n_neighbors > 1024: n_neighbors = 1024
-    
-    ## I haven't played with most of cuml's t-SNE parameters
-    ## tsne = cuML_TSNE(n_components=2, perplexity=perp, n_iter=3000, \
-    ##                  early_exaggeration=exag, learning_rate=lr, exaggeration_iter=250, \
-    ##                  learning_rate_method=None, square_distances=False, init='random', late_exaggeration=1, \
-    ##                  metric='cosine', method='barnes_hut', verbose=True, n_neighbors=n_neighbors)
-
-    tsne = cuML_TSNE(n_components=2, perplexity=perp, n_iter=5000, \
-                     early_exaggeration=exag, learning_rate=lr, \
-                     learning_rate_method=None, n_neighbors=n_neighbors, \
-                     metric='cosine', method='barnes_hut', verbose=False)
-    
-    ## Back to basics
-    ## tsne = cuML_TSNE(n_components=2, perplexity=perp, n_iter=5000, \
-    ##                  early_exaggeration=exag, learning_rate=lr, method='barnes_hut',\
-    ##                  metric='cosine', square_distances=False, verbose=True)
-    
-    if tsne_results is None:
-        tsne_results = tsne.fit_transform(input_vect)
-        scaler = cuMLScaler()
-        tsne_results = scaler.fit_transform(tsne_results)  # tsne_results still on GPU
-        tsne_results = cp.asnumpy(tsne_results)
-        
-    unique_labels = np.unique(zvect)
-    n_clusters = len(unique_labels)
-
-    # Use a qualitative colormap with enough colors
-    all_colors = (
-        plt.cm.tab20.colors +
-        plt.cm.tab20b.colors +
-        plt.cm.tab20c.colors +
-        plt.cm.tab10.colors
-    )
-
-    cmap = mcolors.ListedColormap(all_colors[:n_clusters])
-    norm = mcolors.BoundaryNorm(boundaries=np.arange(n_clusters + 1), ncolors=n_clusters)
-
-    ## Make alphas more distinct:
-    alpha_vect = alpha_vect**3
-    rgb_colors = np.array([cmap(i % n_clusters)[:3] for i in zvect])
-    rgb_colors = np.concatenate([rgb_colors, alpha_vect[:, None]], axis=1)
-
-    ## Assemble the figure
-    fig, ax = plt.subplots()
-    ax.scatter(tsne_results[:, 0], tsne_results[:, 1], s=0.02, c=rgb_colors)
-    cbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax)
-    cbar.set_label(ztitle)
-    plt.xlabel('t-SNE #0')
-    plt.ylabel('t-SNE #1')
-    if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
-    plt.show()
-    plt.close()
-
-    return tsne_results
-
-
-def run_umap_cuml(input_vect=None, zvect=None, n_neighbors=100, min_distance=0.1, n_epochs=2000, alpha_vect=0.5, ztitle="Cluster ID", save_name=None, norm=True):
-
-    input_vect = cp.asarray(input_vect, dtype=cp.float32)
-
-    if norm:
-        norms = cp.linalg.norm(input_vect, axis=1, keepdims=True)
-        input_vect = input_vect / (norms + 1e-10)
-    
-    fit = cuML_UMAP(
-        negative_sample_rate=10,
-        n_neighbors=n_neighbors, 
-        min_dist=min_distance, 
-        metric='cosine', 
-        #build_algo='nn_descent',
-        n_epochs=n_epochs,
-        init='random',
-        random_state=42, 
-        verbose=True
-    )
-    umap_results = fit.fit_transform(input_vect)    
-    umap_results = cp.asnumpy(umap_results)
-
-    x_low, x_high = np.percentile(umap_results[:,0], [0.1, 99.9])
-    y_low, y_high = np.percentile(umap_results[:,1], [0.1, 99.9])
-    
-    unique_labels = np.unique(zvect)
-    n_clusters = len(unique_labels)
-
-    # Use a qualitative colormap with enough colors
-    all_colors = (
-        plt.cm.tab20.colors +
-        plt.cm.tab20b.colors +
-        plt.cm.tab20c.colors +
-        plt.cm.tab10.colors
-    )
-
-    cmap = mcolors.ListedColormap(all_colors[:n_clusters])
-    norm = mcolors.BoundaryNorm(boundaries=np.arange(n_clusters + 1), ncolors=n_clusters)
-
-    gr = plt.scatter(umap_results[:, 0], umap_results[:, 1], s=0.5, alpha=alpha_vect, c=zvect, cmap=cmap, norm=norm)
-    plt.colorbar(gr, label=ztitle)
-    plt.xlim(x_low, x_high)
-    plt.ylim(y_low, y_high)
-    plt.xlabel('UMAP #0')
-    plt.ylabel('UMAP #1')
-    ax = plt.gca()
-    ax.grid(False)
-    if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
-    plt.show()
-    plt.close()
-    return
