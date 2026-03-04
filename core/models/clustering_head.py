@@ -51,7 +51,9 @@ class ClusteringHeadTwoLayer(nn.Module):
         h2 = self.clust.lin2(h1)
         out = self.softmax(h2/self.softmax_temp)
 
-        if return_hidden: return [h1_logits, out]
+        if return_hidden:
+            return {"clust_layer1": h1_logits,
+                    "clust_final": out}
         return out
 
     
@@ -112,7 +114,10 @@ class ClusteringHeadThreeLayer(nn.Module):
         h3_logits = self.clust.lin3(h2)
         out = self.softmax(h3_logits/self.softmax_temp)
 
-        if return_hidden: return [h1_logits, h2_logits, out]
+        if return_hidden:
+            return {"clust_layer1": h1_logits,
+                    "clust_layer2": h2_logits,
+                    "clust_final": out}
         return out
 
     
@@ -138,6 +143,10 @@ class ClusteringHeadOneLayer(nn.Module):
     def forward(self, x, return_hidden=False):
         x = self.linear(x)
         x = self.softmax(x/self.softmax_temp)
+
+        if return_hidden:
+            return {"clust_final": x}
+        
         return x
 
 def get_clusthead(nchan, args):

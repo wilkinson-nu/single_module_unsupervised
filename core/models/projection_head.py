@@ -18,7 +18,9 @@ class ProjectionHeadOneLogits(nn.Module):
                 if m.bias is not None: nn.init.zeros_(m.bias)
 
     ## return_logits does nothing for a single layer
-    def forward(self, x, return_logits=False):
+    def forward(self, x, return_hidden=False):
+        if return_hidden:
+            return {"proj_final": self.proj(x)}
         return self.proj(x)
 
 class ProjectionHeadTwoLayer(nn.Module):
@@ -67,7 +69,9 @@ class ProjectionHeadTwoLayer(nn.Module):
         h1 = self.proj.act1(h1)
         out = self.proj.lin2(h1)
 
-        if return_hidden: return [h1_logits, out]
+        if return_hidden:
+            return {"proj_layer1": h1_logits,
+                    "proj_final": out}
         return out
 
 
@@ -127,7 +131,10 @@ class ProjectionHeadThreeLayer(nn.Module):
         h2 = self.proj.act2(h2)
         out = self.proj.lin3(h2)
 
-        if return_hidden: return [h1_logits, h2_logits, out]
+        if return_hidden:
+            return {"proj_layer1": h1_logits,
+                    "proj_layer2": h2_logits,
+                    "proj_final": out}
         return out
 
         
