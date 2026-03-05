@@ -566,3 +566,101 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False,
     print("Davies-Bouldin =", metrics["davies_bouldin"])
 
     return labels, metrics, kmeans.centroids
+
+
+def build_particle_counts(labels, particle_groups):
+
+    counts = []
+    names = []
+
+    for name, fields in particle_groups.items():
+        c = np.sum([labels[f] for f in fields], axis=0)
+        counts.append(c)
+        names.append(name)
+
+    counts = np.stack(counts, axis=1)  # (Nevents, Ntypes)
+
+    return counts, names
+
+
+def multiplicity_matrix(labels, max_particles=5):
+
+    particle_groups = {
+        "n": ["nneutron"],
+        "p": ["nproton"],
+        r"$\pi^{\pm}$": ["npipm"],
+        r"$\pi^{0}$": ["npi0"],
+        r"K$^{\pm}$": ["nkapm"],
+        r"K$^0$": ["nka0"],
+        "EM": ["nem"],
+        "Exotic": ["ncharm", "nstrange", "nantiprot", "nantineut"],
+        "nuclear": [
+            "ndeuteron","ntritium","nalpha","nhelium3","nnuclfrag"
+        ],
+        "charged":["nproton", "npipm", "nkapm"]
+    }
+    counts, particle_names = build_particle_counts(labels, particle_groups)
+    counts = np.clip(counts, 0, max_particles)
+
+    ntypes = counts.shape[1]
+    hist = np.zeros((max_particles+1, ntypes), dtype=np.int64)
+
+    for i in range(ntypes):
+        hist[:, i] = np.bincount(counts[:, i], minlength=max_particles+1)
+    
+    col_sums = hist.sum(axis=0, keepdims=True)
+    prob = np.zeros_like(hist, dtype=float)
+    np.divide(hist, col_sums, out=prob, where=col_sums!=0)
+
+    # remove 0-particle row
+    prob = prob[1:]
+
+    return prob, particle_names
+
+
+def plot_multiplicity_matrix(labels, ax=None, max_particles=5, show=True, xtitle=None):
+    prob, particle_names = multiplicity_matrix(labels, max_particles)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6,3))
+    else:
+        fig = ax.figure
+    im = ax.imshow(prob, origin="lower", aspect="auto", cmap='viridis')
+
+    ax.set_xticks(range(len(particle_names)))
+    ax.set_xticklabels(particle_names, rotation=90, fontsize=10)
+    if xtitle is not None: ax.set_xlabel(xtitle, fontsize=12, loc='left', labelpad=-20)
+
+    ylabels = [str(i) for i in range(1, max_particles)] + [str(max_particles)+"+"]
+    ax.set_yticks(range(max_particles))
+    ax.set_yticklabels(ylabels, fontsize=10)
+    ax.set_ylabel("N. particles", fontsize=10)
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Prob.", fontsize=10, rotation=270, labelpad=10)
+    cbar.ax.tick_params(labelsize=10)
+    if show:
+        plt.show()
+
+    return im
+
+def plot_multiplicity_matrix_grid(processed, clusters, max_particles=5, ncols=2, nrows=5, save_name=None):
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4*ncols, 2*nrows))
+    axes = np.atleast_1d(axes).flatten()
+    
+    im = None
+    for ax, i in zip(axes, clusters):
+        cluster_mask = processed['clust_index']==i
+        im = plot_multiplicity_matrix(
+            processed['labels'][cluster_mask],
+            max_particles=max_particles,
+            ax=ax,
+            show=False,
+            xtitle="Cluster #"+str(i)
+        )
+    fig.tight_layout()
+    if save_name: plt.savefig(save_name, dpi=300, bbox_inches='tight')
+    plt.show()  
+    plt.close()
+    
