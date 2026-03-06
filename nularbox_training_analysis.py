@@ -18,7 +18,7 @@ import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ## Import analysis functions
-from analysis.plotting_utils import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_metric_by_confidence, plot_cluster_bigblock, plot_multiplicity_matrix_grid
+from analysis.plotting_utils import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_multiplicity_matrix_grid, plot_cluster_example_grid
 from analysis.tsne_utils import compute_tsne_cuml, compute_tsne_skl, plot_tsne, plot_tsne_block
 from datasets.nularbox.truth_labels import Mode, Topology
 
@@ -72,26 +72,23 @@ def run_analysis(args):
                             xtitle="Max. cluster value",
                             save_name=args.out_name_root+"_clust_max.png")
     
-    plot_metric_data_vs_sim(nom_processed['nhits'],
-                            alt_processed['nhits'],
-                            alt_processed['clust_index'],
-                            nbinsx=70, x_max=1400,
-                            xtitle="N. hits",
-                            save_name=args.out_name_root+"_nhits.png")
+    plot_metric_by_cluster(nom_processed['nhits'],
+                           nom_processed['clust_index'],
+                           nbinsx=70, x_max=1400,
+                           xtitle="N. hits",
+                           save_name=args.out_name_root+"_nhits.png")
     
-    plot_metric_data_vs_sim(nom_processed['sumQ'],
-                            alt_processed['sumQ'],
-                            alt_processed['clust_index'],
-                            nbinsx=70, x_max=1400,
-                            xtitle="Sum Q",
-                            save_name=args.out_name_root+"_sumQ.png")
+    plot_metric_by_cluster(nom_processed['sumQ'],
+                           nom_processed['clust_index'],
+                           nbinsx=70, x_max=1400,
+                           xtitle="Sum Q",
+                           save_name=args.out_name_root+"_sumQ.png")
     
-    plot_metric_data_vs_sim(nom_processed['maxQ'],
-                            alt_processed['maxQ'],
-                            alt_processed['clust_index'],
-                            nbinsx=100, x_min=1.5, x_max=2.5,
-                            xtitle="Max. Q",
-                            save_name=args.out_name_root+"_maxQ.png")
+    plot_metric_by_cluster(nom_processed['maxQ'],
+                           nom_processed['clust_index'],
+                           nbinsx=100, x_min=1.5, x_max=2.5,
+                           xtitle="Max. Q",
+                           save_name=args.out_name_root+"_maxQ.png")
 
     ## Make a list of all representations we might have
     layer_list = ["encoder", "proj_final", "clust_final"]
@@ -121,23 +118,20 @@ def run_analysis(args):
     nclusters = training_args.nclusters
     chunk_size = 10
 
+    ## Make some particle summary plots
     for i in range(0, nclusters, chunk_size):
         chunk = list(range(i, min(i + chunk_size, nclusters)))
         plot_multiplicity_matrix_grid(nom_processed, chunk, max_particles=5, ncols=2, nrows=5,
                                       save_name=args.out_name_root+"_npart_cluster"+str(chunk[0])+"-"+str(chunk[-1])+".png")
-    
-        
-    ## Plot some examples for each cluster:
-    ## Can I modify this to put 10 in a block, and just bunch them?
-    ## TODO: modify, not sure how hard-coded image size is in these functions
-    if args.example_cluster_images:
-        for n in range(training_args.nclusters):
-            plot_cluster_bigblock(data_dataset, nom_processed['clust_index'], n, 1, 10, \
-                                  cluster_probs=nom_processed['clust_max'], \
-                                  save_name=args.out_name_root+"_data_example"+str(n)+"_top.png")
-            plot_cluster_bigblock(data_dataset, nom_processed['clust_index'], n, 1, 10, \
-                                  save_name=args.out_name_root+"_data_example"+str(n)+"_all.png")
 
+    ## If requested, make some example images
+    if args.example_cluster_images:
+        for i in range(0, nclusters, chunk_size):
+            chunk = list(range(i, min(i + chunk_size, nclusters)))
+            plot_cluster_example_grid(nom_dataset, nom_processed, chunk, use_cluster_probs=True, nexamples=10,
+                                      save_name=args.out_name_root+"_data_example"+str(chunk[0])+"-"+str(chunk[-1])+"_top.png")
+            plot_cluster_example_grid(nom_dataset, nom_processed, chunk, use_cluster_probs=False, nexamples=10,
+                                      save_name=args.out_name_root+"_data_example"+str(chunk[0])+"-"+str(chunk[-1])+"_all.png")
         
 ## Do the business
 if __name__ == '__main__':
