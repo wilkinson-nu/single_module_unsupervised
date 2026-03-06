@@ -9,7 +9,7 @@ from datasets.fsd.truth_labels import Label
 from matplotlib.ticker import MaxNLocator
 import faiss
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
-
+import matplotlib.gridspec as gridspec
 
 def compute_cluster_overlap(c_probs, topk=2):
 
@@ -399,14 +399,29 @@ def plot_metric_by_cluster(xvar, cluster_vect, nbinsx=None, x_min=None, x_max=No
     plt.close()
 
 
-def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_probs=None, save_name=None, image_size=(768, 256)): 
+def plot_cluster_examples(dataset, 
+                          cluster_ids, 
+                          index, 
+                          max_images=8, 
+                          cluster_probs=None, 
+                          save_name=None, 
+                          image_size=(768, 256), 
+                          parent_ax=None): 
 
     ## Sort colours
     cmap = cm.turbo.copy()
     cmap.set_under("#F0F0F0")
-    
-    plt.figure(figsize=(max_images*2,6))
 
+    show_plot = False
+    if parent_ax is None:
+        show_plot = True
+        fig, parent_ax = plt.subplots(figsize=(max_images*2.1,2*image_size[0]/image_size[1]))
+    parent_ax.axis("off")
+
+    gs = gridspec.GridSpecFromSubplotSpec(
+        1, max_images, subplot_spec=parent_ax.get_subplotspec(), wspace=0.05
+    )
+    
     ## Get a mask of cluster_ids
     indices = np.where(np.array(cluster_ids) == index)[0]
 
@@ -419,7 +434,7 @@ def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_pro
         
     ## Plot
     for i in range(max_images):
-        ax = plt.subplot(1,max_images,i+1)
+        ax = plt.subplot(gs[i])
         
         numpy_coords, numpy_feats, *_ = dataset[indices[i]]
 
@@ -433,11 +448,57 @@ def plot_cluster_examples(dataset, cluster_ids, index, max_images=8, cluster_pro
         
         plt.imshow(inputs, origin='lower', cmap=cmap, vmin=1e-6)
         ax.axis('off')
+        plt.tight_layout()
+    
     plt.tight_layout()
     if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
-    plt.show()
-    plt.close()
+    if show_plot:
+        plt.show()  
+        plt.close()
+    return
 
+def plot_cluster_example_grid(dataset, 
+                              processed, 
+                              clusters, 
+                              nexamples=8, 
+                              use_cluster_probs=False, 
+                              save_name=None):
+
+    nevents = len(processed['clust_index'])
+    nclust = len(clusters)
+
+    cluster_probs = None
+    if use_cluster_probs is not None:
+        cluster_probs = processed['clust_max']
+    
+    fig, axes = plt.subplots(nclust, 1, figsize=(2*nexamples, 2.2*nclust))
+
+    if nclust == 1:
+        axes = [axes]
+
+    for ax, index in zip(axes, clusters):
+        count = np.count_nonzero(processed['clust_index'] == index)
+
+        ax.set_title(
+            f"Cluster {index} — {count}/{nevents} entries",
+            fontsize=14,
+            loc="left"
+        )
+
+        plot_cluster_examples(
+            dataset,
+            processed['clust_index'],
+            index,
+            nexamples,
+            cluster_probs=cluster_probs,
+            parent_ax=ax,
+            image_size=(256,256)
+        )
+
+    if save_name: plt.savefig(save_name, dpi=150, bbox_inches='tight')
+    plt.tight_layout()
+    plt.show()
+    
 
 def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, cluster_probs=None, save_name=None, image_size=(768, 256)): 
 
@@ -476,11 +537,13 @@ def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, clust
         ax.axis('off')
         plt.tight_layout()
 
-    plt.tight_layout()
-    if save_name: plt.savefig(save_name, dpi=300, bbox_inches='tight')
+    #plt.tight_layout()
+    if save_name: 
+        plt.savefig(save_name, dpi=300, bbox_inches='tight')
+
     plt.show()  
     plt.close()
-
+    return
 
 def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True):
 
