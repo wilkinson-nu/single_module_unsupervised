@@ -138,7 +138,7 @@ def plot_tsne(tsne_results,
             plt.cm.ScalarMappable(norm=norm_cmap, cmap=cmap),
             ax=ax
         )
-        cbar.set_label(ztitle)
+        cbar.set_label(ztitle, rotation=270, labelpad=20)
 
     if save_name:
         plt.savefig(save_name,
