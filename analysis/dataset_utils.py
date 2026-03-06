@@ -146,18 +146,23 @@ def reorder_clusters(data_processed, sim_processed):
 
     ## Rage quit if someone tries to call this without cluster labels
     if "clust" not in data_processed: return
-        
-    ## How frequently is each cluster selected in data
-    unique, counts = np.unique(data_processed['clust_index'], return_counts=True)
 
-    ## Order from most common to least common
-    order = np.argsort(-counts)
+    max_cluster = max(
+        data_processed['clust_index'].max(),
+        sim_processed['clust_index'].max()
+    ) + 1
 
-    mapping_arr = np.zeros(unique.max() + 1, dtype=np.int64)
-    mapping_arr[unique[order]] = np.arange(len(unique))
+    # histogram of cluster frequency in data
+    counts = np.bincount(data_processed['clust_index'], minlength=max_cluster)
 
-    data_processed['clust_index'] = mapping_arr[data_processed['clust_index']]
-    sim_processed['clust_index']  = mapping_arr[sim_processed['clust_index']]
-    
-    data_processed['clust'] = data_processed['clust'][:,order]
-    sim_processed['clust'] = sim_processed['clust'][:,order]
+    # permutation: clusters sorted by decreasing frequency
+    perm = np.argsort(-counts)
+
+    # mapping: old_index -> new_index
+    remap = np.argsort(perm)
+
+    data_processed['clust_index'] = remap[data_processed['clust_index']]
+    sim_processed['clust_index']  = remap[sim_processed['clust_index']]
+
+    data_processed['clust'] = data_processed['clust'][:, perm]
+    sim_processed['clust']  = sim_processed['clust'][:, perm]
