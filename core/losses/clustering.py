@@ -101,5 +101,34 @@ class ClusteringLossMergedMultiGPU(nn.Module):
 
 
 
+class SharpenedClusterLoss(nn.Module):
+    def __init__(self, T_pred=0.3, T_target=0.05, entropy_weight=1.0):
+        super().__init__()
+        self.T_pred = T_pred
+        self.T_target = T_target
+        self.entropy_weight = entropy_weight
 
-    
+    def forward(self, logits):
+
+        batch_size = logits.shape[0] // 2
+
+        z_i, z_j = logits[:batch_size], logits[batch_size:]
+
+        p_i = nn.functional.softmax(z_i / self.T_pred, dim=1)
+        p_j = nn.functional.softmax(z_j / self.T_pred, dim=1)
+
+        q_i = nn.functional.softmax(z_i / self.T_target, dim=1).detach()
+        q_j = nn.functional.softmax(z_j / self.T_target, dim=1).detach()
+
+        loss = (
+            -(q_i * torch.log(p_j + 1e-10)).sum(dim=1).mean()
+            -(q_j * torch.log(p_i + 1e-10)).sum(dim=1).mean()
+        )
+
+        # entropy regularization (same idea as your code)
+        p = torch.cat([p_i, p_j], dim=0)
+        p_mean = p.mean(dim=0)
+
+        ne_loss = math.log(p_mean.size(0)) + (p_mean * torch.log(p_mean + 1e-10)).sum()
+
+        return loss, ne_loss * self.entropy_weight

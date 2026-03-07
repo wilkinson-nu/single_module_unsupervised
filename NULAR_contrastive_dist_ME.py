@@ -19,7 +19,7 @@ from torch import nn
 
 ## Includes from my libraries for this project
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
-from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
+from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU, SharpenedClusterLoss
 # from core.models.encoder import get_encoder
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
@@ -242,7 +242,11 @@ def run_training(rank, world_size, args):
         clust_head .to(device)
         clust_head = DDP(clust_head, device_ids=[rank])
         heads["clust"] = clust_head
-        loss_fns["clust"] = ClusteringLossMergedMultiGPU(args.clust_temp, args.entropy_scale)
+
+        if args.sharpened_cluster_loss == 0:
+            loss_fns["clust"] = ClusteringLossMergedMultiGPU(args.clust_temp, args.entropy_scale)
+        else:
+            loss_fns["clust"] = SharpenedClusterLoss(args.clust_temp, 0.05, args.entropy_scale)
         
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
@@ -505,6 +509,9 @@ if __name__ == '__main__':
     
     parser.add_argument('--clust_arch', type=str, default="none")
     parser.add_argument('--proj_arch', type=str, default="two")
+
+    ## A quick test option
+    parser.add_argument('--sharpened_cluster_loss', type=int, choices=[0,1], default=0)
     
     ## Restart option
     parser.add_argument('--restart', action='store_true')
