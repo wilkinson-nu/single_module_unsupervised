@@ -1,4 +1,4 @@
-from sklearn.manifold import TSNE
+from sklearn.manifold import TSNE as skl_TSNE
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -7,6 +7,8 @@ from cuml.manifold import TSNE as cuML_TSNE
 import cupy as cp
 from cuml.preprocessing import StandardScaler as cuMLScaler
 from cuml.manifold import UMAP as cuML_UMAP
+from sklearn.decomposition import PCA as skl_PCA
+from cuml.decomposition import PCA as cuML_PCA
 
 def compute_tsne_skl(input_vect,
                      perp=30,
@@ -17,18 +19,25 @@ def compute_tsne_skl(input_vect,
                      metric='cosine',
                      method='barnes_hut',
                      init='pca',
+                     pca=None,
+                     whiten=False,
                      random_state=None,
                      verbose=0):
+
+    if norm:
+        print("L2 normalising tSNE inputs...")
+        norms = np.linalg.norm(input_vect, axis=1, keepdims=True)
+        input_vect = input_vect / (norms + 1e-10)
+
+    if pca is not None:
+        print("Finding", pca, "largest PCA components...")
+        input_vect = skl_PCA(n_components=pca, whiten=whiten).fit_transform(input_vect)
 
     print("Running scikit-learn t-SNE with:",
           "perplexity =", perp,
           "early exaggeration =", exag)
-
-    if norm:
-        norms = np.linalg.norm(input_vect, axis=1, keepdims=True)
-        input_vect = input_vect / (norms + 1e-10)
-
-    tsne = TSNE(
+        
+    tsne = skl_TSNE(
         n_components=2,
         perplexity=perp,
         early_exaggeration=exag,
@@ -40,13 +49,14 @@ def compute_tsne_skl(input_vect,
         verbose=verbose
     )
 
+    
     tsne_results = tsne.fit_transform(input_vect)
 
     print("Found:", tsne_results.shape[0], "points")
     return tsne_results
 
 def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
-                 lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None, tsne_results=None):
+                 lr=2000.0, n_iter=2000, ztitle="Cluster ID", save_name=None, norm=True, n_samples=None, tsne_results=None, pca=None):
 
     if tsne_results is None:
         tsne_results = compute_tsne_skl(input_vect,
@@ -54,7 +64,8 @@ def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
                                         exag=exag,
                                         lr=lr,
                                         n_iter=n_iter,
-                                        norm=norm)
+                                        norm=norm,
+                                        pca=pca)
     plot_tsne(tsne_results,
               zvect=zvect,
               alpha_vect=alpha_vect,
@@ -163,7 +174,7 @@ def plot_tsne_block(tsne_results, processed, apply_alpha_vect=False, save_name=N
     alpha_vect = None
     if apply_alpha_vect: alpha_vect = processed['clust_max'][:ntsne]
 
-    plot_tsne(tsne_results, processed['clust_index'][:ntsne], 
+    plot_tsne(tsne_results, processed.get('clust_index', np.zeros(ntsne))[:ntsne], 
               ax=axes[0][0], alpha_vect=alpha_vect, ztitle="Clust index")
     plot_tsne(tsne_results, processed['labels']['topology'][:ntsne], 
               ax=axes[0][1], alpha_vect=alpha_vect, ztitle="Topology")
@@ -195,18 +206,26 @@ def compute_tsne_cuml(input_vect,
                       lr=2000.0, 
                       n_iter=5000,
                       norm=True,
-                      verbose=True):
-    
-    print("Running cuML t-SNE with:",
-          "perplexity =", perp, 
-          "early exaggeration =", exag)
+                      verbose=True,
+                      pca=None,
+                      whiten=False):
     
     input_vect = cp.asarray(input_vect, dtype=cp.float32)
-
+    
     if norm:
+        print("L2 normalising tSNE inputs...")
         norms = cp.linalg.norm(input_vect, axis=1, keepdims=True)
         input_vect = input_vect / (norms + 1e-10)
 
+    if pca is not None:
+        print("Finding", pca, "largest PCA components...")
+        if whiten is True: print("...including whitening...")
+        input_vect = cuML_PCA(n_components=pca, whiten=whiten).fit_transform(input_vect)
+
+    print("Running cuML t-SNE with:",
+          "perplexity =", perp,
+          "early exaggeration =", exag)
+    
     n_neighbors = 2*perp
     if n_neighbors > 1024: n_neighbors = 1024
     
