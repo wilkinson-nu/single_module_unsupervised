@@ -34,20 +34,20 @@ class Topology(Enum):
     NONE = -1
 
     ## CC topologies
-    CC0pi = auto()
-    CC1pi0 = auto()
-    CC1pipm = auto()
-    CC2pi = auto()
-    CCNpi = auto()
-    CCOther = auto()
+    CC0pi = auto() ## 0
+    CC1pi0 = auto() ## 1
+    CC1pipm = auto() ## 2
+    CC2pi = auto() ## 3
+    CCNpi = auto() ## 4
+    CCOther = auto() ## 5
 
     ## NC topologies
-    NC0pi = auto()
-    NC1pipm = auto()
-    NC1pi0 = auto()
-    NC2pi = auto()
-    NCNpi = auto()
-    NCOther = auto()
+    NC0pi = auto() ## 6
+    NC1pipm = auto() ## 7
+    NC1pi0 = auto() ## 8
+    NC2pi = auto() ## 9
+    NCNpi = auto() ## 10
+    NCOther = auto() ## 11
     
     ## A method to dump the list
     @classmethod
