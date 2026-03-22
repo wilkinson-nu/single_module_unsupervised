@@ -17,18 +17,25 @@ if not matplotlib.get_backend().startswith("module://matplotlib_inline"):
 import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+import torchvision.transforms.v2 as transforms
+
 ## Seeding
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Various shared analysis libraries
-from analysis.plotting_utils import run_tsne_skl
+from analysis.tsne_utils import compute_tsne_cuml, plot_tsne, plot_tsne_block
 from analysis.model_utils import load_checkpoint, get_models_from_checkpoint
 from analysis.dataset_utils import get_dataset, image_loop
-from analysis.plotting_utils import run_faiss_spherical_kmeans
+from analysis.plotting_utils import run_faiss_kmeans
 from core.data.augmentations_2d import CenterCrop
 from core.data.augmentations_2d import FirstRegionCrop
+from datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
+from analysis.geometry_utils import plot_spectrum, pca_spectrum, cosine_spectrum
+from analysis.geometry_utils import plot_similarity_distributions
+from analysis.geometry_utils import preprocess_embeddings
+
 
 ## For paraellising the ncluster runs
 from joblib import Parallel, delayed
@@ -58,7 +65,10 @@ def plot_metric(x_vals, y_vals, metric_name, save_name=False):
 def get_nom_transform(experiment):
 
     if experiment == 'nularbox':
-        return CenterCrop((512,512), (256,256))
+        return transforms.Compose([
+            CenterCrop((512,512), (256,256)),
+            LogAlphaCharge(5)
+        ])
     if experiment == 'fsd':
         return FirstRegionCrop((800, 256), (768, 256))
 
@@ -68,71 +78,179 @@ def get_nom_transform(experiment):
 def process_one(ncluster, latent, nattempts):
     print("Processing ncluster =", ncluster)
 
-    labels, metrics, _ = run_faiss_spherical_kmeans(latent, 
-                                                    ncluster,
-                                                    nattempts=nattempts,
-                                                    verbose=True
-                                                   )
+    labels, metrics, _ = run_faiss_kmeans(latent, 
+                                          ncluster,
+                                          nattempts=nattempts,
+                                          verbose=False
+                                          )
     print("Finished ncluster =", ncluster)
     return ncluster, labels, metrics
     
 def run_analysis(args):
 
+    ## Setup the encoder
+    encoder, heads, training_args = get_models_from_checkpoint(args.input_file)    
+
     ## Define the nominal transform for this experiment type
     nom_transform = get_nom_transform(args.experiment)
-    
-    ## Setup the encoder
-    encoder, heads, training_args = get_models_from_checkpoint(args.input_file)
+    aug_transform = get_transform('256x256', training_args.aug_type, training_args.aug_prob)
     
     ## Set up the datasets and loaders
-    ntsne=int(args.ntsne)
-    data_dataset, data_loader = get_dataset(training_args.data_dir, ntsne, nom_transform)
+    nevents=int(args.nevents)
+    nom_dataset, nom_loader = get_dataset(training_args.data_dir, nevents, nom_transform)
+    aug_dataset, aug_loader = get_dataset(training_args.data_dir, nevents, aug_transform)
     
     ## Get the processed vectors of interest from the datasets
-    data_processed = image_loop(encoder, heads, data_loader, device)
-    
-    ## t-SNE examples
-    print("Starting tSNE...")
-    tsne_results = run_tsne_skl(data_processed['latent'][:ntsne].copy(), \
-                                np.zeros(ntsne), \
-                                perp=150, exag=20, lr=500)
+    nom_processed  = image_loop(encoder, heads, nom_loader, device, return_hidden=True, detailed_info=True)
+    aug1_processed = image_loop(encoder, heads, aug_loader, device, return_hidden=True, detailed_info=True)
+    aug2_processed = image_loop(encoder, heads, aug_loader, device, return_hidden=True, detailed_info=True)
 
-    ncluster_list = [n for n in range(args.clust_min, args.clust_max+1, args.clust_step)]
+    ## Loop over the latent spaces
+    for latent_name in ["encoder", "proj_final"]:
 
-    ## Can more dynamically pick
-    n_jobs = 4
+        ## Cosine similarity comparisons
+        plot_similarity_distributions(nom_processed[latent_name],
+                                      aug1_processed[latent_name],
+                                      aug2_processed[latent_name],
+                                      save_name=args.out_name_root+"_cossimcomp_"+latent_name+".png")
+
+        pca_eigvals = pca_spectrum(nom_processed[latent_name])
+        plot_spectrum(pca_eigvals, save_name=args.out_name_root+"_pcaeigvals_"+latent_name+".png")
+        
+        cosine_eigvals = cosine_spectrum(nom_processed[latent_name])
+        plot_spectrum(cosine_eigvals, save_name=args.out_name_root+"_simeigvals_"+latent_name+".png")
+
+        
+    ## Get pre-processed embeddings
+    X_pca50_spherical = preprocess_embeddings(
+        nom_processed['encoder'],
+        pca=50,
+        drop_first_pca=False,
+        whiten=False,
+        spherical=True
+    )
     
-    ## Spawn parallel clustering jobs
-    results = Parallel(
-        n_jobs=n_jobs,
-        prefer="processes"
-    )(
-        delayed(process_one)(
-            ncluster, data_processed['latent'][:ntsne].copy(), args.nattempts
-        )
-        for ncluster in ncluster_list
+    X_pca50_euclidean = preprocess_embeddings(
+        nom_processed['encoder'],
+        pca=50,
+        drop_first_pca=False,
+        whiten=True,
+        spherical=False
     )
 
+    X_pca256_spherical = preprocess_embeddings(
+        nom_processed['encoder'],
+        pca=256,
+        drop_first_pca=False,
+        whiten=False,
+        spherical=True
+    )
+
+    X_pca256_euclidean = preprocess_embeddings(
+        nom_processed['encoder'],
+        pca=256,
+        drop_first_pca=False,
+        whiten=True,
+        spherical=False
+    )
+
+    ## t-SNE examples
+    print("Starting tSNE...")
+    tsne_results_euclidean = compute_tsne_cuml(X_pca50_euclidean,
+                                               perp=100, exag=20, lr=500,
+                                               metric="euclidean",
+                                               verbose=False)
+
+    plot_tsne_block(tsne_results_euclidean, nom_processed, apply_alpha_vect=False,
+                    save_name=args.out_name_root+"_euclidean_tsne_block.png")
+
+    tsne_results_spherical = compute_tsne_cuml(X_pca50_spherical,
+                                               perp=100, exag=20, lr=500,
+                                               metric="cosine",
+                                               verbose=False)
+    
+    plot_tsne_block(tsne_results_spherical, nom_processed, apply_alpha_vect=False,
+                    save_name=args.out_name_root+"_spherical_tsne_block.png")
+
+
+    ## Now sort out the 
+    ncluster_list = [n for n in range(args.clust_min, args.clust_max+1, args.clust_step)]
+
+    ## Loop over the clusters
+    euclidean_results = []
+    spherical_results = []
+    for ncluster in ncluster_list:
+        labels, metrics, _ = run_faiss_kmeans(X_pca256_euclidean,
+                                              ncluster,
+                                              nattempts=args.nattempts,
+                                              verbose=False,
+                                              spherical=False
+                                              )
+        euclidean_results.append(tuple(ncluster, labels, metrics))
+
+        labels, metrics, _ = run_faiss_kmeans(X_pca256_spherical,
+                                              ncluster,
+                                              nattempts=args.nattempts,
+                                              verbose=False,
+                                              spherical=True
+                                              )
+        spherical_results.append(tuple(ncluster, labels, metrics))
+        
+        
+    ## Can more dynamically pick
+    ## n_jobs = 1
+    ## 
+    ## ## Spawn parallel clustering jobs
+    ## results = Parallel(
+    ##     n_jobs=n_jobs,
+    ##     prefer="processes"
+    ## )(
+    ##     delayed(process_one)(
+    ##         ncluster, nom_processed['encoder'][:ntsne].copy(), args.nattempts
+    ##     )
+    ##     for ncluster in ncluster_list
+    ## )
+
     print("Making summary plots...")
-    silhouette_scores = []
-    ch_scores = []
-    db_scores = []
+    sil_euclidean = []
+    ch_euclidean = []
+    db_euclidean = []
 
     ## Process the results
-    for ncluster, these_labels, metrics in results:
-        silhouette_scores.append(metrics["silhouette"])
-        ch_scores.append(metrics["calinski_harabasz"])
-        db_scores.append(metrics["davies_bouldin"])
+    for ncluster, these_labels, metrics in euclidean_results:
+        sil_euclidean.append(metrics["silhouette"])
+        ch_euclidean.append(metrics["calinski_harabasz"])
+        db_euclidean.append(metrics["davies_bouldin"])
 
-        _ = run_tsne_skl(data_processed['enc_latent'][:ntsne].copy(), \
-                         these_labels[:ntsne].copy(), tsne_results=tsne_results, \
-                         save_name=args.out_name_root+"_tSNE_"+str(ncluster)+".png")
+        if ncluster in [50, 100]:
+            plot_tsne(tsne_results_euclidean, these_labels, alpha_vect=None, ztitle="Clust index",
+                      save_name=args.out_name_root+"_tsne_euclidean"+str(ncluster)+".png")
 
     ## After the loop over clusters, make some summary plots
-    plot_metric(ncluster_list, silhouette_scores, "Silhouette Score", args.out_name_root+"_silhouette.png")
-    plot_metric(ncluster_list, ch_scores, "Calinski–Harabasz Index", args.out_name_root+"_ch.png")
-    plot_metric(ncluster_list, db_scores, "Davies–Bouldin Index", args.out_name_root+"_db.png")
+    plot_metric(ncluster_list, sil_euclidean, "Silhouette Score", args.out_name_root+"_euclidean_silhouette.png")
+    plot_metric(ncluster_list, ch_euclidean, "Calinski–Harabasz Index", args.out_name_root+"_euclidean_ch.png")
+    plot_metric(ncluster_list, db_euclidean, "Davies–Bouldin Index", args.out_name_root+"_euclidean_db.png")
 
+
+    sil_spherical = []
+    ch_spherical = []
+    db_spherical = []
+
+    ## Process the results
+    for ncluster, these_labels, metrics in spherical_results:
+        sil_spherical.append(metrics["silhouette"])
+        ch_spherical.append(metrics["calinski_harabasz"])
+        db_spherical.append(metrics["davies_bouldin"])
+
+        if ncluster in [50, 100]:
+            plot_tsne(tsne_results_spherical, these_labels, alpha_vect=None, ztitle="Clust index",
+                      save_name=args.out_name_root+"_tsne_spherical"+str(ncluster)+".png")
+
+    ## After the loop over clusters, make some summary plots
+    plot_metric(ncluster_list, sil_spherical, "Silhouette Score", args.out_name_root+"_spherical_silhouette.png")
+    plot_metric(ncluster_list, ch_spherical, "Calinski–Harabasz Index", args.out_name_root+"_spherical_ch.png")
+    plot_metric(ncluster_list, db_spherical, "Davies–Bouldin Index", args.out_name_root+"_spherical_db.png")
+    
         
 ## Do the business
 if __name__ == '__main__':
@@ -149,7 +267,7 @@ if __name__ == '__main__':
     parser.add_argument('--experiment', type=str)
     
     ## Give a sensible default for the number of events to process
-    parser.add_argument('--ntsne', type=int, default=20000, nargs='?')
+    parser.add_argument('--nevents', type=int, default=50000, nargs='?')
 
     ## Options for stepping through nclusters
     parser.add_argument('--clust_min', type=int, default=10, nargs='?')
