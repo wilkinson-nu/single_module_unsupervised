@@ -42,13 +42,18 @@ cp ${INPUTS_DIR}/${FLUX_FILE} .
 cp ${INPUTS_DIR}/${EDEP_MAC} .
 cp ${INPUTS_DIR}/${GEOM} .
 
+## Sort out the decay behaviour
+mkdir xml_override
+cp ${INPUTS_DIR}/CommonDecay.xml xml_override/.
+
 ## This is... pretty bad practice. Copy the run script and any library functions in the directory...
 cp ${INPUTS_DIR}/../*.py .
 
 echo "Starting gevgen..."
 shifter gevgen -n ${NEVENTS} -t ${TARG} -p ${NU_PDG} \
         --cross-sections ${GENIE_TUNE}_splines.xml.gz \
-        --tune ${GENIE_TUNE} --seed ${SEED} \
+	--xml-path xml_override \
+	--tune ${GENIE_TUNE} --seed ${SEED} \
         -f ${FLUX_FILE},${FLUX_HIST} -e ${E_MIN},${E_MAX} -o ${OUTFILE_ROOT}_GHEP.root
 
 echo "Converting to rootracker..."

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+
+<!--
+***************************************************************************************************
+This file defines parameters sets for parameters which are common between algorithms and therefore
+has to be the same for those parameters to be meaningful.
+This is file is read from the AlgConfigPool and the parameters set are expected to be used by the
+algorithms to configure these common parameters.
+
+Author:
+Costas Andreopoulos <constantinos.andreopoulos \at cern.ch>
+STFC, Rutherford Appleton Laboratory
+
+and
+Marco Roda <marco.roda \at liverpool.ac.uk>
+University of Liverpool
+***************************************************************************************************
+-->
+
+
+
+<common_Decay_list>
+
+  <param_set name="DecayFlags"> 
+
+     <param type="bool" name="InhibitDecay/Particle=24,Channel=2"> true </param>
+     <param type="bool" name="InhibitDecay/Particle=24,Channel=6"> true </param>
+     <param type="bool" name="InhibitDecay/Particle=24,Channel=10"> true </param>
+
+  <!-- Not decay anything with lifetime higher than pi0 -->
+
+     <param type="bool" name="DecayParticleWithCode=15">     true </param>  <!--  tau^{-}           -->
+     <param type="bool" name="DecayParticleWithCode=-15">    true </param>  <!--  tau^{+}           -->
+     <param type="bool" name="DecayParticleWithCode=3322">   true </param>  <!--  xi0              -->
+     <param type="bool" name="DecayParticleWithCode=-3322">  true </param>  <!--  xi0              -->
+     <param type="bool" name="DecayParticleWithCode=3122">   false </param>  <!--  lambda           -->
+     <param type="bool" name="DecayParticleWithCode=-3122">  false </param>  <!--  lambda           -->
+     <param type="bool" name="DecayParticleWithCode=3312">   true </param>  <!--  xi-              -->
+     <param type="bool" name="DecayParticleWithCode=-3312">  true </param>  <!--  xi-              -->
+     <param type="bool" name="DecayParticleWithCode=3112">   true </param>  <!--  sigma-           -->
+     <param type="bool" name="DecayParticleWithCode=-3112">  true </param>  <!--  sigma-           -->
+     <param type="bool" name="DecayParticleWithCode=310">    false </param>  <!--  K0S              -->
+     <param type="bool" name="DecayParticleWithCode=3334">   true </param>  <!--  omega-           -->
+     <param type="bool" name="DecayParticleWithCode=-3334">  true </param>  <!--  omega-           -->
+     <param type="bool" name="DecayParticleWithCode=3222">   true </param>  <!--  sigma+           -->
+     <param type="bool" name="DecayParticleWithCode=-3222">  true </param>  <!--  sigma+           -->
+     <param type="bool" name="DecayParticleWithCode=5332">   true </param>  <!--  omega_b-         -->
+     <param type="bool" name="DecayParticleWithCode=-5332">  true </param>  <!--  omega_b-         -->
+     <param type="bool" name="DecayParticleWithCode=521">    true </param>  <!--  B+               -->
+     <param type="bool" name="DecayParticleWithCode=-521">   true </param>  <!--  B-               -->
+     <param type="bool" name="DecayParticleWithCode=5132">   true </param>  <!--  xi_b-            -->
+     <param type="bool" name="DecayParticleWithCode=-5132">  true </param>  <!--  xi_b-            -->
+     <param type="bool" name="DecayParticleWithCode=511">    true </param>  <!--  B0               -->
+     <param type="bool" name="DecayParticleWithCode=-511">   true </param>  <!--  B0               -->
+     <param type="bool" name="DecayParticleWithCode=531">    true </param>  <!--  Bs0              -->
+     <param type="bool" name="DecayParticleWithCode=-531">   true </param>  <!--  Bs0              -->
+     <param type="bool" name="DecayParticleWithCode=5232">   true </param>  <!--  xi_b0            -->
+     <param type="bool" name="DecayParticleWithCode=-5232">  true </param>  <!--  xi_b0            -->
+     <param type="bool" name="DecayParticleWithCode=5122">   true </param>  <!--  lambda_b         -->
+     <param type="bool" name="DecayParticleWithCode=-5122">  true </param>  <!--  lambda_b         -->
+     <param type="bool" name="DecayParticleWithCode=411">    true </param>  <!--  D+               -->
+     <param type="bool" name="DecayParticleWithCode=-411">   true </param>  <!--  D-               -->
+     <param type="bool" name="DecayParticleWithCode=541">    true </param>  <!--  Bc+              -->
+     <param type="bool" name="DecayParticleWithCode=-541">   true </param>  <!--  Bc-              -->
+     <param type="bool" name="DecayParticleWithCode=431">    true </param>  <!--  Ds+              -->
+     <param type="bool" name="DecayParticleWithCode=-431">   true </param>  <!--  Ds-              -->
+     <param type="bool" name="DecayParticleWithCode=4232">   true </param>  <!--  xi_c+            -->
+     <param type="bool" name="DecayParticleWithCode=-4232">  true </param>  <!--  xi_c+            -->
+     <param type="bool" name="DecayParticleWithCode=421">    true </param>  <!--  D0               -->
+     <param type="bool" name="DecayParticleWithCode=-421">   true </param>  <!--  anti_D0          -->
+     <param type="bool" name="DecayParticleWithCode=4122">   true </param>  <!--  lambda_c+        -->
+     <param type="bool" name="DecayParticleWithCode=-4122">  true </param>  <!--  lambda_c+        -->
+
+     <param type="bool" name="DecayParticleWithCode=113">    true </param>  <!--  rho(770)0        -->
+     <param type="bool" name="DecayParticleWithCode=-113">   true </param>  <!--  rho(770)0        -->
+     <param type="bool" name="DecayParticleWithCode=221">    true </param>  <!--  eta              -->
+     <param type="bool" name="DecayParticleWithCode=-221">   true </param>  <!--  eta              -->
+     <param type="bool" name="DecayParticleWithCode=213">    true </param>  <!--  rho(770)+        -->
+     <param type="bool" name="DecayParticleWithCode=-213">   true </param>  <!--  rho(770)+        -->
+     <param type="bool" name="DecayParticleWithCode=4212">   true </param>  <!--  sigma+_c         -->
+     <param type="bool" name="DecayParticleWithCode=-4212">  true </param>  <!--  sigma+_c         -->
+     <param type="bool" name="DecayParticleWithCode=4222">   true </param>  <!--  sigma++_c        -->
+     <param type="bool" name="DecayParticleWithCode=-4222">  true </param>  <!--  sigma++_c        -->
+     <param type="bool" name="DecayParticleWithCode=3212">   true </param>  <!--  sigma0           -->
+     <param type="bool" name="DecayParticleWithCode=-3212">  true </param>  <!--  sigma0           -->     
+     
+     <param type="bool" name="DecayParticleWithCode=4132">   true </param>  <!--  xi_c0            -->
+     <param type="bool" name="DecayParticleWithCode=-4132">  true </param>  <!--  xi_c0            -->
+     <param type="bool" name="DecayParticleWithCode=4332">   true </param>  <!--  omega_c0         -->
+     <param type="bool" name="DecayParticleWithCode=-4332">  true </param>  <!--  omega_c0         -->
+     <param type="bool" name="DecayParticleWithCode=111">    false </param>  <!--  pi0              -->
+
+  </param_set>
+
+</common_Decay_list>

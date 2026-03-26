@@ -44,6 +44,10 @@ cp ${INPUTS_DIR}/${GEOM} .
 ## Get a hacked PDG table to include O11 (GENIE issue #305 on their github)
 cp ${INPUTS_DIR}/mod_genie_pdg_table.txt .
 
+## Sort out the decay behaviour
+mkdir xml_override
+cp ${INPUTS_DIR}/CommonDecay.xml xml_override/.
+
 ## This is... pretty bad practice. Copy the run script and any library functions in the directory...
 cp ${INPUTS_DIR}/../*.py .
 
@@ -57,6 +61,7 @@ shifter --entrypoint --module=cvmfs --image=docker:wilkinsonnu/nuisance_project:
 	export GENIE_PDG_TABLE=mod_genie_pdg_table.txt; \
 	gevgen -n ${NEVENTS} -t ${TARG} -p ${NU_PDG} \
         --cross-sections ${GENIE_TUNE}_splines.xml.gz \
+	--xml_path xml_override \
         --tune ${GENIE_TUNE} --seed ${SEED} \
         -f ${FLUX_FILE},${FLUX_HIST} -e ${E_MIN},${E_MAX} -o ${OUTFILE_ROOT}_GHEP.root &> /dev/null"
 
