@@ -167,7 +167,168 @@ def get_truth_labels(vertex, groo):
         
     return labels
 
+## Find the ids of primary particles with a given PDG
+def get_traj_ids_for_pdg(particles, pdgs):
+
+    ## Loop over the truth trajectories
+    ## Keep track of track ids if the PDG code is the one we desire
+    return tuple(x.GetTrackId() for x in particles if x.GetPDGCode() in pdgs)
+
+## We want to ignore all hits produced by neutrons or their daughters
+## So, make a set of all true trajectories that are neutrons or their descendants 
+def get_neutron_and_daughter_ids(event):
     
+    neutrons  = set()
+    daughters = set()
+    
+    for traj in event.Trajectories:
+        
+        if traj.GetPDGCode() == 2112:
+            neutrons .add(traj.GetTrackId())
+            continue
+        par_id = traj.GetParentId()
+        if par_id in neutrons or par_id in daughters:
+            daughters .add(traj.GetTrackId())
+
+    return neutrons.union(daughters)
+
+## Also allow hits produced by K0L to escape
+def get_k0l_ids(event):
+    
+    k0ls  = set()
+    daughters = set()
+    
+    for traj in event.Trajectories:
+        
+        if traj.GetPDGCode() == 130:
+            k0ls .add(traj.GetTrackId())
+            continue
+        par_id = traj.GetParentId()
+        if par_id in k0ls or par_id in daughters:
+            daughters .add(traj.GetTrackId())
+
+    return k0ls.union(daughters)
+
+## Get a set of trajectory IDs with total energy < 10 MeV
+## This is a semi-arbitrary cut-off to ignore delta rays and
+## other low-energy stuff that leaks out of the detector
+def get_low_energy_ids(event, low_E_cut=10):
+    return set(x.GetTrackId() for x in event.Trajectories if x.GetInitialMomentum().E() < low_E_cut)
+
+
+def exit_downstream(point, box_size):
+
+    px = point[0]
+    py = point[1]
+    pz = point[2]
+
+    ## Shortcut negative z values
+    if pz <= 0: return False
+    
+    hx = box_size[0]/2
+    hy = box_size[1]/2
+    hz = box_size[2]/2
+
+    x_hit = px * hz / pz
+    y_hit = py * hz / pz
+
+    return abs(x_hit) <= hx and abs(y_hit) <= hy
+
+
+## Check whether the muon exits
+def exiting_muon(event, muon_id, box_size, downstream=False):
+
+    ## Loop over detector segments
+    for seg in event.SegmentDetectors:
+        nChunks = len(seg[1])
+        for n in range(nChunks):
+            
+            ## Get the primary id that is associated with this segment
+            key_contrib = seg[1][n].GetContributors()[0]
+
+            ## Only consider contributions that can be tracked back to the primary muon
+            if key_contrib != muon_id: continue
+
+            pos = seg[1][n].GetStop()
+
+            ## If it exits out of z, treat in a special way
+            if abs(pos[2]) > box_size[2]/2.:
+
+                ## If we require a downstream muon, check
+                if downstream: return exit_downstream(pos, box_size)
+                else: return True
+
+            ## If not, consider x and y
+            if abs(pos[0]) > box_size[0]/2.:
+                if downstream: return False
+                else: return True
+            if abs(pos[1]) > box_size[1]/2.:
+                if downstream: return False
+                else: return True
+
+    return False
+
+
+## This is designed to select a set of events in which:
+## - The muon exits the volume of interest
+## - (Optionally) the muon exits downstream, aka in the +z direction
+## - No other activity escapes the volume of interest except for neutrons or low energy junk, or neutrinos
+## - Where the volume of interest can be a defined cube of voxels
+## - It simply returns true or false
+def cc_contained_cut(event, box_size, downstream=True):
+    
+    ## Get the primary lepton (assumes a well ordered stack)
+    out_lep = event.Primaries[0].Particles[0]
+
+    ## Check this is a numuCC event
+    if abs(out_lep.GetPDGCode()) != 13: return False
+
+    ## Check if the muon exits
+    if not exiting_muon(event, out_lep.GetTrackId(), box_size, downstream): return False
+    
+    ## Get all neutrons and neutron descendents in the event
+    neutron_ids = get_neutron_and_daughter_ids(event)
+    
+    ## Get a list of low energy truth trajectories (may be quite long)
+    low_energy_ids = get_low_energy_ids(event)
+    
+    ## Loop over detector segments
+    for seg in event.SegmentDetectors:        
+        ## seg[0] is the detector volume (named according to the gdml file tag)
+        ## seg[1] is an array of segments in the volume
+        
+        ## Loop over the segments in the volume
+        nChunks = len(seg[1])
+        for n in range(nChunks):
+            
+            ## Get the truth trajectory ID that is the primary contributor to this segment
+            ## (Multiple particles can deposit energy at the same point in space, hence the ambiguity)
+            key_contrib = seg[1][n].GetContributors()[0]
+            par_contrib = seg[1][n].GetPrimaryId()
+
+            ## Take primary muon out
+            if par_contrib == out_lep.GetTrackId(): continue
+            
+            ## Did this segment come (mostly) from a neutron or a descendant from a neutron?
+            if key_contrib in neutron_ids: continue
+
+            ## Also ignore k0L for this
+            if key_contrib in get_k0l_ids(event): continue
+            
+            ## Skip anything which is very low energy (delta rays often escape the volume and distort the containment numbers)
+            if key_contrib in low_energy_ids: continue
+            
+            ## See if this is outside my "contained" box
+            pos = seg[1][n].GetStop()
+
+            if abs(pos[0]) > box_size[0]/2.: return False
+            if abs(pos[1]) > box_size[1]/2.: return False
+            if abs(pos[2]) > box_size[2]/2.: return False
+            
+    ## If we got here, it's good!
+    return True
+
+
 ## How do we deal with events where nothing happens...?
 def get_3D_image_from_event(event, origin, voxel_size):
     
@@ -260,7 +421,13 @@ def get_3D_image_from_event(event, origin, voxel_size):
     return coords, values
 
 
-def make_images(infilelist, output_file_name, image_size, min_hits, threshold):
+def make_images(infilelist,
+                output_file_name,
+                image_size,
+                box_size,
+                exit_downstream,
+                min_hits,
+                threshold):
 
     output_size = np.array([image_size, image_size, image_size])
     
@@ -276,6 +443,9 @@ def make_images(infilelist, output_file_name, image_size, min_hits, threshold):
 
     ## Origin for the grid, offset to avoid the vertex being at a bin edge, maybe better to jitter?
     origin = voxel_size/2
+
+    ## Change box_size to a real physical size
+    if box_size is not None: box_size *= voxel_size
     
     ## Get the file(s)
     edep_tree = ROOT.TChain("EDepSimEvents")
@@ -296,6 +466,7 @@ def make_images(infilelist, output_file_name, image_size, min_hits, threshold):
     label_list = []
 
     nrejected = 0
+    nselected = 0
     
     ## Loop over events
     nevts  = edep_tree.GetEntries()
@@ -305,6 +476,11 @@ def make_images(infilelist, output_file_name, image_size, min_hits, threshold):
 
         ## Add a check for empty images
         if len(event.Trajectories) <=1: continue
+
+        ## Apply pre-selection
+        if box_size is not None:
+            if not cc_contained_cut(event, box_size, exit_downstream): continue
+        nselected += 1 
         
         coords_3d_raw, values_3d_raw = get_3D_image_from_event(event, origin, voxel_size)
 
@@ -386,7 +562,10 @@ def make_images(infilelist, output_file_name, image_size, min_hits, threshold):
             group.attrs['shape'] = np.array(sparse_image.shape, dtype=np.uint16)
             group.attrs['event_id'] = np.uint32(event_id)
 
-    print("Rejected", nrejected, "/", nevts, "events")
+    ## Report summary
+    print("Selected", nselected, "/", nevts, "events")
+    print("Of which", nrejected, "cut with N. hits <", min_hits)
+    print("Saved:", nselected - nrejected)
     ## Done
     
     
@@ -400,13 +579,19 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=str)
 
     ## Image size option
-    parser.add_argument('--image_size', type=int, default=256, nargs='?')    
+    parser.add_argument('--image_size', type=int, default=512)    
+
+    ## Box size for containment (not necessarily the same as image size)
+    parser.add_argument('--box_size', type=int, default=256)
+
+    ## Do we require the muon to exit downstream of the box (if it exists)
+    parser.add_argument('--exit_downstream', type=int, default=1)
     
     ## Allow a minimum number of hits cut
-    parser.add_argument('--min_hits', type=int, default=1, nargs='?')
+    parser.add_argument('--min_hits', type=int, default=1)
 
     ## Add a threshold option
-    parser.add_argument('--threshold', type=float, default=0, nargs='?')
+    parser.add_argument('--threshold', type=float, default=0)
     
     # Parse arguments from command line
     args = parser.parse_args()
@@ -414,4 +599,10 @@ if __name__ == '__main__':
     ## Report arguments
     for arg in vars(args): print(arg, getattr(args, arg))
 
-    make_images(args.input, args.output, args.image_size, args.min_hits, args.threshold)
+    make_images(args.input,
+                args.output,
+                args.image_size,
+                args.box_size,
+                args.exit_downstream,
+                args.min_hits,
+                args.threshold)
