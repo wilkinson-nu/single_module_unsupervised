@@ -133,10 +133,12 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if x != 111]
     labels["nkapm"] = sum(1 for x in pdg_list if abs(x) == 321)
     pdg_list = [x for x in pdg_list if abs(x) != 321]
-    labels["nka0"] = sum(1 for x in pdg_list if abs(x) in [311, 130])
-    pdg_list = [x for x in pdg_list if abs(x) not in [311, 130]]
+    labels["nka0"] = sum(1 for x in pdg_list if abs(x) in [310, 311])
+    pdg_list = [x for x in pdg_list if abs(x) not in [310, 311]]
     labels["nem"] = sum(1 for x in pdg_list if abs(x) not in [22, 11])
     pdg_list = [x for x in pdg_list if abs(x) not in [22, 11]]
+    labels["nlambda0"] = sum(1 for x in pdg_list if abs(x) == 3122)
+    pdg_list = [x for x in pdg_list if abs(x) != 3122]    
     labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3122, 3112, 3212])
     pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3122, 3112, 3212]]    
     labels["ncharm"] = sum(1 for x in pdg_list if abs(x) in [411, 4122, 421, 4212, 4222, 431])
