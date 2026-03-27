@@ -167,13 +167,6 @@ def get_truth_labels(vertex, groo):
         
     return labels
 
-## Find the ids of primary particles with a given PDG
-def get_traj_ids_for_pdg(particles, pdgs):
-
-    ## Loop over the truth trajectories
-    ## Keep track of track ids if the PDG code is the one we desire
-    return tuple(x.GetTrackId() for x in particles if x.GetPDGCode() in pdgs)
-
 ## We want to ignore all hits produced by neutrons or their daughters
 ## So, make a set of all true trajectories that are neutrons or their descendants 
 def get_neutron_and_daughter_ids(event):
@@ -291,6 +284,9 @@ def cc_contained_cut(event, box_size, downstream=True):
     
     ## Get a list of low energy truth trajectories (may be quite long)
     low_energy_ids = get_low_energy_ids(event)
+
+    ## Get a list of k0l daughters
+    k0l_ids = get_k0l_ids(event)
     
     ## Loop over detector segments
     for seg in event.SegmentDetectors:        
@@ -313,7 +309,7 @@ def cc_contained_cut(event, box_size, downstream=True):
             if key_contrib in neutron_ids: continue
 
             ## Also ignore k0L for this
-            if key_contrib in get_k0l_ids(event): continue
+            if key_contrib in k0l_ids: continue
             
             ## Skip anything which is very low energy (delta rays often escape the volume and distort the containment numbers)
             if key_contrib in low_energy_ids: continue
