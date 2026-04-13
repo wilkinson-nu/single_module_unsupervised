@@ -216,7 +216,7 @@ def get_clusthead(nchan, args):
         clust_head = ClusteringHeadThreeLayer(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn, apply_bn=True)
     elif args.clust_arch == "three":
         clust_head = ClusteringHeadThreeLayer(nchan, args.nclusters, getattr(args, "nhidden", -1), args.softmax_temp, hidden_act_fn, apply_bn=False)
-    elif clust_head == "logits":
+    elif args.clust_arch == "logits":
         clust_head = ClusteringHeadLogits(nchan, args.nclusters, getattr(args, "nhidden", -1), hidden_act_fn, apply_bn=False)
         
     return clust_head
