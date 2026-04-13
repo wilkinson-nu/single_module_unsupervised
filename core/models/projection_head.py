@@ -48,6 +48,7 @@ class ProjectionHeadTwoLayer(nn.Module):
         if self.apply_bn: proj['norm1'] = nn.BatchNorm1d(self.nhidden)
         proj['act1'] = self.hidden_act_fn()
         proj['lin2'] = nn.Linear(self.nhidden, self.nlatent, bias=False)
+        if self.apply_bn: proj['norm2'] = nn.BatchNorm1d(self.nlatent)
         return nn.Sequential(proj)
         
     def initialize_weights(self):
@@ -68,6 +69,7 @@ class ProjectionHeadTwoLayer(nn.Module):
         if self.apply_bn: h1 = self.proj.norm1(h1)
         h1 = self.proj.act1(h1)
         out = self.proj.lin2(h1)
+        if self.apply_bn: out = self.proj.norm2(out)
 
         if return_hidden:
             return {"proj_layer1": h1_logits,
@@ -104,6 +106,7 @@ class ProjectionHeadThreeLayer(nn.Module):
         if self.apply_bn: proj['norm2'] = nn.BatchNorm1d(self.nhidden)
         proj['act2'] = self.hidden_act_fn()
         proj['lin3'] = nn.Linear(self.nhidden, self.nlatent, bias=False)
+        if self.apply_bn: proj['norm3'] = nn.BatchNorm1d(self.nlatent)
         return nn.Sequential(proj)
 
     def initialize_weights(self):
@@ -130,7 +133,8 @@ class ProjectionHeadThreeLayer(nn.Module):
         if self.apply_bn: h2 = self.proj.norm2(h2)
         h2 = self.proj.act2(h2)
         out = self.proj.lin3(h2)
-
+        if self.apply_bn: out = self.proj.norm3(out)
+        
         if return_hidden:
             return {"proj_layer1": h1_logits,
                     "proj_layer2": h2_logits,
