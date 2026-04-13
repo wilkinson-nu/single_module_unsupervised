@@ -139,8 +139,8 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if abs(x) not in [22, 11]]
     labels["nlambda0"] = sum(1 for x in pdg_list if abs(x) == 3122)
     pdg_list = [x for x in pdg_list if abs(x) != 3122]    
-    labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3122, 3112, 3212])
-    pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3122, 3112, 3212]]    
+    labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3112, 3212])
+    pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3112, 3212]]    
     labels["ncharm"] = sum(1 for x in pdg_list if abs(x) in [411, 4122, 421, 4212, 4222, 431])
     pdg_list = [x for x in pdg_list if abs(x) not in [411, 4122, 421, 4212, 4222, 431]]       
     labels["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
