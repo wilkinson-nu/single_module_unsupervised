@@ -40,6 +40,9 @@ University of Liverpool
      <param type="bool" name="DecayParticleWithCode=3112">   true </param>  <!--  sigma-           -->
      <param type="bool" name="DecayParticleWithCode=-3112">  true </param>  <!--  sigma-           -->
      <param type="bool" name="DecayParticleWithCode=310">    false </param>  <!--  K0S              -->
+     <param type="bool" name="DecayParticleWithCode=130">    false </param>  <!--  K0L              -->
+     <param type="bool" name="DecayParticleWithCode=311">    false </param>  <!--  K0 flavor      -->
+     <param type="bool" name="DecayParticleWithCode=-311">    false </param>  <!--  K0 flavor      -->
      <param type="bool" name="DecayParticleWithCode=3334">   true </param>  <!--  omega-           -->
      <param type="bool" name="DecayParticleWithCode=-3334">  true </param>  <!--  omega-           -->
      <param type="bool" name="DecayParticleWithCode=3222">   true </param>  <!--  sigma+           -->
