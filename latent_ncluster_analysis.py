@@ -33,7 +33,7 @@ from core.data.augmentations_2d import CenterCrop
 from core.data.augmentations_2d import FirstRegionCrop
 from datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
 from analysis.geometry_utils import plot_spectrum, pca_spectrum, cosine_spectrum
-from analysis.geometry_utils import plot_similarity_distributions
+from analysis.geometry_utils import plot_similarity_distributions, plot_cumulative_variance
 from analysis.geometry_utils import preprocess_embeddings
 
 
@@ -75,13 +75,15 @@ def get_nom_transform(experiment):
     ## If the experiment name was unrecognised, nope out
     raise ValueError("Unknown experiment name:", experiment)
 
-def process_one(ncluster, latent, nattempts):
+## A simple wrapper for parallel kmeans processing
+def parallel_faiss_kmeans(ncluster, latent, nattempts, spherical):
     print("Processing ncluster =", ncluster)
 
     labels, metrics, _ = run_faiss_kmeans(latent, 
                                           ncluster,
                                           nattempts=nattempts,
-                                          verbose=False
+                                          verbose=False,
+                                          spherical=spherical
                                           )
     print("Finished ncluster =", ncluster)
     return ncluster, labels, metrics
@@ -116,10 +118,14 @@ def run_analysis(args):
 
         pca_eigvals = pca_spectrum(nom_processed[latent_name])
         plot_spectrum(pca_eigvals, save_name=args.out_name_root+"_pcaeigvals_"+latent_name+".png")
+        plot_spectrum(pca_eigvals, save_name=args.out_name_root+"_pcaeigvals_"+latent_name+"_max250.png", xlim=250)
+        
+        plot_cumulative_variance(pca_eigvals, save_name=args.out_name_root+"_cumpcavar_"+latent_name+".png")
+        plot_cumulative_variance(pca_eigvals, xlim=1000, save_name=args.out_name_root+"_cumpcavar_"+latent_name+"_max1000.png")        
         
         cosine_eigvals = cosine_spectrum(nom_processed[latent_name])
         plot_spectrum(cosine_eigvals, save_name=args.out_name_root+"_simeigvals_"+latent_name+".png")
-
+        plot_spectrum(cosine_eigvals, save_name=args.out_name_root+"_simeigvals_"+latent_name+"_max250.png", xlim=250)
         
     ## Get pre-processed embeddings
     X_pca50_spherical = preprocess_embeddings(
@@ -146,9 +152,9 @@ def run_analysis(args):
         spherical=True
     )
 
-    X_pca256_euclidean = preprocess_embeddings(
+    X_pca100_euclidean = preprocess_embeddings(
         nom_processed['encoder'],
-        pca=256,
+        pca=100,
         drop_first_pca=False,
         whiten=True,
         spherical=False
@@ -157,7 +163,7 @@ def run_analysis(args):
     ## t-SNE examples
     print("Starting tSNE...")
     tsne_results_euclidean = compute_tsne_cuml(X_pca50_euclidean,
-                                               perp=100, exag=20, lr=500,
+                                               perp=150, exag=20, lr=500,
                                                metric="euclidean",
                                                verbose=False)
 
@@ -165,7 +171,7 @@ def run_analysis(args):
                     save_name=args.out_name_root+"_euclidean_tsne_block.png")
 
     tsne_results_spherical = compute_tsne_cuml(X_pca50_spherical,
-                                               perp=100, exag=20, lr=500,
+                                               perp=150, exag=20, lr=500,
                                                metric="cosine",
                                                verbose=False)
     
@@ -173,45 +179,24 @@ def run_analysis(args):
                     save_name=args.out_name_root+"_spherical_tsne_block.png")
 
 
-    ## Now sort out the 
+    ## Now run k-means over a variety of different ncluster possibilities
     ncluster_list = [n for n in range(args.clust_min, args.clust_max+1, args.clust_step)]
 
-    ## Loop over the clusters
-    euclidean_results = []
-    spherical_results = []
-    for ncluster in ncluster_list:
-        labels, metrics, _ = run_faiss_kmeans(X_pca256_euclidean,
-                                              ncluster,
-                                              nattempts=args.nattempts,
-                                              verbose=False,
-                                              spherical=False
-                                              )
-        euclidean_results.append(tuple(ncluster, labels, metrics))
+    ## Process euclidean k-means
+    print("Running euclidean k-means...")
+    euclidean_results = Parallel(
+        n_jobs = args.ngpus,
+        prefer="processes"
+    )(
+        delayed(parallel_faiss_kmeans)(
+            ncluster,
+            X_pca100_euclidean,
+            nattempts=args.nattempts,
+            spherical=False
+            )
+        for ncluster in ncluster_list
+    )
 
-        labels, metrics, _ = run_faiss_kmeans(X_pca256_spherical,
-                                              ncluster,
-                                              nattempts=args.nattempts,
-                                              verbose=False,
-                                              spherical=True
-                                              )
-        spherical_results.append(tuple(ncluster, labels, metrics))
-        
-        
-    ## Can more dynamically pick
-    ## n_jobs = 1
-    ## 
-    ## ## Spawn parallel clustering jobs
-    ## results = Parallel(
-    ##     n_jobs=n_jobs,
-    ##     prefer="processes"
-    ## )(
-    ##     delayed(process_one)(
-    ##         ncluster, nom_processed['encoder'][:ntsne].copy(), args.nattempts
-    ##     )
-    ##     for ncluster in ncluster_list
-    ## )
-
-    print("Making summary plots...")
     sil_euclidean = []
     ch_euclidean = []
     db_euclidean = []
@@ -231,6 +216,21 @@ def run_analysis(args):
     plot_metric(ncluster_list, ch_euclidean, "Calinski–Harabasz Index", args.out_name_root+"_euclidean_ch.png")
     plot_metric(ncluster_list, db_euclidean, "Davies–Bouldin Index", args.out_name_root+"_euclidean_db.png")
 
+
+    ## Process spherical k-means
+    print("Running spherical k-means...")
+    spherical_results = Parallel(
+        n_jobs = args.ngpus,
+        prefer="processes"
+    )(
+        delayed(parallel_faiss_kmeans)(
+            ncluster,
+            X_pca256_spherical,
+            nattempts=args.nattempts,
+            spherical=True
+            )
+        for ncluster in ncluster_list
+    )    
 
     sil_spherical = []
     ch_spherical = []
@@ -267,15 +267,18 @@ if __name__ == '__main__':
     parser.add_argument('--experiment', type=str)
     
     ## Give a sensible default for the number of events to process
-    parser.add_argument('--nevents', type=int, default=50000, nargs='?')
+    parser.add_argument('--nevents', type=int, default=50000)
+
+    ## Allow use of multiple GPUs
+    parser.add_argument('--ngpus', type=int) #, default=1)
 
     ## Options for stepping through nclusters
-    parser.add_argument('--clust_min', type=int, default=10, nargs='?')
-    parser.add_argument('--clust_max', type=int, default=60, nargs='?')
-    parser.add_argument('--clust_step', type=int, default=10, nargs='?')  
-
+    parser.add_argument('--clust_min', type=int, default=10)
+    parser.add_argument('--clust_max', type=int, default=60)
+    parser.add_argument('--clust_step', type=int, default=10)
+    
     ## Options for faiss
-    parser.add_argument('--nattempts', type=int, default=10, nargs='?')    
+    parser.add_argument('--nattempts', type=int, default=10)
     
     ## Parse arguments from command line
     args = parser.parse_args()
