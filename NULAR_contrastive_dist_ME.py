@@ -8,6 +8,7 @@ import MinkowskiEngine as ME
 import torch
 import time
 import math
+from collections import defaultdict
 
 ## The parallelisation libraries
 import torch.distributed as dist
@@ -16,6 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data import ConcatDataset
 from torch import nn
+from torch.nn.utils import clip_grad_norm_
 
 ## Includes from my libraries for this project
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
@@ -25,6 +27,7 @@ from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment
+from core.training.lars import LARS, LARS_LRScheduler
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -71,6 +74,12 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
                                              sampler=sampler)
     return dataloader
 
+## A simply logging utility
+def log_scalar(writer, metrics, name, value, step):
+    if writer is not None:
+        writer.add_scalar(name, value, step)
+    metrics[name].append(value)
+    
 def manage_cuda_memory(rank, gpu_threshold):
     """Check and clear GPU memory if it exceeds the threshold."""
     if torch.cuda.memory_allocated(rank) > gpu_threshold:
@@ -99,10 +108,15 @@ def load_checkpoint(encoder, heads, optimizer, state_file_name):
         key = f'{name}_head_state_dict'
         if key in checkpoint:
             head.module.load_state_dict(checkpoint[key])
-    
-    return checkpoint['epoch'] + 1
 
-def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, loss, acc, args):
+    ## Load metrics
+    metrics = defaultdict(list, checkpoint.get("metrics", {}))
+    
+    start_epoch = checkpoint['epoch'] + 1
+
+    return start_epoch, metrics
+
+def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metrics, args):
 
     state_dict = {
         'epoch': iteration,
@@ -110,8 +124,7 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, loss,
         'optimizer_state_dict': optimizer.state_dict(),
         'rng_state': torch.get_rng_state(),
         'cuda_rng_state': torch.cuda.get_rng_state_all(),
-        'loss': loss,
-        'acc': acc,
+        'metrics': dict(metrics),
         'args':vars(args)
     }
 
@@ -137,29 +150,49 @@ def get_dataset(args, rank=0):
     
     return data_dataset
 
-def get_scheduler(args, optimizer):
+
+def get_opt_and_sched(args, encoder, heads, total_steps):
+
     scheduler = None
-    if args.scheduler == "onecycle":
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=args.nstep, cycle_momentum=False)
-    if args.scheduler == "step":
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
-                                                   milestones=[150,300,450],
-                                                   gamma=0.1,
-                                                   last_epoch=-1,
-                                                   verbose=False)
-    if args.scheduler == "plateau":
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                         mode='min',
-                                                         factor=0.2,
-                                                         patience=0,
-                                                         cooldown=2,
-                                                         threshold=5e-3,
-                                                         threshold_mode='rel')
-    return scheduler
+    optimizer = None
+
+    ## Sort out the optimizer (one for each GPU...)
+    if args.optimizer == 'lars':
+        param_groups = build_param_groups_LARS(encoder, heads, args.weight_decay)
+        
+        corr_lr = args.lr * (args.batch_size*args.world_size / 256)
+        optimizer = LARS(
+            param_groups,
+            lr=corr_lr,
+            momentum=args.lars_momentum,
+            trust_coef=args.lars_trust_coeff,
+        )
+
+        warmup_steps = int(0.05 * total_steps)
+        scheduler = LARS_LRScheduler(optimizer, warmup_steps, total_steps, lr_max=args.lr, lr_min=0.0)
+
+    ## Default to adam
+    else:
+        param_groups = build_param_groups_ADAM(encoder, heads, args.weight_decay)
+
+        optimizer = torch.optim.AdamW(
+            param_groups,
+            lr=args.lr,
+        )
+        if args.scheduler == "onecycle":
+            scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=total_steps, cycle_momentum=False)
+        if args.scheduler == "step":
+            scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
+                                                       milestones=[150,300,450],
+                                                       gamma=0.1,
+                                                       last_epoch=-1,
+                                                       verbose=False)
+    return optimizer, scheduler
 
 ## Some diagnostic functions
 @torch.no_grad()
 def log_grad_norm(module, tag, writer, iteration):
+    if writer is None: return
     total = 0.0
     for name, p in module.named_parameters():
         if p.grad is None:
@@ -173,6 +206,7 @@ def log_grad_norm(module, tag, writer, iteration):
 
 @torch.no_grad()
 def log_grad_rms(module, tag, writer, iteration):
+    if writer is None: return
     vals = []
     for name, p in module.named_parameters():
         if p.grad is None:
@@ -186,6 +220,7 @@ def log_grad_rms(module, tag, writer, iteration):
 
 @torch.no_grad()
 def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
+    if writer is None: return
     g2 = 0.0
     w2 = 0.0
     
@@ -201,7 +236,84 @@ def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
 
     writer.add_scalar(f'grads/{tag}/sum_grad_over_wgt', (g2**0.5)/(w2**0.5 + eps), iteration)
     return
+
+@torch.no_grad()
+def effective_dimension(buffer, world_size):
+
+    this_local = torch.cat(buffer, dim=0)
+    this_list = [torch.zeros_like(this_local) for _ in range(world_size)]
+    dist.all_gather(this_list, this_local)
+    z = torch.cat(this_list, dim=0)
     
+    z = nn.functional.normalize(z, dim=1)
+    z = z - z.mean(dim=0, keepdim=True)
+
+    s = torch.linalg.svdvals(z)
+    eigvals = (s ** 2) / (z.shape[0] - 1)
+
+    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
+
+    lambda1_ratio = eigvals.max() / eigvals.sum()
+
+    return deff.item(), lambda1_ratio.item(), eigvals[:10].cpu()
+
+def build_param_groups_ADAM(encoder, heads, weight_decay):
+
+    decay = []
+    no_decay = []
+
+    for name, param in encoder.named_parameters():
+        if not param.requires_grad:
+            continue
+        
+        if (param.ndim == 1
+            or name.endswith(".bias")):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+        
+    head_pars = []
+    for module in list(heads.values()):
+        for name, param in module.named_parameters():
+            if not param.requires_grad:
+                continue
+            head_pars.append(param)
+                
+    return [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+	{"params": head_pars, "weight_decay": 0.0},
+    ]
+
+def build_param_groups_LARS(encoder, heads, weight_decay):
+
+    lars_params = []
+    no_lars_params = []
+
+    for name, param in encoder.named_parameters():
+        if not param.requires_grad:
+            continue
+        
+        if (param.ndim == 1
+            or name.endswith(".bias")):
+            no_lars_params.append(param)
+        else:
+            lars_params.append(param)
+
+    head_pars = []
+    for module in list(heads.values()):
+        for name, param in module.named_parameters():
+            if not param.requires_grad:
+                continue
+            head_pars.append(param)
+            
+    return [
+        {"params": lars_params, "weight_decay": weight_decay},
+        {"params": no_lars_params, "weight_decay": 0.0, "lars_exclude": True},
+        {"params": head_pars, "weight_decay": 0.0},
+    ]
+
+
 ## Wrapped training function
 def run_training(rank, world_size, args):
 
@@ -251,23 +363,25 @@ def run_training(rank, world_size, args):
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
     train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, 16)
-
+    nbatches   = len(train_loader)
+    
     ## So we don't constantly ask args
     num_iterations = args.nstep
     log_dir = args.log
     instance_scale = args.instance_scale
+    clip_gradients = bool(args.clip_gradients)
+    norm_encoder = bool(args.norm_encoder)
     
-    if rank==0:
+    writer = None
+    if rank==0 and log_dir is not None:
         print("Training with", num_iterations, "iterations")
-        if log_dir: writer = SummaryWriter(log_dir=log_dir)
+        writer = SummaryWriter(log_dir=log_dir)
 
     ## Sort out the optimizer (one for each GPU...)
-    params_to_optimize = [{'params': encoder.parameters()}] + [
-        {'params': h.parameters()} for h in heads.values()
-    ]
-    optimizer = torch.optim.AdamW(params_to_optimize, lr=args.lr, weight_decay=args.weight_decay)
-
-    scheduler = get_scheduler(args, optimizer)
+    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nbatches*args.nstep)
+    
+    ## Set up metrics
+    metrics = defaultdict(list)
     
     ## Load the checkpoint if one has been given
     start_iteration = 0
@@ -275,7 +389,7 @@ def run_training(rank, world_size, args):
         if not args.state_file:
             if rank==0: print("Restart requested, but no state file provided, aborting")
             sys.exit()
-        start_iteration = load_checkpoint(encoder, heads, optimizer, args.state_file)
+        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, args.state_file)
         if rank==0: print("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
@@ -285,8 +399,6 @@ def run_training(rank, world_size, args):
             sys.exit()
         load_pretrained(encoder, heads, args.pretrained)
         
-    if rank==0 and args.log: writer = SummaryWriter(log_dir=log_dir)
-
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
 
@@ -306,7 +418,10 @@ def run_training(rank, world_size, args):
         total_clust_align_tensor = torch.tensor(0.0, device=device)
         total_clust_unif_tensor = torch.tensor(0.0, device=device)
 
-        nbatches   = len(train_loader)
+        ## Add more monitoring tools
+        deff_batches = 10
+        deff_buffer_enc = []
+        deff_buffer_proj = []
         
         # Set train mode for the encoder and any heads
         encoder.train()
@@ -323,6 +438,11 @@ def run_training(rank, world_size, args):
             ## Now do the forward passes
             encoded_instance_batch, encoded_cluster_batch = encoder(cat_batch, this_batch_size)
 
+            ## This is probably an unnecessary check, but keep it for testing
+            if norm_encoder:
+                encoded_cluster_batch = torch.nn.functional.normalize(encoded_cluster_batch, p=2, dim=1)
+                encoded_instance_batch = torch.nn.functional.normalize(encoded_instance_batch, p=2, dim=1)
+                
             ## Keep track of the total loss
             tot_loss = torch.tensor(0.0, device=device)
 
@@ -337,7 +457,13 @@ def run_training(rank, world_size, args):
             total_enc_unif_tensor += uniformity(encoded_instance_batch)
             total_proj_align_tensor += alignment(proj_batch)
             total_proj_unif_tensor += uniformity(proj_batch)
-            
+
+            ## Get a few batches for calculating the running deff
+            if len(deff_buffer_enc) < deff_batches:
+                with torch.no_grad():
+                    deff_buffer_enc.append(encoded_instance_batch[:this_batch_size].detach())
+                    deff_buffer_proj.append(proj_batch[:this_batch_size].detach())
+        
             ## Optionally deal with clustering loss
             if "clust" in heads:
                 clust_batch = heads["clust"](encoded_cluster_batch)
@@ -352,8 +478,15 @@ def run_training(rank, world_size, args):
             # Backward pass
             optimizer.zero_grad()
             tot_loss .backward()
-            optimizer.step()            
 
+            if clip_gradients:
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
+                for h in heads.values(): torch.nn.utils.clip_grad_norm_(h.parameters(), max_norm=1.0)
+            
+            ## Update optimizer and scheduler
+            optimizer.step()
+            if scheduler: scheduler.step()
+            
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
             
@@ -388,48 +521,59 @@ def run_training(rank, world_size, args):
         av_clust_unif = total_clust_unif_tensor.item() / (nbatches * world_size)
         av_clust_align = total_clust_align_tensor.item() / (nbatches * world_size)
 
-        ## See if we have an LR scheduler...
-        if scheduler:
-            if args.scheduler == "plateau": scheduler.step(av_tot_loss)
-            else: scheduler.step()
+        ## Deal with the deff calculations
+        enc_deff, enc_l1_ratio, enc_top = effective_dimension(deff_buffer_enc, world_size)
+        proj_deff, proj_l1_ratio, proj_top = effective_dimension(deff_buffer_proj, world_size)
 
         ## Reporting, but only for rank 0
         if rank==0:
+            metrics["iteration"].append(iteration)
+            log_scalar(writer, metrics, 'loss/total', av_tot_loss, iteration)              
+            log_scalar(writer, metrics, 'loss/proj', av_losses["proj"], iteration)
 
-            if log_dir:
-                writer.add_scalar('loss/total', av_tot_loss, iteration)              
-                writer.add_scalar('loss/proj', av_losses["proj"], iteration)
-
-                ## Add metrics for debugging/training diagnostics
-                writer.add_scalar('monitor/proj_alignment', av_proj_align, iteration)
-                writer.add_scalar('monitor/proj_uniformity', av_proj_unif, iteration)
-                writer.add_scalar('monitor/enc_alignment', av_enc_align, iteration)
-                writer.add_scalar('monitor/enc_uniformity', av_enc_unif, iteration)
+            ## Add metrics for debugging/training diagnostics
+            log_scalar(writer, metrics, 'monitor/proj_alignment', av_proj_align, iteration)
+            log_scalar(writer, metrics, 'monitor/proj_uniformity', av_proj_unif, iteration)
+            log_scalar(writer, metrics, 'monitor/enc_alignment', av_enc_align, iteration)
+            log_scalar(writer, metrics, 'monitor/enc_uniformity', av_enc_unif, iteration)
                 
+            ## Extensive logging for gradient debugging
+            log_grad_norm(encoder.module, "encoder", writer, iteration)
+            log_grad_rms(encoder.module, "encoder", writer, iteration)
+            log_grad_over_wgt(encoder.module, "encoder", writer, iteration)
+
+            log_grad_norm(heads["proj"].module, "proj", writer, iteration)
+            log_grad_rms(heads["proj"].module, "proj", writer, iteration)
+            log_grad_over_wgt(heads["proj"].module, "proj", writer, iteration)
+
+            ## Eigenvalue debugging
+            log_scalar(writer, metrics, "eigen/enc_deff", enc_deff, iteration)
+            log_scalar(writer, metrics, "eigen/proj_deff", proj_deff, iteration)
+
+            log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_l1_ratio, iteration)
+            log_scalar(writer, metrics, "eigen/proj_l1_ratio", proj_l1_ratio, iteration)
+
+            for i,val in enumerate(enc_top):
+                log_scalar(writer, metrics, f"eigen/enc_lambda{i}", val, iteration)
+            for i,val in enumerate(proj_top):
+                log_scalar(writer, metrics, f"eigen/proj_lambda{i}", val, iteration)
+                    
+            if "clust" in heads:
+                log_scalar(writer, metrics, 'loss/clust', av_losses["clust"]+av_entropy, iteration)
+                log_scalar(writer, metrics, 'loss/entropy', av_entropy, iteration)
+                log_scalar(writer, metrics, 'loss/clust_only', av_losses["clust"], iteration)
+                log_scalar(writer, metrics, 'monitor/acc', av_acc, iteration)
+                log_scalar(writer, metrics, 'monitor/clust_alignment', av_clust_align, iteration)
+                log_scalar(writer, metrics, 'monitor/clust_uniformity', av_clust_unif, iteration)
+
                 ## Extensive logging for gradient debugging
-                log_grad_norm(encoder.module, "encoder", writer, iteration)
-                log_grad_rms(encoder.module, "encoder", writer, iteration)
-                log_grad_over_wgt(encoder.module, "encoder", writer, iteration)
-
-                log_grad_norm(heads["proj"].module, "proj", writer, iteration)
-                log_grad_rms(heads["proj"].module, "proj", writer, iteration)
-                log_grad_over_wgt(heads["proj"].module, "proj", writer, iteration)
-                
-                if "clust" in heads:
-                    writer.add_scalar('loss/clust', av_losses["clust"]+av_entropy, iteration)
-                    writer.add_scalar('loss/entropy', av_entropy, iteration)
-                    writer.add_scalar('loss/clust_only', av_losses["clust"], iteration)
-                    writer.add_scalar('monitor/acc', av_acc, iteration)
-                    writer.add_scalar('monitor/clust_alignment', av_clust_align, iteration)
-                    writer.add_scalar('monitor/clust_uniformity', av_clust_unif, iteration)
-
-                    ## Extensive logging for gradient debugging
-                    log_grad_norm(heads["clust"].module, "clust", writer, iteration)
-                    log_grad_rms(heads["clust"].module, "clust", writer, iteration)
-                    log_grad_over_wgt(heads["clust"].module, "clust", writer, iteration)
+                log_grad_norm(heads["clust"].module, "clust", writer, iteration)
+                log_grad_rms(heads["clust"].module, "clust", writer, iteration)
+                log_grad_over_wgt(heads["clust"].module, "clust", writer, iteration)
 
                 
-                if scheduler: writer.add_scalar('lr/train', scheduler.get_last_lr()[0], iteration)
+            if scheduler: 
+                log_scalar(writer, metrics, 'lr/train', scheduler.get_last_lr()[0], iteration)
 
             ## Build a string to report the outcome
             iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f}"
@@ -441,11 +585,11 @@ def run_training(rank, world_size, args):
 
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
-            save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, av_tot_loss, av_acc, args)
+            save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
         
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, av_tot_loss, av_acc, args)
+        save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
         if log_dir: writer.close()
 
     ## Clear things up
@@ -458,61 +602,58 @@ if __name__ == '__main__':
     ## Parse some args
     parser = argparse.ArgumentParser("NN training module")
 
-    # Add arguments
+    # Basic job setup
     parser.add_argument('--data_dir', type=str)
     parser.add_argument('--nevents', type=int)
-    parser.add_argument('--log', type=str)    
-    parser.add_argument('--lr', type=float)
+    parser.add_argument('--log', type=str, default=None)    
     parser.add_argument('--state_file', type=str)
+    parser.add_argument('--pretrained', type=str, default=None)
+    parser.add_argument('--nstep', type=int, default=200)
     
     ## World size is the number of GPUs
     parser.add_argument('--world_size', type=int)
-    
-    ## Optional
-    parser.add_argument('--pretrained', type=str, default=None)
-    parser.add_argument('--latent', type=int, default=128)
-    parser.add_argument('--nhidden', type=int, default=512)
-    parser.add_argument('--nclusters', type=int, default=20)
-    parser.add_argument('--nstep', type=int, default=200)
-    parser.add_argument('--nchan', type=int, default=64)
+
+    ## Training dynamics
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--batch_size', type=int, default=512)
+    parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--scheduler', type=str, default=None)
+    parser.add_argument('--lars_trust_coeff', type=float, default=0.01)
+    parser.add_argument('--lars_momentum', type=float, default=0.9)
     parser.add_argument('--enc_act', type=str, default="silu")
     parser.add_argument('--dropout', type=float, default=0)
-    parser.add_argument('--proj_loss', type=str, default=None)
-    parser.add_argument('--proj_temp', type=float, default=0.5)
     parser.add_argument('--aug_type', type=str, default=None)
     parser.add_argument('--aug_prob', type=float, default=1)
-    parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--weight_decay', type=float, default=0)
-
-    ## With the new clustering loss
-    parser.add_argument('--clust_temp', type=float, default=0.5)
-    parser.add_argument('--entropy_scale', type=float, default=1.0)
-    parser.add_argument('--instance_scale', type=float, default=1.0)
-    parser.add_argument('--softmax_temp', type=float, default=1.0)
+    parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
+    parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
     
-    ## This changes the architecture
+    ## Encoder architecture choices
     parser.add_argument('--enc_arch', type=str, default=None)
-    parser.add_argument('--enc_arch_pool', type=str, default=None)
-    parser.add_argument('--enc_arch_flatten', type=int, choices=[0,1], default=0)
-    parser.add_argument('--enc_arch_slow_growth', type=int, choices=[0,1], default=1)
-    parser.add_argument('--enc_arch_first_kernel', type=int, default=3)
-    parser.add_argument('--enc_arch_sep_heads', type=int, choices=[0,1], default=0)
-    parser.add_argument('--enc_arch_final_linear', type=int, default=512)
-
-    ## Testing for resnet
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
-    
+    # parser.add_argument('--enc_arch_final_linear', type=int, default=512)
+
+    ## (Optional) clustering head
     parser.add_argument('--clust_arch', type=str, default="none")
-    parser.add_argument('--proj_arch', type=str, default="two")
+    parser.add_argument('--clust_temp', type=float, default=0.5)
+    parser.add_argument('--nclusters', type=int, default=20)
+    parser.add_argument('--entropy_scale', type=float, default=1.0)
+    parser.add_argument('--softmax_temp', type=float, default=1.0)
+    parser.add_argument('--instance_scale', type=float, default=1.0)
 
     ## A quick test option
     parser.add_argument('--sharpened_cluster_loss', type=int, choices=[0,1], default=0)
     
+    ## Projection head
+    parser.add_argument('--proj_arch', type=str, default="two")
+    parser.add_argument('--proj_temp', type=float, default=0.5)
+    parser.add_argument('--latent', type=int, default=128)
+    parser.add_argument('--nhidden', type=int, default=512)
+
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
