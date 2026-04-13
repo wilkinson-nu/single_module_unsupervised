@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --qos=shared
 #SBATCH --constraint=cpu
-#SBATCH --time=120
+#SBATCH --time=180
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --mem=4GB
@@ -24,6 +24,8 @@ EDEP_MAC=__EDEP_MAC__
 IMAGE_SIZE=__IMAGE_SIZE__
 MIN_HITS=__MIN_HITS__
 THRESHOLD=__THRESHOLD__
+BOX_SIZE=__BOX_SIZE__
+EXIT_DOWNSTREAM=__EXIT_DOWNSTREAM__
 
 ## Fixed
 INPUTS_DIR=${PWD}/MC_inputs
@@ -50,6 +52,7 @@ cp ${INPUTS_DIR}/CommonDecay.xml xml_override/.
 
 ## This is... pretty bad practice. Copy the run script and any library functions in the directory...
 cp ${INPUTS_DIR}/../*.py .
+cp ${INPUTS_DIR}/../../*.py .
 
 ## Step one, run the GENIE+INCL events in a different container
 ## This seems bizarre, but, the INCL code isn't generally available, and requires EL7 libraries...
@@ -86,14 +89,20 @@ shifter --image=docker:wilkinsonnu/simple_det_sim:latest edep-sim -o ${OUTFILE_R
 	-e ${NEVENTS} &> /dev/null
 
 ## Copy back the edep-sim file
-if [ ! -d "${OUTDIR_ROOT}/EDEPSIM" ]; then
-    mkdir -p ${OUTDIR_ROOT}/EDEPSIM
-fi
-cp ${tempDir}/${OUTFILE_ROOT}_EDEPSIM.root ${OUTDIR_ROOT}/EDEPSIM/.
+## if [ ! -d "${OUTDIR_ROOT}/EDEPSIM" ]; then
+##     mkdir -p ${OUTDIR_ROOT}/EDEPSIM
+## fi
+## cp ${tempDir}/${OUTFILE_ROOT}_EDEPSIM.root ${OUTDIR_ROOT}/EDEPSIM/.
 
 echo "Prepare 2D images..."
-shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 make_2D_nusim_images.py --input ${OUTFILE_ROOT}_EDEPSIM.root --output ${OUTFILE_ROOT}_IMAGES2D.h5 \
-	--image_size ${IMAGE_SIZE} --min_hits ${MIN_HITS} --threshold ${THRESHOLD}
+shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 make_2D_nusim_images.py \
+	--input ${OUTFILE_ROOT}_EDEPSIM.root \
+	--output ${OUTFILE_ROOT}_IMAGES2D.h5 \
+	--image_size ${IMAGE_SIZE} \
+	--box_size ${BOX_SIZE} \
+	--exit_downstream ${EXIT_DOWNSTREAM} \
+	--min_hits ${MIN_HITS} \
+	--threshold ${THRESHOLD}
 
 ## Copy back the images
 if [ ! -d "${OUTDIR_ROOT}/IMAGES2D" ]; then
