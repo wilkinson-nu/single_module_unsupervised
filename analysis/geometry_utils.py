@@ -4,15 +4,19 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 def preprocess_embeddings(
-    X,
-    pca=None,
-    drop_first_pca=False,
-    whiten=False,
-    spherical=False,
+        X,
+        pca=None,
+        drop_first_pca=False,
+        whiten=False,
+        spherical=False,
 ):
 
     X = X.astype(np.float32)
 
+    norms = np.linalg.norm(X, axis=1, keepdims=True)
+    X /= (norms + 1e-10)
+    print("L2-normalized embeddings")  
+    
     # Center
     X = X - X.mean(axis=0)
     print("Centered embeddings:", X.shape)
@@ -153,7 +157,7 @@ def pca_spectrum(z):
     return eigvals
 
 
-def plot_spectrum(eigvals, xlim=50,
+def plot_spectrum(eigvals, xlim=None,
                   log_scale=True,
                   save_name=None):
 
@@ -164,11 +168,11 @@ def plot_spectrum(eigvals, xlim=50,
     
     plt.figure(figsize=(6,4))
 
-    ndim = eigval.shape[0]
+    ndim = eigvals.shape[0]
     ## Optionally show a histogram if we're limiting the range
-    edgecolor='k'
+    edgecolor=None
     if ndim < 100:
-        edgecolor=None
+        edgecolor='k'
 
     plt.bar(range(eigvals.shape[0]), eigvals, width=1.0, edgecolor=edgecolor, align='edge')
     plt.xlabel("Eigenvalue index")
@@ -180,8 +184,47 @@ def plot_spectrum(eigvals, xlim=50,
     plt.tight_layout()
     if save_name:
         plt.savefig(save_name,
-                    dpi=300,
+                    dpi=200,
                     bbox_inches='tight')
     plt.show()
     plt.close()
-    return 
+    return d_eff
+
+
+
+def plot_cumulative_variance(eigvals,
+                             xlim=None,
+                             save_name=None):
+
+    eigvals = np.asarray(eigvals)
+
+    total_var = eigvals.sum()
+    cumulative = np.cumsum(eigvals) / total_var
+
+    if xlim is not None:
+        eigvals = eigvals[:xlim]
+        cumulative = cumulative[:xlim]
+
+    plt.figure(figsize=(6,4))
+
+    x = np.arange(1, len(cumulative)+1)
+
+    plt.plot(x, cumulative)
+    plt.xlabel("Number of PCA components")
+    plt.ylabel("Cumulative explained variance")
+    plt.ylim(0, 1.01)
+
+    # Add reference lines
+    for frac in [0.9, 0.95, 0.99]:
+        plt.axhline(frac, linestyle='--', linewidth=0.8)
+
+    plt.tight_layout()
+
+    if save_name:
+        plt.savefig(save_name,
+                    dpi=200,
+                    bbox_inches='tight')
+
+    plt.show()
+    plt.close()
+    return
