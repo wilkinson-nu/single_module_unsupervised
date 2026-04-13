@@ -85,8 +85,6 @@ class ClusteringLossMergedMultiGPU(nn.Module):
         c = nn.functional.normalize(representations, dim=1)
         similarity_matrix = torch.mm(c, c.t())
 
-        # similarity_matrix = nn.functional.cosine_similarity(representations.unsqueeze(1), representations.unsqueeze(0), dim=2)
-
         sim_ij = torch.diag(similarity_matrix, class_num)
         sim_ji = torch.diag(similarity_matrix, -class_num)
         positives = torch.cat([sim_ij, sim_ji], dim=0)
@@ -102,30 +100,36 @@ class ClusteringLossMergedMultiGPU(nn.Module):
 
 
 class SharpenedClusterLoss(nn.Module):
-    def __init__(self, T_pred=0.3, T_target=0.05, entropy_weight=1.0):
+    def __init__(self, T_pred=0.3, T_target=0.1, entropy_weight=1.0, centering=True):
         super().__init__()
         self.T_pred = T_pred
         self.T_target = T_target
         self.entropy_weight = entropy_weight
+        self.centering = centering
 
     def forward(self, logits):
 
         batch_size = logits.shape[0] // 2
-
         z_i, z_j = logits[:batch_size], logits[batch_size:]
+        
+        z_i_all = torch.cat(GatherLayer.apply(z_i), dim=0)
+        z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
 
-        p_i = nn.functional.softmax(z_i / self.T_pred, dim=1)
-        p_j = nn.functional.softmax(z_j / self.T_pred, dim=1)
+        if self.centering:
+            z_i_all = z_i_all - z_i_all.mean(dim=0, keepdim=True)
+            z_j_all = z_j_all - z_j_all.mean(dim=0, keepdim=True)
+        
+        p_i = nn.functional.softmax(z_i_all / self.T_pred, dim=1)
+        p_j = nn.functional.softmax(z_j_all / self.T_pred, dim=1)
 
-        q_i = nn.functional.softmax(z_i / self.T_target, dim=1).detach()
-        q_j = nn.functional.softmax(z_j / self.T_target, dim=1).detach()
+        q_i = nn.functional.softmax(z_i_all / self.T_target, dim=1).detach()
+        q_j = nn.functional.softmax(z_j_all / self.T_target, dim=1).detach()
 
         loss = (
             -(q_i * torch.log(p_j + 1e-10)).sum(dim=1).mean()
             -(q_j * torch.log(p_i + 1e-10)).sum(dim=1).mean()
         )
 
-        # entropy regularization (same idea as your code)
         p = torch.cat([p_i, p_j], dim=0)
         p_mean = p.mean(dim=0)
 
