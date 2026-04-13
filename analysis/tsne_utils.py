@@ -140,7 +140,7 @@ def plot_tsne(tsne_results,
 
     if save_name:
         plt.savefig(save_name,
-                    dpi=300,
+                    dpi=200,
                     bbox_inches='tight')
     #if ax==None:
     #plt.tight_layout()
@@ -184,7 +184,7 @@ def plot_tsne_block(tsne_results, processed, apply_alpha_vect=False, save_name=N
               ax=axes[2][2], alpha_vect=alpha_vect, ztitle=r"N. $\pi^{0}$", linear_colorbar=True)
 
     plt.tight_layout()
-    if save_name: plt.savefig(save_name, dpi=300, bbox_inches='tight')
+    if save_name: plt.savefig(save_name, dpi=200, bbox_inches='tight')
     plt.show()
     plt.close()
 
@@ -204,7 +204,7 @@ def compute_tsne_cuml(input_vect,
           "perplexity =", perp,
           "early exaggeration =", exag)
     
-    n_neighbors = 2*perp
+    n_neighbors = 3*perp
     if n_neighbors > 1024: n_neighbors = 1024
     
     tsne = cuML_TSNE(n_components=2, perplexity=perp, n_iter=n_iter, \
