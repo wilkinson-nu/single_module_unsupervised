@@ -5,7 +5,7 @@ import MinkowskiEngine as ME
 import numpy as np
 import time
 from collections import defaultdict
-
+from torch import nn
 
 def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
 
@@ -34,7 +34,7 @@ def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
     return dataset, loader
 
 
-def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidden=False):
+def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidden=False, apply_softmax=False):
 
     ## Record some timing info
     start = time.time()
@@ -56,7 +56,10 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
     for h in heads.values():
         h.eval()
         h.to(device)
-    
+
+    if apply_softmax:
+        soft = nn.Softmax(dim=1)
+        
     ## Loop over the images (discard any extra info returned by loader)
     for batch in loader:
 
@@ -77,20 +80,26 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
         ## Now do the forward passes            
         with torch.no_grad(): 
             encoded_instance_batch, encoded_cluster_batch = encoder(orig_batch, batch_size)
-            if "clust" in heads: clust_batch = heads["clust"](encoded_cluster_batch, return_hidden=return_hidden)
+            if "clust" in heads:
+                clust_batch = heads["clust"](encoded_cluster_batch, return_hidden=return_hidden)
             proj_batch = heads["proj"](encoded_instance_batch, return_hidden=return_hidden)
 
         ## Normalize the output (this is a bit fragile, but backwards compatible)
         if not return_hidden:
             proj_batch = {"proj_final": proj_batch}
-            if "clust" in heads: clust_batch = {"clust_final": clust_batch}
+            if "clust" in heads:
+                if apply_softmax: clust_batch = soft(clust_batch/apply_softmax)
+                clust_batch = {"clust_final": clust_batch}
 
         ## Get the representations all in one place
         for k, v in proj_batch.items():
             representations[k].append(v.detach().cpu())
         if "clust" in heads:
             for k, v in clust_batch.items():
-                representations[k].append(v.detach().cpu())
+                temp = v
+                if k == "clust_final" and apply_softmax:
+                    temp = soft(temp/apply_softmax)
+                representations[k].append(temp.detach().cpu())
         representations["encoder"].append(encoded_cluster_batch.detach().cpu())
 
         labels.extend(batch_labels)
