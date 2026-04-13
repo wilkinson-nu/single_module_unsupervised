@@ -10,6 +10,7 @@ from matplotlib.ticker import MaxNLocator
 import faiss
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
 import matplotlib.gridspec as gridspec
+from sklearn.decomposition import PCA as skl_PCA
 
 def compute_cluster_overlap(c_probs, topk=2):
 
@@ -287,7 +288,7 @@ def plot_metric_data_vs_sim(data_xvar, sim_xvar, sim_labels, nbinsx=None,
         else:
             # Empty array so it contributes nothing to the histogram
             sim_by_label.append(np.array([]))
-
+            
     plt.figure(figsize=(8, 6))
 
     ## Add MC
@@ -457,27 +458,25 @@ def plot_cluster_examples(dataset,
         plt.close()
     return
 
+## Modified this so processed['clust_index'] should be passed as clust_index
+## And cluster_probs should be processed['clust_max']
 def plot_cluster_example_grid(dataset, 
-                              processed, 
+                              clust_index, 
                               clusters, 
                               nexamples=8, 
-                              use_cluster_probs=False, 
+                              cluster_probs=None, 
                               save_name=None):
 
-    nevents = len(processed['clust_index'])
+    nevents = len(clust_index)
     nclust = len(clusters)
 
-    cluster_probs = None
-    if use_cluster_probs is not None:
-        cluster_probs = processed['clust_max']
-    
     fig, axes = plt.subplots(nclust, 1, figsize=(2*nexamples, 2.2*nclust))
 
     if nclust == 1:
         axes = [axes]
 
     for ax, index in zip(axes, clusters):
-        count = np.count_nonzero(processed['clust_index'] == index)
+        count = np.count_nonzero(clust_index == index)
 
         ax.set_title(
             f"Cluster {index} — {count}/{nevents} entries",
@@ -487,7 +486,7 @@ def plot_cluster_example_grid(dataset,
 
         plot_cluster_examples(
             dataset,
-            processed['clust_index'],
+            clust_index,
             index,
             nexamples,
             cluster_probs=cluster_probs,
@@ -545,49 +544,13 @@ def plot_cluster_bigblock(dataset, cluster_ids, index, max_x=10, max_y=10, clust
     plt.close()
     return
 
-def run_vMF(dataset, n_clusters, init="random-class", n_copies=10, verbose=True):
-
-    X_norm = dataset / np.linalg.norm(dataset, axis=1, keepdims=True)
-
-    ## init: k-means++, spherical-k-means, random, random-class (default), random-orthonormal
-    ## max_iter: 300
-    ## n_init: 10
-    ## n_jobs: 1 (number of CPUs to use)
-    
-    ## vMF = VonMisesFisherMixture(n_clusters=n_clusters, posterior_type='soft', n_init=n_copies, n_jobs=n_copies, verbose=verbose, max_iter=500)
-    ## vMF.fit(X_norm)
-    ## 
-    ## ## For some reasons labels are floats
-    ## labels = vMF.predict(X_norm).astype(int)
-    ## weights = vMF.weights_
-    ## 
-    ## labs = np.unique(labels)
-    ## 
-    ## metrics = {}
-    ## 
-    ## if labs.size < 2 or labs.size >= len(labels):
-    ##     metrics["silhouette"] = None
-    ##     metrics["calinski_harabasz"] = None
-    ##     metrics["davies_bouldin"] = None
-    ## else:
-    ##     metrics["silhouette"] = silhouette_score(X_norm, labels, metric="cosine")
-    ##     metrics["calinski_harabasz"] = calinski_harabasz_score(X_norm, labels)
-    ##     metrics["davies_bouldin"] = davies_bouldin_score(X_norm, labels)
-    ## 
-    ## if verbose:
-    ##     print("Cluster weights:", weights)
-    ##     print("Silhouette score:", metrics["silhouette"])
-    ##     print("Calinski-Harabasz =", metrics["calinski_harabasz"])
-    ##     print("Davies-Bouldin =", metrics["davies_bouldin"])
-    ## 
-    ## return labels, metrics
-    return 
-
-def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False, seed=123):
-    # Normalize embeddings (critical for cosine clustering)
+def run_faiss_kmeans(dataset, 
+                     n_clusters, 
+                     nattempts=20, 
+                     verbose=False, 
+                     seed=123,
+                     spherical=False):
     X = dataset.astype(np.float32)
-    X /= np.linalg.norm(X, axis=1, keepdims=True)
-
     N, d = X.shape
 
     # FAISS k-means (spherical via normalization)
@@ -598,7 +561,7 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False,
         verbose=verbose,
         seed=seed,
         nredo=nattempts,
-        spherical=True  # ensures centroid normalization
+        spherical=spherical
     )
     kmeans.train(X)
 
@@ -619,7 +582,10 @@ def run_faiss_spherical_kmeans(dataset, n_clusters, nattempts=20, verbose=False,
         metrics["calinski_harabasz"] = None
         metrics["davies_bouldin"] = None
     else:
-        metrics["silhouette"] = silhouette_score(X, labels, metric="cosine")
+        ## This is wrong
+        m = "euclidean"
+        if spherical is True: m = "cosine"
+        metrics["silhouette"] = silhouette_score(X, labels, metric=m)
         metrics["calinski_harabasz"] = calinski_harabasz_score(X, labels)
         metrics["davies_bouldin"] = davies_bouldin_score(X, labels)
 
@@ -655,8 +621,8 @@ def multiplicity_matrix(labels, max_particles=5):
         r"$\pi^{0}$": ["npi0"],
         r"K$^{\pm}$": ["nkapm"],
         r"K$^0$": ["nka0"],
+        r"$\Lambda^{0}$":["nlambda0"],
         "EM": ["nem"],
-        "Exotic": ["ncharm", "nstrange", "nantiprot", "nantineut"],
         "nuclear": [
             "ndeuteron","ntritium","nalpha","nhelium3","nnuclfrag"
         ],
@@ -707,16 +673,27 @@ def plot_multiplicity_matrix(labels, ax=None, max_particles=5, show=True, xtitle
 
     return im
 
-def plot_multiplicity_matrix_grid(processed, clusters, max_particles=5, ncols=2, nrows=5, save_name=None):
+## Modified this so processed['clust_index'] should be passed as clust_index
+## And cluster_probs should be processed['clust_max']
+def plot_multiplicity_matrix_grid(processed, 
+                                  clust_index, 
+                                  clusters, 
+                                  max_particles=5, 
+                                  ncols=2, 
+                                  nrows=5, 
+                                  save_name=None):
 
     fig, axes = plt.subplots(nrows, ncols, figsize=(4*ncols, 2*nrows))
     axes = np.atleast_1d(axes).flatten()
+
+    nevents = len(clust_index)
+    nclust = len(clusters)
     
     im = None
     for ax, i in zip(axes, clusters):
-        cluster_mask = processed['clust_index']==i
+        cluster_mask = clust_index==i
         im = plot_multiplicity_matrix(
-            processed['labels'][cluster_mask],
+            processed['labels'][:nevents][cluster_mask],
             max_particles=max_particles,
             ax=ax,
             show=False,
