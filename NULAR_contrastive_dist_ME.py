@@ -28,6 +28,7 @@ from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment
 from core.training.lars import LARS, LARS_LRScheduler
+from core.losses.gather import GatherLayer
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -198,7 +199,7 @@ def log_grad_norm(module, tag, writer, iteration):
         if p.grad is None:
             continue
         grad_l2 = p.grad.data.norm(2).item() ** 2
-        writer.add_scalar(f'grads/{tag}/{name}_grad_l2', grad_l2, iteration)
+        #writer.add_scalar(f'grads/{tag}/{name}_grad_l2', grad_l2, iteration)
         total += grad_l2
 
     writer.add_scalar(f'grads/{tag}/sqrt_sum_grad_l2', total**0.5, iteration)
@@ -212,7 +213,7 @@ def log_grad_rms(module, tag, writer, iteration):
         if p.grad is None:
             continue
         grad_rms = p.grad.pow(2).mean().sqrt().item()
-        writer.add_scalar(f'grads/{tag}/{name}_grad_rms', grad_rms, iteration)
+        #writer.add_scalar(f'grads/{tag}/{name}_grad_rms', grad_rms, iteration)
         vals.append(grad_rms)
 
     writer.add_scalar(f'grads/{tag}/mean_grad_rms', sum(vals)/len(vals), iteration)
@@ -230,7 +231,7 @@ def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
 
         this_g2 = p.grad.norm(2).item() ** 2
         this_w2 = p.data.norm(2).item() ** 2
-        writer.add_scalar(f'grads/{tag}/{name}_grad_over_wgt', (this_g2**0.5)/(this_w2**0.5 + eps), iteration)
+        # writer.add_scalar(f'grads/{tag}/{name}_grad_over_wgt', (this_g2**0.5)/(this_w2**0.5 + eps), iteration)
         g2 += this_g2
         w2 += this_w2
 
@@ -256,6 +257,54 @@ def effective_dimension(buffer, world_size):
     lambda1_ratio = eigvals.max() / eigvals.sum()
 
     return deff.item(), lambda1_ratio.item(), eigvals[:10].cpu()
+
+@torch.no_grad()
+def simclr_geometry_metrics(buffer):
+
+    '''
+    Each element in buffer is the concatenation of the two views in a batch
+    Loop over the buffer and calculate values for each batch and then average
+    '''
+
+    ## Keep track of values
+    pos_buffer = []
+    neg_buffer = []
+    
+    ## loop over buffer
+    for emb_cat in buffer:
+
+        batch_size = emb_cat.shape[0]//2
+        z_cat = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
+        z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
+
+        z_i_all = torch.cat(GatherLayer.apply(z_i), dim=0)
+        z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
+        total_batch = z_i_all.shape[0]
+        z_all = torch.cat([z_i_all, z_j_all], dim=0)
+
+        sim = torch.mm(z_all, z_all.t())
+        mask = torch.eye(2*total_batch, device=z_all.device, dtype=torch.bool)
+        sim.masked_fill_(mask, -float("inf"))
+
+        idx = torch.arange(2*total_batch, device=z_all.device)
+        pos_idx = (idx + total_batch) % (2*total_batch)
+        pos_buffer .append(sim[idx, pos_idx])
+
+        ## Now modify sim for calculating hard negatives
+        sim[idx, pos_idx] = -float("inf")
+        neg_buffer .append(sim.max(dim=1).values)
+
+    ## Calculate high level values over the batches
+    all_pos = torch.cat(pos_buffer, dim=0)
+    all_neg = torch.cat(neg_buffer, dim=0)        
+    gap = all_pos - all_neg
+    pos_mean = all_pos.mean()
+    neg_mean = all_neg.mean()
+    gap_mean = gap.mean()
+    gap_std  = gap.std(unbiased=False)
+
+    return pos_mean.item(), neg_mean.item(), gap_mean.item(), gap_std.item()
+
 
 def build_param_groups_ADAM(encoder, heads, weight_decay):
 
@@ -419,9 +468,9 @@ def run_training(rank, world_size, args):
         total_clust_unif_tensor = torch.tensor(0.0, device=device)
 
         ## Add more monitoring tools
-        deff_batches = 10
-        deff_buffer_enc = []
-        deff_buffer_proj = []
+        buffer_batches = 10
+        buffer_enc = []
+        buffer_proj = []
         
         # Set train mode for the encoder and any heads
         encoder.train()
@@ -459,11 +508,11 @@ def run_training(rank, world_size, args):
             total_proj_unif_tensor += uniformity(proj_batch)
 
             ## Get a few batches for calculating the running deff
-            if len(deff_buffer_enc) < deff_batches:
+            if len(buffer_enc) < buffer_batches:
                 with torch.no_grad():
-                    deff_buffer_enc.append(encoded_instance_batch[:this_batch_size].detach())
-                    deff_buffer_proj.append(proj_batch[:this_batch_size].detach())
-        
+                    buffer_enc .append(encoded_instance_batch.detach())
+                    buffer_proj.append(proj_batch.detach())
+                    
             ## Optionally deal with clustering loss
             if "clust" in heads:
                 clust_batch = heads["clust"](encoded_cluster_batch)
@@ -522,8 +571,12 @@ def run_training(rank, world_size, args):
         av_clust_align = total_clust_align_tensor.item() / (nbatches * world_size)
 
         ## Deal with the deff calculations
-        enc_deff, enc_l1_ratio, enc_top = effective_dimension(deff_buffer_enc, world_size)
-        proj_deff, proj_l1_ratio, proj_top = effective_dimension(deff_buffer_proj, world_size)
+        enc_deff, enc_l1_ratio, enc_top = effective_dimension(buffer_enc, world_size)
+        proj_deff, proj_l1_ratio, proj_top = effective_dimension(buffer_proj, world_size)
+
+        ## Other geometry calculations
+        enc_pos, enc_hard_neg, enc_gap, enc_gap_std = simclr_geometry_metrics(buffer_enc)
+        proj_pos, proj_hard_neg, proj_gap, proj_gap_std = simclr_geometry_metrics(buffer_proj)
 
         ## Reporting, but only for rank 0
         if rank==0:
@@ -557,7 +610,17 @@ def run_training(rank, world_size, args):
                 log_scalar(writer, metrics, f"eigen/enc_lambda{i}", val, iteration)
             for i,val in enumerate(proj_top):
                 log_scalar(writer, metrics, f"eigen/proj_lambda{i}", val, iteration)
-                    
+
+            log_scalar(writer, metrics, 'monitor/enc_pos', enc_pos, iteration)
+            log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_hard_neg, iteration)
+            log_scalar(writer, metrics, 'monitor/enc_gap', enc_gap, iteration)
+            log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_gap_std, iteration)
+
+            log_scalar(writer, metrics, 'monitor/proj_pos', proj_pos, iteration)
+            log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_hard_neg, iteration)
+            log_scalar(writer, metrics, 'monitor/proj_gap', proj_gap, iteration)
+            log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_gap_std, iteration)
+                
             if "clust" in heads:
                 log_scalar(writer, metrics, 'loss/clust', av_losses["clust"]+av_entropy, iteration)
                 log_scalar(writer, metrics, 'loss/entropy', av_entropy, iteration)
@@ -581,6 +644,8 @@ def run_training(rank, world_size, args):
             if "clust" in heads:
                 iter_string += f" ({av_losses['proj']:.4f} + {av_losses['clust']:.4f} + {av_entropy:.4f}); acc = {av_acc:.4f}"
             print(iter_string)
+            print("ENC metrics:", enc_pos, enc_hard_neg, enc_gap, enc_gap_std)
+            print("PROJ metrics:", proj_pos, proj_hard_neg, proj_gap, proj_gap_std)
             print(f"Time taken: {(time.time()-tstart):.2f}")
 
         ## For checkpointing
