@@ -23,14 +23,15 @@ class paired_2d_dataset_ME(Dataset):
         if self.max_events and max_events < self.length:
             self.length = self.max_events
 
+            
     def create_file_indices(self):
         cumulative_size = 0
 
         for file in self.hdf5_files:
             self.file_indices.append(cumulative_size)
-            f = h5py.File(file, 'r', libver='latest')
-            cumulative_size += f.attrs['N']
-            f .close()
+            with h5py.File(file, 'r', libver='latest') as f:            
+                cumulative_size += f.attrs['N']
+
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
@@ -49,11 +50,13 @@ class paired_2d_dataset_ME(Dataset):
         file_index = bisect(self.file_indices, idx)-1
         this_idx = idx - self.file_indices[file_index]
 
-        f = h5py.File(self.hdf5_files[file_index], 'r')
-        group = f[str(this_idx)]
-        data = group['data'][:]
-        row = group['row'][:]
-        col = group['col'][:]
+        file_path = self.hdf5_files[file_index]
+
+        with h5py.File(file_path, 'r', libver='latest') as f:
+            group = f[str(this_idx)]
+            data = group['data'][:]
+            row  = group['row'][:]
+            col  = group['col'][:]
 
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
@@ -91,15 +94,18 @@ def triple_ME_collate_fn(batch):
 
 
 def cat_ME_collate_fn(batch):
-    aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats = zip(*batch)
+    aug1_coords, aug1_feats, aug2_coords, aug2_feats, _, _ = zip(*batch)
 
+    coords_list = list(aug1_coords) + list(aug2_coords)
+    feats_list  = list(aug1_feats)  + list(aug2_feats)
+    
     # Create batched coordinates for the SparseTensor input
-    cat_bcoords = ME.utils.batched_coordinates(aug1_coords+aug2_coords)
+    cat_bcoords = ME.utils.batched_coordinates(coords_list)
 
     # Concatenate all lists
-    cat_bfeats = torch.from_numpy(np.concatenate(aug1_feats+aug2_feats, 0)).float()
+    cat_bfeats = torch.from_numpy(np.concatenate(feats_list, axis=0)).float()
 
-    return cat_bcoords, cat_bfeats, len(raw_feats)*2
+    return cat_bcoords, cat_bfeats, len(batch)*2
 
 
 class single_2d_dataset_ME(Dataset):
@@ -144,16 +150,19 @@ class single_2d_dataset_ME(Dataset):
 
         file_index = bisect(self.file_indices, idx)-1
         this_idx = idx - self.file_indices[file_index]
-        
-        f = h5py.File(self.hdf5_files[file_index], 'r') 
-        group = f[str(this_idx)]
-        data = group['data'][:]
-        row = group['row'][:]
-        col = group['col'][:]
-        # Check for 'label' dataset and fall back if missing
-        label = -1
-        if 'label' in group: label = group['label'][()]
 
+        file_path = self.hdf5_files[file_index]
+
+        with h5py.File(file_path, 'r', libver='latest') as f:
+            group = f[str(this_idx)]
+            data = group['data'][:]
+            row  = group['row'][:]
+            col  = group['col'][:]
+
+            # Check for 'label' dataset and fall back if missing
+            label = -1
+            if 'label' in group: label = group['label'][()]
+            
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
         ## And this function is replicated * num_workers
