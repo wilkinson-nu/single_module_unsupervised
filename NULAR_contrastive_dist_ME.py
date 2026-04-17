@@ -3,7 +3,6 @@ import numpy as np
 import argparse
 from torch import optim
 import sys
-import torchvision.transforms.v2 as transforms
 import MinkowskiEngine as ME
 import torch
 import time
@@ -15,7 +14,6 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
-from torch.utils.data import ConcatDataset
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 
@@ -62,7 +60,7 @@ def print_model_summary(model):
             total_params += param.numel()
     print("Total parameters =", total_params)
 
-def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
+def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     dataloader = torch.utils.data.DataLoader(train_dataset,
                                              collate_fn=cat_ME_collate_fn,
@@ -198,25 +196,26 @@ def log_grad_norm(module, tag, writer, iteration):
     for name, p in module.named_parameters():
         if p.grad is None:
             continue
-        grad_l2 = p.grad.data.norm(2).item() ** 2
-        #writer.add_scalar(f'grads/{tag}/{name}_grad_l2', grad_l2, iteration)
-        total += grad_l2
+        total += p.grad.pow(2).sum()
 
-    writer.add_scalar(f'grads/{tag}/sqrt_sum_grad_l2', total**0.5, iteration)
+    grad_norm = total.sqrt().item()
+    writer.add_scalar(f'grads/{tag}/sqrt_sum_grad_l2', grad_norm, iteration)
     return
 
 @torch.no_grad()
 def log_grad_rms(module, tag, writer, iteration):
     if writer is None: return
-    vals = []
+
+    total = 0.0
+    count = 0
     for name, p in module.named_parameters():
         if p.grad is None:
             continue
-        grad_rms = p.grad.pow(2).mean().sqrt().item()
-        #writer.add_scalar(f'grads/{tag}/{name}_grad_rms', grad_rms, iteration)
-        vals.append(grad_rms)
+        total += p.grad.pow(2).mean()
+        count += 1
 
-    writer.add_scalar(f'grads/{tag}/mean_grad_rms', sum(vals)/len(vals), iteration)
+    mean_rms = (total / count).sqrt()
+    writer.add_scalar(f'grads/{tag}/mean_grad_rms', mean_rms, iteration)
     return
 
 @torch.no_grad()
@@ -228,51 +227,36 @@ def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
     for name, p in module.named_parameters():
         if p.grad is None:
             continue
+        g2 += p.grad.pow(2).sum()
+        w2 += p.data.pow(2).sum()
+        
 
-        this_g2 = p.grad.norm(2).item() ** 2
-        this_w2 = p.data.norm(2).item() ** 2
-        # writer.add_scalar(f'grads/{tag}/{name}_grad_over_wgt', (this_g2**0.5)/(this_w2**0.5 + eps), iteration)
-        g2 += this_g2
-        w2 += this_w2
-
-    writer.add_scalar(f'grads/{tag}/sum_grad_over_wgt', (g2**0.5)/(w2**0.5 + eps), iteration)
+    ratio = (g2.sqrt() / (w2.sqrt() + eps)).item()
+    writer.add_scalar(f'grads/{tag}/sum_grad_over_wgt', ratio, iteration)
     return
 
-@torch.no_grad()
-def effective_dimension(buffer, world_size):
-
-    this_local = torch.cat(buffer, dim=0)
-    this_list = [torch.zeros_like(this_local) for _ in range(world_size)]
-    dist.all_gather(this_list, this_local)
-    z = torch.cat(this_list, dim=0)
-    
-    z = nn.functional.normalize(z, dim=1)
-    z = z - z.mean(dim=0, keepdim=True)
-
-    s = torch.linalg.svdvals(z)
-    eigvals = (s ** 2) / (z.shape[0] - 1)
-
-    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
-
-    lambda1_ratio = eigvals.max() / eigvals.sum()
-
-    return deff.item(), lambda1_ratio.item(), eigvals[:10].cpu()
 
 @torch.no_grad()
-def simclr_geometry_metrics(buffer):
+def simclr_geometry_metrics(buffer, device):
 
     '''
     Each element in buffer is the concatenation of the two views in a batch
     Loop over the buffer and calculate values for each batch and then average
     '''
 
+    dim = buffer[0].shape[1]
+    cov = torch.zeros(dim, dim, device=device)
+    n = 0
+    
     ## Keep track of values
     pos_buffer = []
     neg_buffer = []
     
     ## loop over buffer
-    for emb_cat in buffer:
+    for emb_cat_cpu in buffer:
 
+        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        
         batch_size = emb_cat.shape[0]//2
         z_cat = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
         z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
@@ -281,6 +265,10 @@ def simclr_geometry_metrics(buffer):
         z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
         total_batch = z_i_all.shape[0]
         z_all = torch.cat([z_i_all, z_j_all], dim=0)
+        
+        #######################
+        ### Geometry metrics ##
+        #######################
 
         sim = torch.mm(z_all, z_all.t())
         mask = torch.eye(2*total_batch, device=z_all.device, dtype=torch.bool)
@@ -294,7 +282,21 @@ def simclr_geometry_metrics(buffer):
         sim[idx, pos_idx] = -float("inf")
         neg_buffer .append(sim.max(dim=1).values)
 
-    ## Calculate high level values over the batches
+        #######################
+        # Effective dimension #
+        #######################
+        
+        z_all = z_all - z_all.mean(dim=0, keepdim=True)
+        cov += z_all.T @ z_all
+        n += z_all.shape[0]
+
+    ## Now calculate the covariance info
+    cov = cov / (n - 1)
+    eigvals = torch.linalg.eigvalsh(cov)
+    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
+    lambda1_ratio = eigvals.max() / eigvals.sum()
+
+    ## Calculate the SimCLR geometry values
     all_pos = torch.cat(pos_buffer, dim=0)
     all_neg = torch.cat(neg_buffer, dim=0)        
     gap = all_pos - all_neg
@@ -303,7 +305,14 @@ def simclr_geometry_metrics(buffer):
     gap_mean = gap.mean()
     gap_std  = gap.std(unbiased=False)
 
-    return pos_mean.item(), neg_mean.item(), gap_mean.item(), gap_std.item()
+    return {"pos": pos_mean.item(),
+            "hard_neg": neg_mean.item(),
+            "gap": gap_mean.item(),
+            "gap_std": gap_std.item(),
+            "deff": deff.item(),
+            "l1_ratio": lambda1_ratio.item(),
+            "eigvals": eigvals.flip(0)[:10].cpu()
+            }
 
 
 def build_param_groups_ADAM(encoder, heads, weight_decay):
@@ -366,7 +375,7 @@ def build_param_groups_LARS(encoder, heads, weight_decay):
 ## Wrapped training function
 def run_training(rank, world_size, args):
 
-    torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(False)
     ## For timing
     tstart = time.time()
 
@@ -392,6 +401,7 @@ def run_training(rank, world_size, args):
 
     ## Set up head and loss for projection space
     proj_head = get_projhead(encoder_nchan_instance, args)
+    proj_head = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(proj_head)
     proj_head.to(device)
     proj_head = DDP(proj_head, device_ids=[rank])
     heads["proj"] = proj_head
@@ -411,7 +421,7 @@ def run_training(rank, world_size, args):
         
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
-    train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, 16)
+    train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, 6)
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -468,7 +478,7 @@ def run_training(rank, world_size, args):
         total_clust_unif_tensor = torch.tensor(0.0, device=device)
 
         ## Add more monitoring tools
-        buffer_batches = 10
+        nbuffer = 5
         buffer_enc = []
         buffer_proj = []
         
@@ -508,10 +518,10 @@ def run_training(rank, world_size, args):
             total_proj_unif_tensor += uniformity(proj_batch)
 
             ## Get a few batches for calculating the running deff
-            if len(buffer_enc) < buffer_batches:
+            if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_instance_batch.detach())
-                    buffer_proj.append(proj_batch.detach())
+                    buffer_enc .append(encoded_instance_batch.detach().cpu())
+                    buffer_proj.append(proj_batch.detach().cpu())
                     
             ## Optionally deal with clustering loss
             if "clust" in heads:
@@ -525,7 +535,7 @@ def run_training(rank, world_size, args):
                 total_clust_unif_tensor += uniformity(clust_batch)
 
             # Backward pass
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             tot_loss .backward()
 
             if clip_gradients:
@@ -539,8 +549,8 @@ def run_training(rank, world_size, args):
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
             
-            # Manage CUDA memory for ME
-            torch.cuda.empty_cache()
+        # Manage CUDA memory for ME
+        torch.cuda.empty_cache()
 
         ## Although the gradients are handled correctly by GatherLayer, the losses are global
         ## Strictly speaking this step isn't necessary as each mini-batch gives the same loss value
@@ -570,14 +580,10 @@ def run_training(rank, world_size, args):
         av_clust_unif = total_clust_unif_tensor.item() / (nbatches * world_size)
         av_clust_align = total_clust_align_tensor.item() / (nbatches * world_size)
 
-        ## Deal with the deff calculations
-        enc_deff, enc_l1_ratio, enc_top = effective_dimension(buffer_enc, world_size)
-        proj_deff, proj_l1_ratio, proj_top = effective_dimension(buffer_proj, world_size)
-
         ## Other geometry calculations
-        enc_pos, enc_hard_neg, enc_gap, enc_gap_std = simclr_geometry_metrics(buffer_enc)
-        proj_pos, proj_hard_neg, proj_gap, proj_gap_std = simclr_geometry_metrics(buffer_proj)
-
+        enc_geom = simclr_geometry_metrics(buffer_enc, device)
+        proj_geom = simclr_geometry_metrics(buffer_proj, device)
+        
         ## Reporting, but only for rank 0
         if rank==0:
             metrics["iteration"].append(iteration)
@@ -600,26 +606,26 @@ def run_training(rank, world_size, args):
             log_grad_over_wgt(heads["proj"].module, "proj", writer, iteration)
 
             ## Eigenvalue debugging
-            log_scalar(writer, metrics, "eigen/enc_deff", enc_deff, iteration)
-            log_scalar(writer, metrics, "eigen/proj_deff", proj_deff, iteration)
+            log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
+            log_scalar(writer, metrics, "eigen/proj_deff", proj_geom["deff"], iteration)
 
-            log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_l1_ratio, iteration)
-            log_scalar(writer, metrics, "eigen/proj_l1_ratio", proj_l1_ratio, iteration)
+            log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_geom["l1_ratio"], iteration)
+            log_scalar(writer, metrics, "eigen/proj_l1_ratio", proj_geom["l1_ratio"], iteration)
 
-            for i,val in enumerate(enc_top):
+            for i,val in enumerate(enc_geom["eigvals"]):
                 log_scalar(writer, metrics, f"eigen/enc_lambda{i}", val, iteration)
-            for i,val in enumerate(proj_top):
+            for i,val in enumerate(proj_geom["eigvals"]):
                 log_scalar(writer, metrics, f"eigen/proj_lambda{i}", val, iteration)
 
-            log_scalar(writer, metrics, 'monitor/enc_pos', enc_pos, iteration)
-            log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_hard_neg, iteration)
-            log_scalar(writer, metrics, 'monitor/enc_gap', enc_gap, iteration)
-            log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_gap_std, iteration)
+            log_scalar(writer, metrics, 'monitor/enc_pos', enc_geom["pos"], iteration)
+            log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_geom["hard_neg"], iteration)
+            log_scalar(writer, metrics, 'monitor/enc_gap', enc_geom["gap"], iteration)
+            log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_geom["gap_std"], iteration)
 
-            log_scalar(writer, metrics, 'monitor/proj_pos', proj_pos, iteration)
-            log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_hard_neg, iteration)
-            log_scalar(writer, metrics, 'monitor/proj_gap', proj_gap, iteration)
-            log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_gap_std, iteration)
+            log_scalar(writer, metrics, 'monitor/proj_pos', proj_geom["pos"], iteration)
+            log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_geom["hard_neg"], iteration)
+            log_scalar(writer, metrics, 'monitor/proj_gap', proj_geom["gap"], iteration)
+            log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_geom["gap_std"], iteration)
                 
             if "clust" in heads:
                 log_scalar(writer, metrics, 'loss/clust', av_losses["clust"]+av_entropy, iteration)
@@ -644,8 +650,6 @@ def run_training(rank, world_size, args):
             if "clust" in heads:
                 iter_string += f" ({av_losses['proj']:.4f} + {av_losses['clust']:.4f} + {av_entropy:.4f}); acc = {av_acc:.4f}"
             print(iter_string)
-            print("ENC metrics:", enc_pos, enc_hard_neg, enc_gap, enc_gap_std)
-            print("PROJ metrics:", proj_pos, proj_hard_neg, proj_gap, proj_gap_std)
             print(f"Time taken: {(time.time()-tstart):.2f}")
 
         ## For checkpointing
