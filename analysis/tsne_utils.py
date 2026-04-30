@@ -142,15 +142,39 @@ def plot_tsne(tsne_results,
         plt.savefig(save_name,
                     dpi=200,
                     bbox_inches='tight')
-    #if ax==None:
-    #plt.tight_layout()
-    #plt.show()
-    #plt.close()
-        
     return ax
 
 
-def plot_tsne_block(tsne_results, processed, apply_alpha_vect=False, save_name=None):
+def plot_summary_tsne_block(tsne_results, processed, apply_alpha_vect=None, save_name=None):
+    fig, axes = plt.subplots(3, 2, figsize=(20, 10))
+
+    ntsne = len(tsne_results)
+    alpha_vect = None
+    if apply_alpha_vect: alpha_vect = processed['clust_max'][:ntsne]  
+
+    plot_tsne(tsne_results, processed.get('clust_index', np.zeros(ntsne))[:ntsne],
+              ax=axes[0][0], alpha_vect=alpha_vect, ztitle="Clust index")
+    plot_tsne(tsne_results, processed['labels']['topology'][:ntsne],
+              ax=axes[0][1], alpha_vect=alpha_vect, ztitle="Topology")
+    plot_tsne(tsne_results, processed['labels']['mode'][:ntsne],
+              ax=axes[0][2], alpha_vect=alpha_vect, ztitle="Mode")
+
+    nhits = processed['nhits'][:ntsne] /50.
+    plot_tsne(tsne_results, nhits.astype(int),
+              ax=axes[1][0], alpha_vect=alpha_vect, ztitle="N. hits /50", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['enu'][:ntsne].astype(int),
+              ax=axes[1][1], alpha_vect=alpha_vect, ztitle=r"$E_{\nu}$ (GeV)", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['q0'][:ntsne].astype(int),
+              ax=axes[1][2], alpha_vect=alpha_vect, ztitle=r"$q_{0}$ (GeV)", linear_colorbar=True)
+
+    plt.tight_layout()
+    if save_name: plt.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.show()
+    plt.close()
+
+
+
+def plot_particle_tsne_block(tsne_results, processed, save_name=None):
     fig, axes = plt.subplots(3, 3, figsize=(20, 15))
 
     ntsne = len(tsne_results)
@@ -158,30 +182,30 @@ def plot_tsne_block(tsne_results, processed, apply_alpha_vect=False, save_name=N
         processed['labels']['npipm'] + \
         processed['labels']['nkapm']
 
-    alpha_vect = None
-    if apply_alpha_vect: alpha_vect = processed['clust_max'][:ntsne]
-
-    #plot_tsne(tsne_results, processed.get('clust_index', np.zeros(ntsne))[:ntsne], 
-    #          ax=axes[0][0], alpha_vect=alpha_vect, ztitle="Clust index")
-    nhits = processed['nhits'][:ntsne] /50.
-    plot_tsne(tsne_results, nhits.astype(int),
-              ax=axes[0][0], alpha_vect=alpha_vect, ztitle="N. hits /50", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['topology'][:ntsne], 
-              ax=axes[0][1], alpha_vect=alpha_vect, ztitle="Topology")
-    plot_tsne(tsne_results, processed['labels']['mode'][:ntsne], 
-              ax=axes[0][2], alpha_vect=alpha_vect, ztitle="Mode")
+    nnuclear = processed['labels']['ndeuteron'] + \
+        processed['labels']['ntritium'] + \
+        processed['labels']['nalpha'] + \
+        processed['labels']['nhelium3'] + \
+        processed['labels']['nnuclfrag']
+    
     plot_tsne(tsne_results, n_charged_particles[:ntsne], 
-              ax=axes[1][0], alpha_vect=alpha_vect, ztitle="N. charged particles", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['enu'][:ntsne].astype(int), 
-              ax=axes[1][1], alpha_vect=alpha_vect, ztitle=r"$E_{\nu}$ (GeV)", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['q0'][:ntsne].astype(int), 
-              ax=axes[1][2], alpha_vect=alpha_vect, ztitle=r"$q_{0}$ (GeV)", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne], 
-              ax=axes[2][0], alpha_vect=alpha_vect, ztitle="N. protons", linear_colorbar=True)
+              ax=axes[0][0], ztitle="N. charged particles", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne],
+              ax=axes[0][1], ztitle="N. protons", linear_colorbar=True)
+    plot_tsne(tsne_results, nnuclear[:ntsne],
+              ax=axes[0][2], ztitle="N. cluster", linear_colorbar=True)
     plot_tsne(tsne_results, processed['labels']['npipm'][:ntsne], 
-              ax=axes[2][1], alpha_vect=alpha_vect, ztitle=r"N. $\pi^{\pm}$", linear_colorbar=True)
+              ax=axes[1][0], ztitle=r"N. $\pi^{\pm}$", linear_colorbar=True)
     plot_tsne(tsne_results, processed['labels']['npi0'][:ntsne], 
-              ax=axes[2][2], alpha_vect=alpha_vect, ztitle=r"N. $\pi^{0}$", linear_colorbar=True)
+              ax=axes[1][1], ztitle=r"N. $\pi^{0}$", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['nem'][:ntsne],
+	      ax=axes[1][2], ztitle="N. EM", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['nkapm'][:ntsne],
+              ax=axes[2][0], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['nka0'][:ntsne],
+              ax=axes[2][1], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
+    plot_tsne(tsne_results, processed['labels']['nlambda0'][:ntsne],
+              ax=axes[2][2], ztitle=r"N. $\Lambda^{0}$", linear_colorbar=True)
 
     plt.tight_layout()
     if save_name: plt.savefig(save_name, dpi=200, bbox_inches='tight')
