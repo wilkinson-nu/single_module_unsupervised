@@ -70,16 +70,29 @@ def plot_tsne(tsne_results,
               ax=None,
               add_colorbar=True,
               linear_colorbar=False,
-              save_name=None):
+              save_name=None,
+              order_by_value=False,
+              max_z=None):
 
     if ax is None:
         fig, ax = plt.subplots()
     else:
         fig = ax.figure
 
+    ## Define an order to sort in if we want to emphasize nonzero values
+     if order_by_value:
+        sort_order = np.argsort(zvect)
+    else:
+        sort_order = np.arange(len(zvect))
+
+    ## Optionally clip the range
+    if max_z is not None:
+        zvect = np.clip(zvect, None, max_z)
+        
     unique_labels = np.unique(zvect)
     n_clusters = len(unique_labels)
-
+    label_to_idx = {label: idx for idx, label in enumerate(unique_labels)}
+    
     if linear_colorbar:
         all_colors = tuple(
             plt.cm.nipy_spectral(i / n_clusters) for i in range(n_clusters)
@@ -104,17 +117,19 @@ def plot_tsne(tsne_results,
         ncolors=n_clusters
     )
 
+    zvect_idx = np.array([label_to_idx[z] for z in zvect])
+
     if alpha_vect is not None:
         alpha_vect = alpha_vect**3
         rgb_colors = np.array(
-            [cmap(i % n_clusters)[:3] for i in zvect]
+            [cmap(i % n_clusters)[:3] for i in zvect_idx]
         )
         rgb_colors = np.concatenate(
             [rgb_colors, alpha_vect[:, None]],
             axis=1
         )
     else:
-        rgb_colors = [cmap(i % n_clusters) for i in zvect]
+        rgb_colors = np.array([cmap(i % n_clusters) for i in zvect_idx])
 
     npts = tsne_results.shape[0]
     s = 0.1
@@ -122,10 +137,10 @@ def plot_tsne(tsne_results,
     if npts <= 10000: s = 2
     if npts > 100000: s = 0.01
     
-    ax.scatter(tsne_results[:, 0],
-               tsne_results[:, 1],
+    ax.scatter(tsne_results[sort_order, 0],
+               tsne_results[sort_order, 1],
                s=s,
-               c=rgb_colors)
+               c=rgb_colors[sort_order])
 
     ax.set_xlabel("t-SNE #0")
     ax.set_ylabel("t-SNE #1")
@@ -137,7 +152,12 @@ def plot_tsne(tsne_results,
             ax=ax
         )
         cbar.set_label(ztitle, rotation=270, labelpad=20)
-
+        tick_labels = [str(int(l)) for l in unique_labels]
+        if max_z is not None and np.any(zvect == max_z):
+            tick_labels[-1] = f"{int(max_z)}+"
+        cbar.set_ticks(np.arange(n_clusters) + 0.5)
+        cbar.set_ticklabels(tick_labels)
+        
     if save_name:
         plt.savefig(save_name,
                     dpi=200,
@@ -188,23 +208,23 @@ def plot_particle_tsne_block(tsne_results, processed, save_name=None):
         processed['labels']['nhelium3'] + \
         processed['labels']['nnuclfrag']
     
-    plot_tsne(tsne_results, n_charged_particles[:ntsne], 
+    plot_tsne(tsne_results, n_charged_particles[:ntsne], order_by_value=True, max_z=10,
               ax=axes[0][0], ztitle="N. charged particles", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne], order_by_value=True, max_z=10,
               ax=axes[0][1], ztitle="N. protons", linear_colorbar=True)
-    plot_tsne(tsne_results, nnuclear[:ntsne],
+    plot_tsne(tsne_results, nnuclear[:ntsne], order_by_value=True, max_z=5,
               ax=axes[0][2], ztitle="N. cluster", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['npipm'][:ntsne], 
+    plot_tsne(tsne_results, processed['labels']['npipm'][:ntsne],  order_by_value=True, max_z=5,
               ax=axes[1][0], ztitle=r"N. $\pi^{\pm}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['npi0'][:ntsne], 
+    plot_tsne(tsne_results, processed['labels']['npi0'][:ntsne],  order_by_value=True, max_z=5,
               ax=axes[1][1], ztitle=r"N. $\pi^{0}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nem'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['nem'][:ntsne], order_by_value=True, max_z=5,
 	      ax=axes[1][2], ztitle="N. EM", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nkapm'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['nkapm'][:ntsne], order_by_value=True, max_z=5,
               ax=axes[2][0], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nka0'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['nka0'][:ntsne], order_by_value=True, max_z=5,
               ax=axes[2][1], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nlambda0'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['nlambda0'][:ntsne], order_by_value=True, max_z=5,
               ax=axes[2][2], ztitle=r"N. $\Lambda^{0}$", linear_colorbar=True)
 
     plt.tight_layout()
