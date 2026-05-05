@@ -16,6 +16,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
+from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
@@ -28,6 +29,9 @@ from core.analysis.metrics import argmax_consistency, uniformity, alignment
 from core.training.lars import LARS, LARS_LRScheduler
 from core.losses.gather import GatherLayer
 
+from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+import psutil, os
+
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
 
@@ -35,6 +39,9 @@ from torch.utils.tensorboard import SummaryWriter
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
+
+torch.set_num_threads(8)
+torch.set_num_interop_threads(8)
 
 ## Import transformations
 from core.data.augmentations_2d import DoNothing
@@ -68,7 +75,7 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
                                              num_workers=num_workers,
                                              drop_last=True,
-                                             persistent_workers=True,
+                                             persistent_workers=False,
                                              prefetch_factor=2,
                                              sampler=sampler)
     return dataloader
@@ -401,7 +408,7 @@ def run_training(rank, world_size, args):
 
     ## Set up head and loss for projection space
     proj_head = get_projhead(encoder_nchan_instance, args)
-    proj_head = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(proj_head)
+    # proj_head = nn.SyncBatchNorm.convert_sync_batchnorm(proj_head)
     proj_head.to(device)
     proj_head = DDP(proj_head, device_ids=[rank])
     heads["proj"] = proj_head
@@ -413,7 +420,7 @@ def run_training(rank, world_size, args):
         clust_head .to(device)
         clust_head = DDP(clust_head, device_ids=[rank])
         heads["clust"] = clust_head
-
+    
         if args.sharpened_cluster_loss == 0:
             loss_fns["clust"] = ClusteringLossMergedMultiGPU(args.clust_temp, args.entropy_scale)
         else:
@@ -457,6 +464,20 @@ def run_training(rank, world_size, args):
             if rank==0: print("Restart requested along with a pretraining file, abort!")
             sys.exit()
         load_pretrained(encoder, heads, args.pretrained)
+
+    ## Stuff in a profiler
+    ## if rank==0:
+    ##     
+    ##     prof = torch.profiler.profile(
+    ##         activities=[
+    ##             torch.profiler.ProfilerActivity.CPU,
+    ##             torch.profiler.ProfilerActivity.CUDA,
+    ##         ],
+    ##         record_shapes=True,
+    ##         profile_memory=True,
+    ##         with_stack=True,
+    ##     )
+    ##     prof.__enter__()
         
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
@@ -487,8 +508,13 @@ def run_training(rank, world_size, args):
         for h in heads.values(): h.train()
         
         # Iterate over batches of images with the dataloader
+        t0 = time.time()
+        first_batch_latency = None
         for cat_bcoords, cat_bfeats, this_batch_size in train_loader:
 
+            if first_batch_latency == None:
+                first_batch_latency = time.time() - t0
+            
             ## Send to the device, then make the sparse tensors
             cat_bcoords = cat_bcoords.to(device, non_blocking=True)
             cat_bfeats  = cat_bfeats .to(device)
@@ -504,11 +530,12 @@ def run_training(rank, world_size, args):
                 
             ## Keep track of the total loss
             tot_loss = torch.tensor(0.0, device=device)
-
+            # tot_loss = 0
+            
             ## Deal with the projection loss
             proj_batch = heads["proj"](encoded_instance_batch)
             proj_loss = loss_fns["proj"](proj_batch)*instance_scale
-            tot_loss += proj_loss
+            tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
 
             ## Add to metrics
@@ -520,8 +547,8 @@ def run_training(rank, world_size, args):
             ## Get a few batches for calculating the running deff
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_instance_batch.detach().cpu())
-                    buffer_proj.append(proj_batch.detach().cpu())
+                    buffer_enc .append(encoded_instance_batch.detach().to("cpu", non_blocking=True))
+                    buffer_proj.append(proj_batch.detach().to("cpu", non_blocking=True))
                     
             ## Optionally deal with clustering loss
             if "clust" in heads:
@@ -549,8 +576,8 @@ def run_training(rank, world_size, args):
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
             
-        # Manage CUDA memory for ME
-        torch.cuda.empty_cache()
+            # Manage CUDA memory for ME
+            torch.cuda.empty_cache()
 
         ## Although the gradients are handled correctly by GatherLayer, the losses are global
         ## Strictly speaking this step isn't necessary as each mini-batch gives the same loss value
@@ -608,10 +635,10 @@ def run_training(rank, world_size, args):
             ## Eigenvalue debugging
             log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
             log_scalar(writer, metrics, "eigen/proj_deff", proj_geom["deff"], iteration)
-
+            
             log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_geom["l1_ratio"], iteration)
             log_scalar(writer, metrics, "eigen/proj_l1_ratio", proj_geom["l1_ratio"], iteration)
-
+            
             for i,val in enumerate(enc_geom["eigvals"]):
                 log_scalar(writer, metrics, f"eigen/enc_lambda{i}", val, iteration)
             for i,val in enumerate(proj_geom["eigvals"]):
@@ -621,7 +648,7 @@ def run_training(rank, world_size, args):
             log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_geom["hard_neg"], iteration)
             log_scalar(writer, metrics, 'monitor/enc_gap', enc_geom["gap"], iteration)
             log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_geom["gap_std"], iteration)
-
+            
             log_scalar(writer, metrics, 'monitor/proj_pos', proj_geom["pos"], iteration)
             log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_geom["hard_neg"], iteration)
             log_scalar(writer, metrics, 'monitor/proj_gap', proj_geom["gap"], iteration)
@@ -651,16 +678,40 @@ def run_training(rank, world_size, args):
                 iter_string += f" ({av_losses['proj']:.4f} + {av_losses['clust']:.4f} + {av_entropy:.4f}); acc = {av_acc:.4f}"
             print(iter_string)
             print(f"Time taken: {(time.time()-tstart):.2f}")
-
+            
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
             save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
-        
+
+        ## Enhanced logging
+        if rank == 0:
+            vm = psutil.virtual_memory()
+            proc = psutil.Process(os.getpid())
+            io = psutil.disk_io_counters()
+
+            log_scalar(writer, metrics, 'syst_monitor/vm_used_gb', vm.used / 1e9, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/vm_avail_gb', vm.available / 1e9, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/vm_cached_gb', getattr(vm, "cached", 0) / 1e9, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/rss_gb', proc.memory_info().rss / 1e9, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/num_fds', proc.num_fds(), iteration)
+            log_scalar(writer, metrics, 'syst_monitor/io_read', io.read_bytes, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/io_write', io.write_bytes, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/mem_pressure', vm.available / vm.total, iteration)
+            log_scalar(writer, metrics, 'syst_monitor/first_batch_latency', first_batch_latency, iteration)
+
+            
     ## Final version of the model
     if rank==0:
         save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
         if log_dir: writer.close()
 
+    ## Report profiler if requested
+    ## if rank == 0:
+    ##     prof.__exit__(None, None, None)
+    ##     
+    ##     print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+    ##     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+        
     ## Clear things up
     dist.destroy_process_group()
 
