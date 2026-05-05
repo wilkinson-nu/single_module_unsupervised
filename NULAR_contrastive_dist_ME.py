@@ -28,7 +28,6 @@ from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from core.training.lars import LARS, LARS_LRScheduler
-from core.losses.gather import GatherLayer
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os

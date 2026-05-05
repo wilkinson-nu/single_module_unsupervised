@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from core.losses.gather import GatherLayer
 
 @torch.no_grad()
 def alignment(z_cat):
