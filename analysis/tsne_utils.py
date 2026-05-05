@@ -80,7 +80,7 @@ def plot_tsne(tsne_results,
         fig = ax.figure
 
     ## Define an order to sort in if we want to emphasize nonzero values
-     if order_by_value:
+    if order_by_value:
         sort_order = np.argsort(zvect)
     else:
         sort_order = np.arange(len(zvect))
@@ -135,7 +135,7 @@ def plot_tsne(tsne_results,
     s = 0.1
     if npts <= 25000: s = 0.5
     if npts <= 10000: s = 2
-    if npts > 100000: s = 0.01
+    if npts > 100000: s = 0.05
     
     ax.scatter(tsne_results[sort_order, 0],
                tsne_results[sort_order, 1],
@@ -208,17 +208,17 @@ def plot_particle_tsne_block(tsne_results, processed, save_name=None):
         processed['labels']['nhelium3'] + \
         processed['labels']['nnuclfrag']
     
-    plot_tsne(tsne_results, n_charged_particles[:ntsne], order_by_value=True, max_z=10,
+    plot_tsne(tsne_results, n_charged_particles[:ntsne], order_by_value=False, max_z=10,
               ax=axes[0][0], ztitle="N. charged particles", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne], order_by_value=True, max_z=10,
+    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne], order_by_value=False, max_z=10,
               ax=axes[0][1], ztitle="N. protons", linear_colorbar=True)
-    plot_tsne(tsne_results, nnuclear[:ntsne], order_by_value=True, max_z=5,
+    plot_tsne(tsne_results, nnuclear[:ntsne], order_by_value=False, max_z=5,
               ax=axes[0][2], ztitle="N. cluster", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['npipm'][:ntsne],  order_by_value=True, max_z=5,
+    plot_tsne(tsne_results, processed['labels']['npipm'][:ntsne],  order_by_value=False, max_z=5,
               ax=axes[1][0], ztitle=r"N. $\pi^{\pm}$", linear_colorbar=True)
     plot_tsne(tsne_results, processed['labels']['npi0'][:ntsne],  order_by_value=True, max_z=5,
               ax=axes[1][1], ztitle=r"N. $\pi^{0}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nem'][:ntsne], order_by_value=True, max_z=5,
+    plot_tsne(tsne_results, processed['labels']['nem'][:ntsne], order_by_value=False, max_z=5,
 	      ax=axes[1][2], ztitle="N. EM", linear_colorbar=True)
     plot_tsne(tsne_results, processed['labels']['nkapm'][:ntsne], order_by_value=True, max_z=5,
               ax=axes[2][0], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
@@ -251,10 +251,17 @@ def compute_tsne_cuml(input_vect,
     n_neighbors = 3*perp
     if n_neighbors > 1024: n_neighbors = 1024
     
-    tsne = cuML_TSNE(n_components=2, perplexity=perp, n_iter=n_iter, \
-                     early_exaggeration=exag, learning_rate=lr, \
-                     learning_rate_method=None, n_neighbors=n_neighbors, \
-                     metric=metric, method='barnes_hut', verbose=verbose)
+    tsne = cuML_TSNE(n_components=2,
+                     perplexity=perp,
+                     n_iter=n_iter, 
+                     early_exaggeration=exag,
+                     learning_rate=lr,
+                     learning_rate_method=None,
+                     n_neighbors=n_neighbors,
+                     metric=metric,
+                     method='barnes_hut',
+                     init='pca',
+                     verbose=verbose)
     
     tsne_results = tsne.fit_transform(input_vect)
     scaler = cuMLScaler()
