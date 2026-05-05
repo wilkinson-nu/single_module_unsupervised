@@ -25,7 +25,8 @@ from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMul
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
-from core.analysis.metrics import argmax_consistency, uniformity, alignment
+from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
+from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from core.training.lars import LARS, LARS_LRScheduler
 from core.losses.gather import GatherLayer
 
@@ -80,11 +81,6 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
                                              sampler=sampler)
     return dataloader
 
-## A simply logging utility
-def log_scalar(writer, metrics, name, value, step):
-    if writer is not None:
-        writer.add_scalar(name, value, step)
-    metrics[name].append(value)
     
 def manage_cuda_memory(rank, gpu_threshold):
     """Check and clear GPU memory if it exceeds the threshold."""
@@ -194,132 +190,6 @@ def get_opt_and_sched(args, encoder, heads, total_steps):
                                                        last_epoch=-1,
                                                        verbose=False)
     return optimizer, scheduler
-
-## Some diagnostic functions
-@torch.no_grad()
-def log_grad_norm(module, tag, writer, iteration):
-    if writer is None: return
-    total = 0.0
-    for name, p in module.named_parameters():
-        if p.grad is None:
-            continue
-        total += p.grad.pow(2).sum()
-
-    grad_norm = total.sqrt().item()
-    writer.add_scalar(f'grads/{tag}/sqrt_sum_grad_l2', grad_norm, iteration)
-    return
-
-@torch.no_grad()
-def log_grad_rms(module, tag, writer, iteration):
-    if writer is None: return
-
-    total = 0.0
-    count = 0
-    for name, p in module.named_parameters():
-        if p.grad is None:
-            continue
-        total += p.grad.pow(2).mean()
-        count += 1
-
-    mean_rms = (total / count).sqrt()
-    writer.add_scalar(f'grads/{tag}/mean_grad_rms', mean_rms, iteration)
-    return
-
-@torch.no_grad()
-def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
-    if writer is None: return
-    g2 = 0.0
-    w2 = 0.0
-    
-    for name, p in module.named_parameters():
-        if p.grad is None:
-            continue
-        g2 += p.grad.pow(2).sum()
-        w2 += p.data.pow(2).sum()
-        
-
-    ratio = (g2.sqrt() / (w2.sqrt() + eps)).item()
-    writer.add_scalar(f'grads/{tag}/sum_grad_over_wgt', ratio, iteration)
-    return
-
-
-@torch.no_grad()
-def simclr_geometry_metrics(buffer, device):
-
-    '''
-    Each element in buffer is the concatenation of the two views in a batch
-    Loop over the buffer and calculate values for each batch and then average
-    '''
-
-    dim = buffer[0].shape[1]
-    cov = torch.zeros(dim, dim, device=device)
-    n = 0
-    
-    ## Keep track of values
-    pos_buffer = []
-    neg_buffer = []
-    
-    ## loop over buffer
-    for emb_cat_cpu in buffer:
-
-        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
-        
-        batch_size = emb_cat.shape[0]//2
-        z_cat = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
-        z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
-
-        z_i_all = torch.cat(GatherLayer.apply(z_i), dim=0)
-        z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
-        total_batch = z_i_all.shape[0]
-        z_all = torch.cat([z_i_all, z_j_all], dim=0)
-        
-        #######################
-        ### Geometry metrics ##
-        #######################
-
-        sim = torch.mm(z_all, z_all.t())
-        mask = torch.eye(2*total_batch, device=z_all.device, dtype=torch.bool)
-        sim.masked_fill_(mask, -float("inf"))
-
-        idx = torch.arange(2*total_batch, device=z_all.device)
-        pos_idx = (idx + total_batch) % (2*total_batch)
-        pos_buffer .append(sim[idx, pos_idx])
-
-        ## Now modify sim for calculating hard negatives
-        sim[idx, pos_idx] = -float("inf")
-        neg_buffer .append(sim.max(dim=1).values)
-
-        #######################
-        # Effective dimension #
-        #######################
-        
-        z_all = z_all - z_all.mean(dim=0, keepdim=True)
-        cov += z_all.T @ z_all
-        n += z_all.shape[0]
-
-    ## Now calculate the covariance info
-    cov = cov / (n - 1)
-    eigvals = torch.linalg.eigvalsh(cov)
-    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
-    lambda1_ratio = eigvals.max() / eigvals.sum()
-
-    ## Calculate the SimCLR geometry values
-    all_pos = torch.cat(pos_buffer, dim=0)
-    all_neg = torch.cat(neg_buffer, dim=0)        
-    gap = all_pos - all_neg
-    pos_mean = all_pos.mean()
-    neg_mean = all_neg.mean()
-    gap_mean = gap.mean()
-    gap_std  = gap.std(unbiased=False)
-
-    return {"pos": pos_mean.item(),
-            "hard_neg": neg_mean.item(),
-            "gap": gap_mean.item(),
-            "gap_std": gap_std.item(),
-            "deff": deff.item(),
-            "l1_ratio": lambda1_ratio.item(),
-            "eigvals": eigvals.flip(0)[:10].cpu()
-            }
 
 
 def build_param_groups_ADAM(encoder, heads, weight_decay):

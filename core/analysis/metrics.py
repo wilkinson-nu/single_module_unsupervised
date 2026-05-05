@@ -29,3 +29,82 @@ def argmax_consistency(c_cat):
     
     same = (argmax_i == argmax_j).float()
     return same.mean()
+
+
+@torch.no_grad()
+def simclr_geometry_metrics(buffer, device):
+
+    '''
+    Each element in buffer is the concatenation of the two views in a batch
+    Loop over the buffer and calculate values for each batch and then average
+    '''
+
+    dim = buffer[0].shape[1]
+    cov = torch.zeros(dim, dim, device=device)
+    n = 0
+    
+    ## Keep track of values
+    pos_buffer = []
+    neg_buffer = []
+    
+    ## loop over buffer
+    for emb_cat_cpu in buffer:
+
+        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        
+        batch_size = emb_cat.shape[0]//2
+        z_cat = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
+        z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
+
+        z_i_all = torch.cat(GatherLayer.apply(z_i), dim=0)
+        z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
+        total_batch = z_i_all.shape[0]
+        z_all = torch.cat([z_i_all, z_j_all], dim=0)
+        
+        #######################
+        ### Geometry metrics ##
+        #######################
+
+        sim = torch.mm(z_all, z_all.t())
+        mask = torch.eye(2*total_batch, device=z_all.device, dtype=torch.bool)
+        sim.masked_fill_(mask, -float("inf"))
+
+        idx = torch.arange(2*total_batch, device=z_all.device)
+        pos_idx = (idx + total_batch) % (2*total_batch)
+        pos_buffer .append(sim[idx, pos_idx])
+
+        ## Now modify sim for calculating hard negatives
+        sim[idx, pos_idx] = -float("inf")
+        neg_buffer .append(sim.max(dim=1).values)
+
+        #######################
+        # Effective dimension #
+        #######################
+        
+        z_all = z_all - z_all.mean(dim=0, keepdim=True)
+        cov += z_all.T @ z_all
+        n += z_all.shape[0]
+
+    ## Now calculate the covariance info
+    cov = cov / (n - 1)
+    eigvals = torch.linalg.eigvalsh(cov)
+    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
+    lambda1_ratio = eigvals.max() / eigvals.sum()
+
+    ## Calculate the SimCLR geometry values
+    all_pos = torch.cat(pos_buffer, dim=0)
+    all_neg = torch.cat(neg_buffer, dim=0)        
+    gap = all_pos - all_neg
+    pos_mean = all_pos.mean()
+    neg_mean = all_neg.mean()
+    gap_mean = gap.mean()
+    gap_std  = gap.std(unbiased=False)
+
+    return {"pos": pos_mean.item(),
+            "hard_neg": neg_mean.item(),
+            "gap": gap_mean.item(),
+            "gap_std": gap_std.item(),
+            "deff": deff.item(),
+            "l1_ratio": lambda1_ratio.item(),
+            "eigvals": eigvals.flip(0)[:10].cpu()
+            }
