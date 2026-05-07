@@ -24,7 +24,7 @@ from core.losses.simdino import SimDINOLoss
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head_dino import get_dino_projhead
 from core.models.clustering_head import get_clusthead
-from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
+from core.analysis.metrics import argmax_consistency, uniformity, alignment, basic_geometry_metrics
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from core.training.lars import LARS, LARS_LRScheduler
 
@@ -278,16 +278,17 @@ def run_training(rank, world_size, args):
     student_encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(student_encoder)
     encoder_nchan_instance = student_encoder.get_nchan_instance()
     student_encoder .to(device)
-
+    student_encoder = DDP(student_encoder, device_ids=[rank])  ## Sort out parallel models (e.g., one is sent to each GPU)                                                                                         
     ## For DINO (note that gradients don't flow):
-    teacher_encoder = copy.deepcopy(student_encoder)
-    teacher_encoder.to(device)
-    for p in teacher_encoder.parameters():
-        p.requires_grad_(False)
-    
-    student_encoder = DDP(student_encoder, device_ids=[rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
+    teacher_encoder = get_encoder(args)
+    teacher_encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(teacher_encoder)
+    teacher_encoder .load_state_dict(student_encoder.module.state_dict())
+    teacher_encoder .to(device)
+        
     teacher_encoder = DDP(teacher_encoder, device_ids=[rank])
-
+    for p in teacher_encoder.module.parameters():
+        p.requires_grad_(False)
+     
     ## Dictionary of heads
     student_heads = {}
     teacher_heads = {}
@@ -298,20 +299,20 @@ def run_training(rank, world_size, args):
     ## Set up head and loss for projection space
     student_proj_head = get_dino_projhead(encoder_nchan_instance, args)
     student_proj_head .to(device)
-
-    ## Also the teacher (this is a bit messy...)
-    teacher_proj_head = copy.deepcopy(student_proj_head)
-    teacher_proj_head.to(device)
-    for p in teacher_proj_head.parameters():
-        p.requires_grad_(False)
-    
     student_proj_head = DDP(student_proj_head, device_ids=[rank])
     student_heads["proj"] = student_proj_head
+
+    ## Also the teacher (this is a bit messy...)
+    teacher_proj_head = get_dino_projhead(encoder_nchan_instance, args)
+    teacher_proj_head .load_state_dict(student_proj_head.module.state_dict())
+    teacher_proj_head .to(device)
     teacher_proj_head = DDP(teacher_proj_head, device_ids=[rank])
+    for p in teacher_proj_head.module.parameters():
+        p.requires_grad_(False)
     teacher_heads["proj"] = teacher_proj_head
     
     ## Using the SimDINO paper defaults for the hyperparameters
-    loss_fns["proj"] = SimDINOLoss(0.5, 1.0)
+    loss_fns["proj"] = SimDINOLoss(args.dino_eps, args.dino_coeff)
     
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
@@ -357,8 +358,7 @@ def run_training(rank, world_size, args):
         load_pretrained(student_encoder, student_heads, args.pretrained)
 
     ## Stuff in a profiler
-    ## if rank==0:
-    ##     
+    ## if rank==0:        
     ##     prof = torch.profiler.profile(
     ##         activities=[
     ##             torch.profiler.ProfilerActivity.CPU,
@@ -468,8 +468,8 @@ def run_training(rank, world_size, args):
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
             
-            # Manage CUDA memory for ME
-            torch.cuda.empty_cache()
+        # Manage CUDA memory for ME
+        torch.cuda.empty_cache()
 
         dist.all_reduce(tot_loss_tensor, op=dist.ReduceOp.SUM)
         for name in student_heads.keys(): dist.all_reduce(losses_tensor[name], op=dist.ReduceOp.SUM)
@@ -491,8 +491,8 @@ def run_training(rank, world_size, args):
         av_entropy = entropy_tensor.item() / (nbatches * world_size)
         
         ## Other geometry calculations
-        enc_geom = simclr_geometry_metrics(buffer_enc, device)
-        proj_geom = simclr_geometry_metrics(buffer_proj, device)
+        enc_geom = basic_geometry_metrics(buffer_enc, device)
+        proj_geom = basic_geometry_metrics(buffer_proj, device)
         
         ## Reporting, but only for rank 0
         if rank==0:
@@ -528,16 +528,6 @@ def run_training(rank, world_size, args):
             for i,val in enumerate(proj_geom["eigvals"]):
                 log_scalar(writer, metrics, f"eigen/proj_lambda{i}", val, iteration)
 
-            log_scalar(writer, metrics, 'monitor/enc_pos', enc_geom["pos"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_geom["hard_neg"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_gap', enc_geom["gap"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_geom["gap_std"], iteration)
-            
-            log_scalar(writer, metrics, 'monitor/proj_pos', proj_geom["pos"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_geom["hard_neg"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_gap', proj_geom["gap"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_geom["gap_std"], iteration)
-                
             if scheduler: 
                 log_scalar(writer, metrics, 'lr/train', scheduler.get_last_lr()[0], iteration)
 
@@ -614,7 +604,9 @@ if __name__ == '__main__':
     parser.add_argument('--aug_prob', type=float, default=1)
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
-    parser.add_argument('--momentum_teacher', type=float, default=0.996
+    parser.add_argument('--momentum_teacher', type=float, default=0.996)
+    parser.add_argument('--simdino_eps', type=float, default=0.5)
+    parser.add_argument('--simdino_coeff', type=float, default=1.0)
     
     ## Encoder architecture choices
     parser.add_argument('--enc_arch', type=str, default=None)
@@ -624,13 +616,6 @@ if __name__ == '__main__':
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
     # parser.add_argument('--enc_arch_final_linear', type=int, default=512)
-
-    ## (Optional) clustering head
-    parser.add_argument('--clust_arch', type=str, default="none")
-    parser.add_argument('--clust_temp', type=float, default=0.5)
-    parser.add_argument('--nclusters', type=int, default=20)
-    parser.add_argument('--entropy_scale', type=float, default=1.0)
-    parser.add_argument('--softmax_temp', type=float, default=1.0)
 
     ## Projection head
     parser.add_argument('--proj_arch', type=str, default="two")
