@@ -54,7 +54,7 @@ class ProjectionHeadTwoLayerDINO(nn.Module):
         out = F.normalize(out, dim=-1, p=2)
         
         if return_hidden:
-            return {"proj_layer1": F.normalize(h1_logits, dim=-1, p=2),,
+            return {"proj_layer1": F.normalize(h1_logits, dim=-1, p=2),
                     "proj_final": out}
         return out
 
@@ -128,11 +128,11 @@ def get_dino_projhead(nchan, args):
     hidden_act_fn = get_act_from_string(args.enc_act)
     
     if args.proj_arch == "two":
-        proj_head = ProjectionHeadTwoLayer(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=False)
+        proj_head = ProjectionHeadTwoLayerDINO(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=False)
     elif args.proj_arch == "twobn":
-        proj_head = ProjectionHeadTwoLayer(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=True)
+        proj_head = ProjectionHeadTwoLayerDINO(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=True)
     elif args.proj_arch == "three":
-        proj_head = ProjectionHeadThreeLayer(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=False)
+        proj_head = ProjectionHeadThreeLayerDINO(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=False)
     elif args.proj_arch == "threebn":
-        proj_head = ProjectionHeadThreeLayer(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=True)
+        proj_head = ProjectionHeadThreeLayerDINO(nchan, args.latent, args.nhidden, hidden_act_fn, apply_bn=True)
     return proj_head

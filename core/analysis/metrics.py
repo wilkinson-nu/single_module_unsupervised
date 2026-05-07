@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from core.losses.gather import GatherLayer
+import torch.distributed as dist
 
 @torch.no_grad()
 def alignment(z_cat):
@@ -106,6 +107,56 @@ def simclr_geometry_metrics(buffer, device):
             "gap": gap_mean.item(),
             "gap_std": gap_std.item(),
             "deff": deff.item(),
+            "l1_ratio": lambda1_ratio.item(),
+            "eigvals": eigvals.flip(0)[:10].cpu()
+            }
+
+
+@torch.no_grad()
+def basic_geometry_metrics(buffer, device):
+    '''
+    A simplified version of the simclr geometry metrics, no need for complex gather layers etc
+    '''
+    
+    dim = buffer[0].shape[1]
+
+    ## First pass: calculate global mean across all batches and GPUs
+    sum_z = torch.zeros(dim, device=device)
+    n = 0
+    for emb_cat_cpu in buffer:
+        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        z = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
+        sum_z += z.sum(dim=0)
+        n += z.shape[0]
+
+    ## Gather across GPUs if we're in a multi-GPU setting
+    if dist.is_initialized():
+        dist.all_reduce(sum_z, op=dist.ReduceOp.SUM)
+        n_tensor = torch.tensor(n, device=device, dtype=torch.float32)
+        dist.all_reduce(n_tensor, op=dist.ReduceOp.SUM)
+        n = n_tensor.item()
+
+    ## Find the global mean
+    global_mean = sum_z / n
+
+    ## Second pass, calculate the covariance
+    cov = torch.zeros(dim, dim, device=device)
+    for emb_cat_cpu in buffer:
+        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        z = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
+        z = z - global_mean
+        cov += z.T @ z
+
+    if dist.is_initialized():
+        dist.all_reduce(cov, op=dist.ReduceOp.SUM)
+
+    ## Calculate the covariance info
+    cov = cov / (n - 1)
+    eigvals = torch.linalg.eigvalsh(cov)
+    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
+    lambda1_ratio = eigvals.max() / eigvals.sum()
+
+    return {"deff": deff.item(),
             "l1_ratio": lambda1_ratio.item(),
             "eigvals": eigvals.flip(0)[:10].cpu()
             }

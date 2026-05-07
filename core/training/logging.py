@@ -1,3 +1,5 @@
+import torch
+
 ## A simply logging utility
 def log_scalar(writer, metrics, name, value, step):
     if writer is not None:
@@ -8,7 +10,8 @@ def log_scalar(writer, metrics, name, value, step):
 @torch.no_grad()
 def log_grad_norm(module, tag, writer, iteration):
     if writer is None: return
-    total = 0.0
+    device = next(module.parameters()).device
+    total = torch.tensor(0.0, device=device)
     for name, p in module.named_parameters():
         if p.grad is None:
             continue
@@ -22,7 +25,8 @@ def log_grad_norm(module, tag, writer, iteration):
 def log_grad_rms(module, tag, writer, iteration):
     if writer is None: return
 
-    total = 0.0
+    device = next(module.parameters()).device
+    total = torch.tensor(0.0, device=device)
     count = 0
     for name, p in module.named_parameters():
         if p.grad is None:
@@ -37,8 +41,9 @@ def log_grad_rms(module, tag, writer, iteration):
 @torch.no_grad()
 def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
     if writer is None: return
-    g2 = 0.0
-    w2 = 0.0
+    device = next(module.parameters()).device
+    g2 = torch.tensor(0.0, device=device)
+    w2 = torch.tensor(0.0, device=device)
     
     for name, p in module.named_parameters():
         if p.grad is None:

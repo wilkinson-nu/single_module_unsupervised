@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import torch.distributed as dist
+from core.losses.gather import GatherLayer
 
 class SimDINOLoss(nn.Module):
     """
@@ -45,19 +47,19 @@ class SimDINOLoss(nn.Module):
         """
         Compute expansion loss using Coding Rate estimation.
         """
-        m, p = s1.shape
+        N = 1
+        if dist.is_initialized():
+            N = dist.get_world_size()
+            s1 = torch.cat(GatherLayer.apply(s1), dim=0)
+            s2 = torch.cat(GatherLayer.apply(s2), dim=0)
 
+        m, p = s1.shape
+            
         ## Per-view covariances
         cov1 = s1.T @ s1
         cov2 = s2.T @ s2
 
-        N = 1
-        if dist.is_initialized():
-            N = dist.get_world_size()
-            cov1 = torch.distributed.nn.all_reduce(cov1)
-            cov2 = torch.distributed.nn.all_reduce(cov2)
-
-        scalar = p / (m * N * self.eps)
+        scalar = p / (m * self.eps)
         I = torch.eye(p, device=s1.device, dtype=s1.dtype)
 
         ## Coding rate for each view via Cholesky log-determinant
@@ -67,7 +69,7 @@ class SimDINOLoss(nn.Module):
         loss = (rate1 + rate2) / 2
 
         ## Balancing factor gamma (heuristic that could be a hyperparameter)
-        loss *= (p + N * m) / (p * N * m)
+        loss *= (p + m) / (p * m)
 
         return loss
 
