@@ -183,7 +183,7 @@ def run_training(rank, world_size, args):
 
     ## Set up head and loss for projection space
     proj_head = get_projhead(encoder_nchan_instance, args)
-    # proj_head = nn.SyncBatchNorm.convert_sync_batchnorm(proj_head)
+    proj_head = nn.SyncBatchNorm.convert_sync_batchnorm(proj_head)
     proj_head.to(device)
     proj_head = DDP(proj_head, device_ids=[rank])
     heads["proj"] = proj_head
@@ -221,6 +221,7 @@ def run_training(rank, world_size, args):
         writer = SummaryWriter(log_dir=log_dir)
 
     ## Sort out the optimizer (one for each GPU...)
+    nstep_total = nbatches*args.nstep
     optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nbatches*args.nstep)
     
     ## Set up metrics
@@ -257,6 +258,7 @@ def run_training(rank, world_size, args):
         prof.__enter__()
         
     ## Loop over the desired iterations
+    global_iter = 0
     for iteration in range(start_iteration, start_iteration+num_iterations):
 
         # Ensure shuffling with the sampler each epoch
@@ -350,6 +352,9 @@ def run_training(rank, world_size, args):
             ## Update optimizer and scheduler
             optimizer.step()
             if scheduler: scheduler.step()
+
+            ## Increment global_iter
+            global_iter += 1
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
