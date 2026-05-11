@@ -13,13 +13,16 @@ def alignment(z_cat):
 
 @torch.no_grad()
 def uniformity(z, t=2):
-    z = z.float()
-    z = nn.functional.normalize(z, dim=1)
-    sq_pdist = torch.cdist(z, z, p=2).pow(2)
+    z = nn.functional.normalize(z.float(), dim=1)
+    sim = z @ z.T  # cosine similarity matrix since z is normalised
+    sq_pdist = 2 - 2 * sim
+    # sq_pdist = torch.cdist(z, z, p=2).pow(2)
     # mask out diagonal (self-pairs)
+    #mask = ~torch.eye(z.size(0), device=z.device, dtype=torch.bool)
+    #vals = torch.exp(-t * sq_pdist)[mask]
+    #return torch.log(vals.mean())
     mask = ~torch.eye(z.size(0), device=z.device, dtype=torch.bool)
-    vals = torch.exp(-t * sq_pdist)[mask]
-    return torch.log(vals.mean())
+    return torch.log(torch.exp(-t * sq_pdist)[mask].mean())
     
 @torch.no_grad()
 def argmax_consistency(c_cat):
