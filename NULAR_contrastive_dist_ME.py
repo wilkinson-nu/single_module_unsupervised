@@ -21,13 +21,12 @@ from torch.profiler import profile, record_function, ProfilerActivity
 ## Includes from my libraries for this project
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
 from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU, SharpenedClusterLoss
-# from core.models.encoder import get_encoder
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
-from core.training.lars import LARS, LARS_LRScheduler
+from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
@@ -152,102 +151,6 @@ def get_dataset(args, rank=0):
     return data_dataset
 
 
-def get_opt_and_sched(args, encoder, heads, total_steps):
-
-    scheduler = None
-    optimizer = None
-
-    ## Sort out the optimizer (one for each GPU...)
-    if args.optimizer == 'lars':
-        param_groups = build_param_groups_LARS(encoder, heads, args.weight_decay)
-        
-        corr_lr = args.lr * (args.batch_size*args.world_size / 256)
-        optimizer = LARS(
-            param_groups,
-            lr=corr_lr,
-            momentum=args.lars_momentum,
-            trust_coef=args.lars_trust_coeff,
-        )
-
-        warmup_steps = int(0.05 * total_steps)
-        scheduler = LARS_LRScheduler(optimizer, warmup_steps, total_steps, lr_max=args.lr, lr_min=0.0)
-
-    ## Default to adam
-    else:
-        param_groups = build_param_groups_ADAM(encoder, heads, args.weight_decay)
-
-        optimizer = torch.optim.AdamW(
-            param_groups,
-            lr=args.lr,
-        )
-        if args.scheduler == "onecycle":
-            scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=total_steps, cycle_momentum=False)
-        if args.scheduler == "step":
-            scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
-                                                       milestones=[150,300,450],
-                                                       gamma=0.1,
-                                                       last_epoch=-1,
-                                                       verbose=False)
-    return optimizer, scheduler
-
-
-def build_param_groups_ADAM(encoder, heads, weight_decay):
-
-    decay = []
-    no_decay = []
-
-    for name, param in encoder.named_parameters():
-        if not param.requires_grad:
-            continue
-        
-        if (param.ndim == 1
-            or name.endswith(".bias")):
-            no_decay.append(param)
-        else:
-            decay.append(param)
-        
-    head_pars = []
-    for module in list(heads.values()):
-        for name, param in module.named_parameters():
-            if not param.requires_grad:
-                continue
-            head_pars.append(param)
-                
-    return [
-        {"params": decay, "weight_decay": weight_decay},
-        {"params": no_decay, "weight_decay": 0.0},
-	{"params": head_pars, "weight_decay": 0.0},
-    ]
-
-def build_param_groups_LARS(encoder, heads, weight_decay):
-
-    lars_params = []
-    no_lars_params = []
-
-    for name, param in encoder.named_parameters():
-        if not param.requires_grad:
-            continue
-        
-        if (param.ndim == 1
-            or name.endswith(".bias")):
-            no_lars_params.append(param)
-        else:
-            lars_params.append(param)
-
-    head_pars = []
-    for module in list(heads.values()):
-        for name, param in module.named_parameters():
-            if not param.requires_grad:
-                continue
-            head_pars.append(param)
-            
-    return [
-        {"params": lars_params, "weight_decay": weight_decay},
-        {"params": no_lars_params, "weight_decay": 0.0, "lars_exclude": True},
-        {"params": head_pars, "weight_decay": 0.0},
-    ]
-
-
 ## Wrapped training function
 def run_training(rank, world_size, args):
 
@@ -338,18 +241,18 @@ def run_training(rank, world_size, args):
         load_pretrained(encoder, heads, args.pretrained)
 
     ## Stuff in a profiler
-    ## if rank==0:
-    ##     
-    ##     prof = torch.profiler.profile(
-    ##         activities=[
-    ##             torch.profiler.ProfilerActivity.CPU,
-    ##             torch.profiler.ProfilerActivity.CUDA,
-    ##         ],
-    ##         record_shapes=True,
-    ##         profile_memory=True,
-    ##         with_stack=True,
-    ##     )
-    ##     prof.__enter__()
+    if bool(args.run_profiler) and rank==0:
+        
+        prof = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+        )
+        prof.__enter__()
         
     ## Loop over the desired iterations
     for iteration in range(start_iteration, start_iteration+num_iterations):
@@ -386,6 +289,13 @@ def run_training(rank, world_size, args):
 
             if first_batch_latency == None:
                 first_batch_latency = time.time() - t0
+
+            ## Update weight decay to allow for scheduling
+            this_wd = update_weight_decay(optimizer,
+			                  weight_decay,
+                                          weight_decay_final,
+                                          global_iter,
+                                          nstep_total)
             
             ## Send to the device, then make the sparse tensors
             cat_bcoords = cat_bcoords.to(device, non_blocking=True)
@@ -393,38 +303,32 @@ def run_training(rank, world_size, args):
             cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
 
             ## Now do the forward passes
-            encoded_instance_batch = encoder(cat_batch, this_batch_size)
+            encoded_batch = encoder(cat_batch, this_batch_size)
 
-            ## This is probably an unnecessary check, but keep it for testing
-            if norm_encoder:
-                encoded_cluster_batch = torch.nn.functional.normalize(encoded_cluster_batch, p=2, dim=1)
-                # encoded_instance_batch = torch.nn.functional.normalize(encoded_instance_batch, p=2, dim=1)
-                
-            ## Keep track of the total loss
-            tot_loss = torch.tensor(0.0, device=device)
-            # tot_loss = 0
-            
+            ## L2 norm the encoder
+            if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
+                           
             ## Deal with the projection loss
-            proj_batch = heads["proj"](encoded_instance_batch)
+            proj_batch = heads["proj"](encoded_batch)
             proj_loss = loss_fns["proj"](proj_batch)*instance_scale
             tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
 
             ## Add to metrics
-            total_enc_align_tensor += alignment(encoded_instance_batch)
-            total_enc_unif_tensor += uniformity(encoded_instance_batch)
+            total_enc_align_tensor += alignment(encoded_batch)
+            total_enc_unif_tensor += uniformity(encoded_batch)
             total_proj_align_tensor += alignment(proj_batch)
             total_proj_unif_tensor += uniformity(proj_batch)
 
             ## Get a few batches for calculating the running deff
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_instance_batch.detach().to("cpu", non_blocking=True))
+                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=True))
                     buffer_proj.append(proj_batch.detach().to("cpu", non_blocking=True))
                     
             ## Optionally deal with clustering loss
             if "clust" in heads:
-                clust_batch = heads["clust"](encoded_cluster_batch)
+                clust_batch = heads["clust"](encoded_batch)
                 clust_loss, clust_entropy = loss_fns["clust"](clust_batch)
                 tot_loss += clust_loss + clust_entropy
                 losses_tensor["clust"] += clust_loss.detach()
@@ -543,7 +447,8 @@ def run_training(rank, world_size, args):
 
                 
             if scheduler: 
-                log_scalar(writer, metrics, 'lr/train', scheduler.get_last_lr()[0], iteration)
+                log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
+            log_scalar(writer, metrics, 'train/weight_decay', this_wd, iteration)
 
             ## Build a string to report the outcome
             iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f}"
@@ -580,11 +485,11 @@ def run_training(rank, world_size, args):
         if log_dir: writer.close()
 
     ## Report profiler if requested
-    ## if rank == 0:
-    ##     prof.__exit__(None, None, None)
-    ##     
-    ##     print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
-    ##     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    if bool(args.run_profiler) and rank == 0:
+        prof.__exit__(None, None, None)
+        
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
         
     ## Clear things up
     dist.destroy_process_group()
@@ -594,7 +499,7 @@ def run_training(rank, world_size, args):
 if __name__ == '__main__':
 
     ## Parse some args
-    parser = argparse.ArgumentParser("NN training module")
+    parser = argparse.ArgumentParser("SimCLR training module")
 
     # Basic job setup
     parser.add_argument('--data_dir', type=str)
@@ -619,6 +524,8 @@ if __name__ == '__main__':
     parser.add_argument('--aug_type', type=str, default=None)
     parser.add_argument('--aug_prob', type=float, default=1)
     parser.add_argument('--weight_decay', type=float, default=0)
+    parser.add_argument('--weight_decay_final', type=float, default=-1)
+    parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
     parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
     
