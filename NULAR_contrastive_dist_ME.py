@@ -251,6 +251,9 @@ def build_param_groups_LARS(encoder, heads, weight_decay):
 ## Wrapped training function
 def run_training(rank, world_size, args):
 
+    ME.set_sparse_tensor_operation_mode(
+        ME.SparseTensorOperationMode.SHARE_COORDINATE_MANAGER)
+    
     torch.autograd.set_detect_anomaly(False)
     ## For timing
     tstart = time.time()
@@ -390,12 +393,12 @@ def run_training(rank, world_size, args):
             cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
 
             ## Now do the forward passes
-            encoded_instance_batch, encoded_cluster_batch = encoder(cat_batch, this_batch_size)
+            encoded_instance_batch = encoder(cat_batch, this_batch_size)
 
             ## This is probably an unnecessary check, but keep it for testing
             if norm_encoder:
                 encoded_cluster_batch = torch.nn.functional.normalize(encoded_cluster_batch, p=2, dim=1)
-                encoded_instance_batch = torch.nn.functional.normalize(encoded_instance_batch, p=2, dim=1)
+                # encoded_instance_batch = torch.nn.functional.normalize(encoded_instance_batch, p=2, dim=1)
                 
             ## Keep track of the total loss
             tot_loss = torch.tensor(0.0, device=device)
@@ -444,9 +447,11 @@ def run_training(rank, world_size, args):
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
+
+            ME.clear_global_coordinate_manager()
             
-            # Manage CUDA memory for ME
-            torch.cuda.empty_cache()
+        # Manage CUDA memory for ME
+        torch.cuda.empty_cache()
 
         ## Although the gradients are handled correctly by GatherLayer, the losses are global
         ## Strictly speaking this step isn't necessary as each mini-batch gives the same loss value
@@ -619,8 +624,10 @@ if __name__ == '__main__':
     
     ## Encoder architecture choices
     parser.add_argument('--enc_arch', type=str, default=None)
+    parser.add_argument('--enc_arch_pool', type=str, default="avg")
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
+    parser.add_argument('--enc_init_stem_stride', type=int, default=2)
     parser.add_argument('--enc_stem_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
