@@ -49,15 +49,16 @@ class BasicBlock(nn.Module):
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
             if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
             self.shortcut = nn.Sequential(res)
-
+        else:
+            self.shortcut = None
 
     def forward(self, x):
-        residual = self.shortcut(x) if hasattr(self, 'shortcut') else x
+        residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
-        if self.norm1: out = self.norm1(out)
+        if self.norm1 is not None: out = self.norm1(out)
         out = self.relu(out)
         out = self.conv2(out)
-        if self.norm1: out = self.norm2(out)
+        if self.norm1 is not None: out = self.norm2(out)
         out += residual
         out = self.relu(out)
         return out
@@ -116,18 +117,19 @@ class Bottleneck(nn.Module):
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
             if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
             self.shortcut = nn.Sequential(res)
-
+        else:
+            self.shortcut = None
                 
     def forward(self, x):
-        residual = self.shortcut(x) if hasattr(self, 'shortcut') else x
+        residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
-        if self.norm1: out = self.norm1(out)
+        if self.norm1 is not None: out = self.norm1(out)
         out = self.relu(out)
         out = self.conv2(out)
-        if self.norm2: out = self.norm2(out)
+        if self.norm2 is not None: out = self.norm2(out)
         out = self.relu(out)
         out = self.conv3(out)
-        if self.norm3: out = self.norm3(out)
+        if self.norm3 is not None: out = self.norm3(out)
         out += residual
         out = self.relu(out)
         return out
