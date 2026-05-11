@@ -516,6 +516,7 @@ if __name__ == '__main__':
     
     ## Encoder architecture choices
     parser.add_argument('--enc_arch', type=str, default=None)
+    parser.add_argument('--enc_arch_pool', type=str, default="avg")
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_init_stem_stride', type=int, default=2)
