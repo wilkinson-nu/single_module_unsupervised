@@ -10,25 +10,29 @@ class LARS(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
+            lars_exclude = group.get('lars_exclude', False)
             for p in group['params']:
                 if p.grad is None:
                     continue
 
-                param = p
                 grad = p.grad
-                
-                update = grad + group['weight_decay'] * param
-                param_norm = torch.norm(param)
-                update_norm = torch.norm(update)
-                local_lr = group['trust_coef'] * param_norm / (update_norm + group['eps'])
+                update = grad + group['weight_decay'] * p
+
+                if lars_exclude:
+                    effective_lr = group['lr']
+                else:
+                    p_norm = torch.norm(p)
+                    update_norm = torch.norm(update)
+                    local_lr = group['trust_coef'] * p_norm / (update_norm + group['eps'])
+                    effective_lr = group['lr'] * local_lr
 
                 if 'momentum_buffer' not in self.state[p]:
                     buf = self.state[p]['momentum_buffer'] = torch.zeros_like(p)
                 else:
                     buf = self.state[p]['momentum_buffer']
 
-                buf.mul_(group['momentum']).add_(local_lr * update)
-                p.add_(-group['lr'] * buf.to(p.dtype))
+                buf.mul_(group['momentum']).add_(effective_lr * update)
+                p.add_(-buf.to(p.dtype))
                 
 
 class LARS_LRScheduler:
