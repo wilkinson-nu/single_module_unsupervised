@@ -16,6 +16,7 @@ class ResNetBase(nn.Module):
     ## In channels = 1 and outchannels are set by the network
     def __init__(self,
                  stem_pool=False,
+                 init_stem_stride=2,
                  stem_norm=False,
                  stem_deep=False,
                  res_pool=False,
@@ -27,6 +28,7 @@ class ResNetBase(nn.Module):
         assert self.BLOCK is not None
 
         self.stem_pool = stem_pool
+        self.init_stem_stride = init_stem_stride
         self.res_pool = res_pool
         self.stem_norm = stem_norm
         self.stem_deep = stem_deep
@@ -42,7 +44,7 @@ class ResNetBase(nn.Module):
 
     def make_shallow_stem(self):
         stem = OrderedDict()
-        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.INIT_DIM, kernel_size=3, stride=2, dimension=self.D)
+        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.INIT_DIM, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
         if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(self.INIT_DIM)
         stem['relu1'] = ME.MinkowskiReLU(inplace=True)
 
@@ -65,7 +67,7 @@ class ResNetBase(nn.Module):
         if self.stem_pool: ch = (self.INIT_DIM, self.INIT_DIM)
         
         ## As is common for ResNet implementations, use 3 3x3 convoutions instead of an initial 7x7 one
-        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=ch[0], kernel_size=3, stride=2, dimension=self.D)
+        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=ch[0], kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
         if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(ch[0])
         stem['relu1'] = ME.MinkowskiReLU(inplace=True)
         stem['conv2'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[0], kernel_size=3, stride=1, dimension=self.D)
@@ -147,7 +149,7 @@ class ResNetBase(nn.Module):
         x = self.global_pool(x)
 
         ## Return 2 copies for compatibility with older, slightly silly encoder
-        return x.F, x.F
+        return x.F #, x.F
 
     ## These are relics based on how things used to work, but... okay...
     def get_nchan_instance(self):
