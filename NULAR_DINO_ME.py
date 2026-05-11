@@ -16,7 +16,6 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch import nn
-from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
@@ -153,13 +152,19 @@ def get_dataset(args, rank=0):
 
 def get_opt_and_sched(args, encoder, heads, total_steps):
 
-    scheduler = None
-    optimizer = None
+    lr_scheduler = None
+    wd_scheduler = None
+    optimizer    = None
 
+    ## Sort out the parameter groups
+    param_groups = build_param_groups(encoder,
+                                      heads,
+                                      args.weight_decay,
+                                      args.weight_decay_final,
+                                      bool(args.weight_decay_head))
+    
     ## Sort out the optimizer (one for each GPU...)
     if args.optimizer == 'lars':
-        param_groups = build_param_groups_LARS(encoder, heads, args.weight_decay)
-        
         corr_lr = args.lr * (args.batch_size*args.world_size / 256)
         optimizer = LARS(
             param_groups,
@@ -173,8 +178,6 @@ def get_opt_and_sched(args, encoder, heads, total_steps):
 
     ## Default to adam
     else:
-        param_groups = build_param_groups_ADAM(encoder, heads, args.weight_decay)
-
         optimizer = torch.optim.AdamW(
             param_groups,
             lr=args.lr,
@@ -187,64 +190,53 @@ def get_opt_and_sched(args, encoder, heads, total_steps):
                                                        gamma=0.1,
                                                        last_epoch=-1,
                                                        verbose=False)
+
+    
     return optimizer, scheduler
 
 
-def build_param_groups_ADAM(encoder, heads, weight_decay):
-
-    decay = []
-    no_decay = []
-
-    for name, param in encoder.named_parameters():
-        if not param.requires_grad:
-            continue
-        
-        if (param.ndim == 1
-            or name.endswith(".bias")):
-            no_decay.append(param)
-        else:
-            decay.append(param)
-        
-    head_pars = []
-    for module in list(heads.values()):
-        for name, param in module.named_parameters():
-            if not param.requires_grad:
-                continue
-            head_pars.append(param)
-                
-    return [
-        {"params": decay, "weight_decay": weight_decay},
-        {"params": no_decay, "weight_decay": 0.0},
-	{"params": head_pars, "weight_decay": 0.0},
-    ]
-
-def build_param_groups_LARS(encoder, heads, weight_decay):
-
-    lars_params = []
-    no_lars_params = []
+def build_param_groups(encoder,
+                       heads,
+                       weight_decay,
+                       weight_decay_final=-1,
+                       weight_decay_head=False):
+    """
+    This works for both Adam and LARS.
+    """
+    
+    enc_params  = []
+    omit_params = []
+    head_params = []
 
     for name, param in encoder.named_parameters():
         if not param.requires_grad:
             continue
         
-        if (param.ndim == 1
-            or name.endswith(".bias")):
-            no_lars_params.append(param)
+        if param.ndim == 1 or name.endswith(".bias"):
+            omit_params.append(param)
         else:
-            lars_params.append(param)
+            enc_params .append(param)
 
-    head_pars = []
     for module in list(heads.values()):
         for name, param in module.named_parameters():
             if not param.requires_grad:
                 continue
-            head_pars.append(param)
+
+            if param.ndim == 1 or name.endswith(".bias"):
+                omit_params.append(param)
+            else:
+                head_params.append(param)
+
+    ## sort out weight scheduler logic
+    weight_sched = weight_decay_final > 0
+    head_weight_decay = weight_decay if weight_decay_head else 0.0
             
     return [
-        {"params": lars_params, "weight_decay": weight_decay},
-        {"params": no_lars_params, "weight_decay": 0.0, "lars_exclude": True},
-        {"params": head_pars, "weight_decay": 0.0},
+        {"params": enc_params,  "weight_decay": weight_decay,      "weight_sched": weight_sched},
+        {"params": omit_params, "weight_decay": 0.0,               "weight_sched": False, "lars_exclude": True},
+        {"params": head_params, "weight_decay": head_weight_decay, "weight_sched": weight_sched and weight_decay_head},
     ]
+
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0, start_warmup_value=0):
     warmup_schedule = np.array([])
@@ -260,10 +252,34 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
     return schedule
 
 
+def update_weight_decay(optimizer, 
+                        weight_decay, 
+                        weight_decay_final, 
+                        step, 
+                        total_steps):
+
+    if weight_decay_final <= 0: return weight_decay
+
+    # Cosine schedule from weight_decay to weight_decay_final
+    wd = weight_decay_final + 0.5 * (weight_decay - weight_decay_final) * (
+        1 + math.cos(math.pi * step / total_steps)
+    )
+
+    for group in optimizer.param_groups:
+        if group.get("weight_sched", False):
+            group["weight_decay"] = wd
+
+    return wd
+
+
 ## Wrapped training function
 def run_training(rank, world_size, args):
 
+    ME.set_sparse_tensor_operation_mode(
+        ME.SparseTensorOperationMode.SHARE_COORDINATE_MANAGER)
+    
     torch.autograd.set_detect_anomaly(False)
+
     ## For timing
     tstart = time.time()
 
@@ -310,9 +326,15 @@ def run_training(rank, world_size, args):
     for p in teacher_proj_head.module.parameters():
         p.requires_grad_(False)
     teacher_heads["proj"] = teacher_proj_head
+
+    ## For later use:
+    teacher_params = (list(teacher_encoder.module.parameters()) + 
+                      list(teacher_heads["proj"].module.parameters()))
+    student_params = (list(student_encoder.module.parameters()) + 
+                      list(student_heads["proj"].module.parameters()))
     
     ## Using the SimDINO paper defaults for the hyperparameters
-    loss_fns["proj"] = SimDINOLoss(args.dino_eps, args.dino_coeff)
+    loss_fns["proj"] = SimDINOLoss(args.simdino_eps, args.simdino_coeff)
     
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
@@ -322,7 +344,9 @@ def run_training(rank, world_size, args):
     ## So we don't constantly ask args
     num_iterations = args.nstep
     log_dir = args.log
-    clip_gradients = bool(args.clip_gradients)
+    norm_encoder = args.norm_encoder
+    weight_decay = args.weight_decay
+    weight_decay_final = args.weight_decay_final
     
     writer = None
     if rank==0 and log_dir is not None:
@@ -358,17 +382,17 @@ def run_training(rank, world_size, args):
         load_pretrained(student_encoder, student_heads, args.pretrained)
 
     ## Stuff in a profiler
-    ## if rank==0:        
-    ##     prof = torch.profiler.profile(
-    ##         activities=[
-    ##             torch.profiler.ProfilerActivity.CPU,
-    ##             torch.profiler.ProfilerActivity.CUDA,
-    ##         ],
-    ##         record_shapes=True,
-    ##         profile_memory=True,
-    ##         with_stack=True,
-    ##     )
-    ##     prof.__enter__()
+    if bool(args.run_profiler) and rank==0:        
+        prof = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            record_shapes=False,
+            profile_memory=True,
+            with_stack=False,
+        )
+        prof.__enter__()
         
     ## Loop over the desired iterations
     global_iter = 0
@@ -404,28 +428,35 @@ def run_training(rank, world_size, args):
 
             if first_batch_latency == None:
                 first_batch_latency = time.time() - t0
-            
+
+            ## Update weight decay to allow for scheduling
+            this_wd = update_weight_decay(optimizer,
+			                  weight_decay,
+                                          weight_decay_final,
+                                          global_iter,
+                                          nstep_total)
+                
             ## Send to the device, then make the sparse tensors
             cat_bcoords = cat_bcoords.to(device, non_blocking=True)
             cat_bfeats  = cat_bfeats .to(device)
             cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
 
-            ## Keep track of the total loss
-            tot_loss = torch.tensor(0.0, device=device)
-            
             ## Now do the forward passes
-            student_encoded_batch, _ = student_encoder(cat_batch, this_batch_size)
-        
+            student_encoded_batch = student_encoder(cat_batch, this_batch_size)
+
+            ## L2 norm the encoder
+            if norm_encoder: student_encoder_batch = torch.nn.functional.normalize(student_encoded_batch, p=2, dim=1)
+            
             ## Deal with the projection loss (a bit hacky for SimDINO)
             student_proj_batch = student_heads["proj"](student_encoded_batch)
 
             ## Deal with the teacher
             with torch.no_grad():
-                teacher_encoded_batch, _ = teacher_encoder(cat_batch, this_batch_size)
+                teacher_encoded_batch = teacher_encoder(cat_batch, this_batch_size)
+                if norm_encoder: teacher_encoder_batch = torch.nn.functional.normalize(teacher_encoded_batch, p=2, dim=1)
                 teacher_proj_batch = teacher_heads["proj"](teacher_encoded_batch)
             
-            proj_loss, comp_loss, exp_loss = loss_fns["proj"](student_proj_batch, teacher_proj_batch)
-            tot_loss = proj_loss
+            tot_loss, comp_loss, exp_loss = loss_fns["proj"](student_proj_batch, teacher_proj_batch.detach())
             losses_tensor["proj"] += comp_loss.detach()
             entropy_tensor += exp_loss.detach()
             
@@ -434,7 +465,7 @@ def run_training(rank, world_size, args):
             total_enc_unif_tensor += uniformity(student_encoded_batch)
             total_proj_align_tensor += alignment(student_proj_batch)
             total_proj_unif_tensor += uniformity(student_proj_batch)
-
+            
             ## Get a few batches for calculating the running deff
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
@@ -445,28 +476,22 @@ def run_training(rank, world_size, args):
             optimizer.zero_grad(set_to_none=True)
             tot_loss .backward()
 
-            if clip_gradients:
-                torch.nn.utils.clip_grad_norm_(student_encoder.parameters(), max_norm=1.0)
-                for h in student_heads.values(): torch.nn.utils.clip_grad_norm_(h.parameters(), max_norm=1.0)
-            
             ## Update optimizer and scheduler
             optimizer.step()
             if scheduler: scheduler.step()
 
             ## Update EMA momentum encoder stuff
             with torch.no_grad():
-                m = mom_scheduler[global_iter]  # momentum parameter
-                torch._foreach_lerp_(
-                    list(teacher_encoder.module.parameters()) + list(teacher_heads["proj"].module.parameters()),
-                    list(student_encoder.module.parameters()) + list(student_heads["proj"].module.parameters()),
-                    weight = 1. - m
-                )
+                m = mom_scheduler[global_iter]
+                torch._foreach_lerp_(teacher_params, student_params, weight=1. - m)
             
             ## Increment global_iter
             global_iter += 1
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
+
+            ME.clear_global_coordinate_manager()
             
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
@@ -529,8 +554,9 @@ def run_training(rank, world_size, args):
                 log_scalar(writer, metrics, f"eigen/proj_lambda{i}", val, iteration)
 
             if scheduler: 
-                log_scalar(writer, metrics, 'lr/train', scheduler.get_last_lr()[0], iteration)
-
+                log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
+            log_scalar(writer, metrics, 'train/weight_decay', this_wd, iteration)
+                
             ## Build a string to report the outcome
             iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f}"
             iter_string += f" ({av_losses['proj']:.4f} + {av_entropy:.4f})"
@@ -564,11 +590,11 @@ def run_training(rank, world_size, args):
         if log_dir: writer.close()
 
     ## Report profiler if requested
-    ## if rank == 0:
-    ##     prof.__exit__(None, None, None)
-    ##     
-    ##     print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
-    ##     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    if bool(args.run_profiler) and rank == 0:
+        prof.__exit__(None, None, None)
+        
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=100))
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
         
     ## Clear things up
     dist.destroy_process_group()
@@ -578,7 +604,7 @@ def run_training(rank, world_size, args):
 if __name__ == '__main__':
 
     ## Parse some args
-    parser = argparse.ArgumentParser("NN training module")
+    parser = argparse.ArgumentParser("SimDINO training module")
 
     # Basic job setup
     parser.add_argument('--data_dir', type=str)
@@ -603,15 +629,18 @@ if __name__ == '__main__':
     parser.add_argument('--aug_type', type=str, default=None)
     parser.add_argument('--aug_prob', type=float, default=1)
     parser.add_argument('--weight_decay', type=float, default=0)
-    parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
-    parser.add_argument('--momentum_teacher', type=float, default=0.996)
+    parser.add_argument('--weight_decay_final', type=float, default=-1)
+    parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
+    parser.add_argument('--momentum_teacher', type=float, default=0.9)
     parser.add_argument('--simdino_eps', type=float, default=0.5)
     parser.add_argument('--simdino_coeff', type=float, default=1.0)
+    parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
     
     ## Encoder architecture choices
     parser.add_argument('--enc_arch', type=str, default=None)
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
+    parser.add_argument('--enc_init_stem_stride', type=int, default=2)
     parser.add_argument('--enc_stem_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
@@ -619,13 +648,15 @@ if __name__ == '__main__':
 
     ## Projection head
     parser.add_argument('--proj_arch', type=str, default="two")
-    parser.add_argument('--proj_temp', type=float, default=0.5)
     parser.add_argument('--latent', type=int, default=128)
     parser.add_argument('--nhidden', type=int, default=512)
 
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
+    ## Optional profiler
+    parser.add_argument('--run_profiler', type=int, choices=[0,1], default=0)
+    
     # Parse arguments from command line
     args = parser.parse_args()
 
