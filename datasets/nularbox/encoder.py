@@ -8,6 +8,7 @@ from core.models.utils import get_act_from_string_ME
 def get_encoder(args):
 
     stem_norm = bool(getattr(args, "enc_stem_norm", 0))
+    init_stem_stride = bool(getattr(args, "enc_init_stem_stride", 2))
     stem_pool = bool(getattr(args, "enc_stem_pool", 0))
     stem_deep = bool(getattr(args, "enc_stem_deep", 0))
     res_pool = bool(getattr(args, "enc_res_pool", 0))
@@ -38,6 +39,7 @@ def get_encoder(args):
             enc = resnet.ResNet152v1
             
         encoder = enc(stem_pool=stem_pool,
+                      init_stem_stride=init_stem_stride,
 	              stem_norm=stem_norm,
                       stem_deep=stem_deep,
                       res_pool=res_pool,
