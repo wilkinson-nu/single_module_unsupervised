@@ -26,7 +26,7 @@ def get_opt_and_sched(args, encoder, heads, total_steps):
         )
 
         warmup_steps = int(0.05 * total_steps)
-        scheduler = LARS_LRScheduler(optimizer, warmup_steps, total_steps, lr_max=args.lr, lr_min=0.0)
+        scheduler = LARS_LRScheduler(optimizer, warmup_steps, total_steps, lr_max=corr_lr, lr_min=0.0)
 
     ## Default to adam
     else:
