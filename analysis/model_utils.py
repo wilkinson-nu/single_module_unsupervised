@@ -26,14 +26,18 @@ def get_models_from_checkpoint(state_file_name):
 
     ## Dictionary of heads and load saved model parameters
     heads = {}
-    
-    heads["proj"] = get_projhead(encoder.get_nchan_instance(), args)
+
+    if hasattr(args, 'simdino_eps'):
+        heads["proj"] = get_dino_projhead(encoder.get_nchan_instance(), args)
+    else:
+        heads["proj"] = get_projhead(encoder.get_nchan_instance(), args)
     heads["proj"] .load_state_dict(checkpoint['proj_head_state_dict'])
 
     ## Optionally load the clustering head
-    if args.clust_arch != "none":
-        heads["clust"] = get_clusthead(encoder.get_nchan_cluster(), args)
-        heads["clust"] .load_state_dict(checkpoint['clust_head_state_dict']) 
+    if hasattr(args, 'clust_arch'):
+        if args.clust_arch != "none":
+            heads["clust"] = get_clusthead(encoder.get_nchan_cluster(), args)
+            heads["clust"] .load_state_dict(checkpoint['clust_head_state_dict']) 
 
     return encoder, heads, args
 
