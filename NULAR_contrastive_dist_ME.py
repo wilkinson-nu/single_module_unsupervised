@@ -212,6 +212,8 @@ def run_training(rank, world_size, args):
     instance_scale = args.instance_scale
     clip_gradients = bool(args.clip_gradients)
     norm_encoder = bool(args.norm_encoder)
+    weight_decay = args.weight_decay
+    weight_decay_final = args.weight_decay_final
     
     writer = None
     if rank==0 and log_dir is not None:
