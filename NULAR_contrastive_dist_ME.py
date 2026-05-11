@@ -560,6 +560,9 @@ if __name__ == '__main__':
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
+    ## Optional profiler
+    parser.add_argument('--run_profiler', type=int, choices=[0,1], default=0)
+
     # Parse arguments from command line
     args = parser.parse_args()
 
