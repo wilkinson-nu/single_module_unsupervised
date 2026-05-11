@@ -79,10 +79,10 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
         
         ## Now do the forward passes            
         with torch.no_grad(): 
-            encoded_instance_batch, encoded_cluster_batch = encoder(orig_batch, batch_size)
+            encoded_batch = encoder(orig_batch, batch_size)
             if "clust" in heads:
-                clust_batch = heads["clust"](encoded_cluster_batch, return_hidden=return_hidden)
-            proj_batch = heads["proj"](encoded_instance_batch, return_hidden=return_hidden)
+                clust_batch = heads["clust"](encoded_batch, return_hidden=return_hidden)
+            proj_batch = heads["proj"](encoded_batch, return_hidden=return_hidden)
 
         ## Normalize the output (this is a bit fragile, but backwards compatible)
         if not return_hidden:
@@ -100,7 +100,7 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
                 if k == "clust_final" and apply_softmax:
                     temp = soft(temp/apply_softmax)
                 representations[k].append(temp.detach().cpu())
-        representations["encoder"].append(encoded_cluster_batch.detach().cpu())
+        representations["encoder"].append(encoded_batch.detach().cpu())
 
         labels.extend(batch_labels)
         
