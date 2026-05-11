@@ -11,10 +11,11 @@ class SimDINOLoss(nn.Module):
     Simplified for the single crop case here
     """
     
-    def __init__(self, eps=0.5, coeff=1.0):
+    def __init__(self, eps=0.5, coeff=1.0, expa_both=True):
         super().__init__()
         self.eps = eps
         self.coeff = coeff
+        self.expa_both = expa_both
 
     def forward(self, student_feat, teacher_feat):
         """
@@ -29,7 +30,11 @@ class SimDINOLoss(nn.Module):
         t1, t2 = teacher_feat[:N], teacher_feat[N:]
 
         comp_loss = self.calc_compression(s1, s2, t1, t2)
-        expa_loss = self.calc_expansion(s1, s2)
+
+        if self.expa_both == True:
+            expa_loss = self.calc_expansion((s1+t1)/2., (s2+t2)/2.)
+        else:
+            expa_loss = self.calc_expansion(s1, s2)
 
         loss = -self.coeff*comp_loss - expa_loss
         return loss, comp_loss.detach(), expa_loss.detach()        
@@ -39,6 +44,13 @@ class SimDINOLoss(nn.Module):
         Compute compression loss between student and teacher features.
         Simplified by the 2 global view assumption
         """
+
+        if dist.is_initialized():
+            s1 = torch.cat(GatherLayer.apply(s1), dim=0)
+            s2 = torch.cat(GatherLayer.apply(s2), dim=0)
+            t1 = torch.cat(GatherLayer.apply(t1), dim=0).detach()
+            t2 = torch.cat(GatherLayer.apply(t2), dim=0).detach()
+            
         sim_1 = F.cosine_similarity(s1, t2, dim=-1).mean()
         sim_2 = F.cosine_similarity(s2, t1, dim=-1).mean()
         return (sim_1 + sim_2) / 2
