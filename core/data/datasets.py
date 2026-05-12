@@ -187,6 +187,40 @@ def solo_ME_collate_fn(batch):
     
     return bcoords, bfeats, labels
 
+## label_clamp allows a configurable maximum to be provided
+## Derived labels allows raw labels to be added or otherwise manipulated
+def solo_labelled_collate_fn(batch,
+                             label_clamp=None,
+                             derived_labels=None):
+    coords, feats, labels = zip(*batch)
+    
+    ## Create batched coordinates for the SparseTensor input
+    bcoords  = ME.utils.batched_coordinates(coords)
+    
+    ## Concatenate all lists
+    bfeats  = torch.from_numpy(np.concatenate(feats, 0)).float()
+
+    ## Batch the labels into dict of tensors
+    label_names = labels[0].dtype.names
+    blabels = {}
+
+    ## Make a batched set of labels
+    for name in label_names:
+        blabels[name] = torch.from_numpy( np.array([l[name] for l in labels]))
+
+    ## Compute derived labels from unclamped values
+    if derived_labels:
+        for name, fn in derived_labels.items():
+            blabels[name] = fn(blabels)
+
+    ## Now clamp everything if required
+    if label_clamp:
+        for name, clamp_val in label_clamp.items():
+            if name in blabels:
+                blabels[name] = torch.clamp(blabels[name], 0, clamp_val)
+    
+    return bcoords, bfeats, blabels, len(batch)
+
 
 def solo_ME_collate_fn_with_meta(batch):
     coords, feats, labels, filenames, event_ids = zip(*batch)
