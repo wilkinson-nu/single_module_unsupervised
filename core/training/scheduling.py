@@ -1,5 +1,6 @@
 import torch
 import math
+from torch import optim
 from core.training.lars import LARS, LARS_LRScheduler
 
 def get_opt_and_sched(args, encoder, heads, total_steps):
