@@ -16,11 +16,6 @@ def uniformity(z, t=2):
     z = nn.functional.normalize(z.float(), dim=1)
     sim = z @ z.T  # cosine similarity matrix since z is normalised
     sq_pdist = 2 - 2 * sim
-    # sq_pdist = torch.cdist(z, z, p=2).pow(2)
-    # mask out diagonal (self-pairs)
-    #mask = ~torch.eye(z.size(0), device=z.device, dtype=torch.bool)
-    #vals = torch.exp(-t * sq_pdist)[mask]
-    #return torch.log(vals.mean())
     mask = ~torch.eye(z.size(0), device=z.device, dtype=torch.bool)
     return torch.log(torch.exp(-t * sq_pdist)[mask].mean())
     
@@ -120,46 +115,48 @@ def basic_geometry_metrics(buffer, device):
     '''
     A simplified version of the simclr geometry metrics, no need for complex gather layers etc
     '''
-    
-    dim = buffer[0].shape[1]
 
+    dim = buffer[0].shape[1]
+    
     ## First pass: calculate global mean across all batches and GPUs
     sum_z = torch.zeros(dim, device=device)
     n = 0
     for emb_cat_cpu in buffer:
-        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        emb_cat = emb_cat_cpu.to(device)
         z = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
         sum_z += z.sum(dim=0)
         n += z.shape[0]
 
-    ## Gather across GPUs if we're in a multi-GPU setting
+        
+    ## ## Gather across GPUs if we're in a multi-GPU setting
     if dist.is_initialized():
         dist.all_reduce(sum_z, op=dist.ReduceOp.SUM)
         n_tensor = torch.tensor(n, device=device, dtype=torch.float32)
         dist.all_reduce(n_tensor, op=dist.ReduceOp.SUM)
         n = n_tensor.item()
-
+    
     ## Find the global mean
     global_mean = sum_z / n
-
+    
     ## Second pass, calculate the covariance
     cov = torch.zeros(dim, dim, device=device)
     for emb_cat_cpu in buffer:
-        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        emb_cat = emb_cat_cpu.to(device)
         z = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
         z = z - global_mean
         cov += z.T @ z
-
+    
     if dist.is_initialized():
         dist.all_reduce(cov, op=dist.ReduceOp.SUM)
-
+    
     ## Calculate the covariance info
     cov = cov / (n - 1)
-    eigvals = torch.linalg.eigvalsh(cov)
-    deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
+    eigvals = torch.linalg.eigvalsh(cov.cpu())
+    deff = (eigvals.sum()**2) / (eigvals.pow(2).sum())
     lambda1_ratio = eigvals.max() / eigvals.sum()
-
+    
     return {"deff": deff.item(),
             "l1_ratio": lambda1_ratio.item(),
             "eigvals": eigvals.flip(0)[:10].cpu()
             }
+
