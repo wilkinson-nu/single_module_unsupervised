@@ -1,6 +1,5 @@
 import numpy as np
 import argparse
-from torch import optim
 import sys
 import MinkowskiEngine as ME
 import torch
@@ -45,7 +44,7 @@ from core.data.augmentations_2d import DoNothing
 from datasets.nularbox.augmentations_2d import get_transform
 
 ## Import dataset
-from core.data.datasets import single_2d_dataset_ME, cat_labelled_collate_fn
+from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 
 ## Supervised learning specific
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
@@ -79,10 +78,10 @@ def get_supervised_dataloader(args, rank, world_size, num_workers=8):
                                    max_events=args.nevents)
     if rank==0: print("Training with", args.nevents, "data events!")
     
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
+    sampler = DistributedSampler(dataset, num_replicas=world_size)
 
     ## Slightly hacky way to manipulate the labels
-    this_collate_fn = partial(cat_labelled_collate_fn,
+    this_collate_fn = partial(solo_labelled_collate_fn,
                               label_clamp=LABEL_CLAMP,
                               derived_labels=DERIVED_LABELS)
     
@@ -183,7 +182,6 @@ def run_training(rank, world_size, args):
     loss_fns = {}
 
     ## Set up head and loss for projection space
-    ## TODO change to the alternatives for supervised learning
     sup_head = SupervisedHead(encoder_nchan_instance,
                               classifier_config=DEFAULT_CLASSIFIER_CONFIG)
     sup_head .to(device)
@@ -246,7 +244,7 @@ def run_training(rank, world_size, args):
         prof.__enter__()
 
     ## Set up metrics:
-    clf_metrics = ClassificationMetrics(DEFAULT_CLASSIFIER_CONFIG)
+    clf_metrics = ClassificationMetrics(DEFAULT_CLASSIFIER_CONFIG, device=device)
         
     ## Loop over the desired iterations
     global_iter = 0
@@ -259,15 +257,14 @@ def run_training(rank, world_size, args):
         losses_tensor = {name: torch.tensor(0.0, device=device) for name in DEFAULT_CLASSIFIER_CONFIG}
         
         ## For monitoring
-        ## TODO add more accuracy metrics for the supervised training
-        total_acc_tensor = torch.tensor(0.0, device=device)
+        clf_metrics.reset()
         total_enc_align_tensor = torch.tensor(0.0, device=device)
         total_enc_unif_tensor = torch.tensor(0.0, device=device)
 
         ## Add more monitoring tools
         nbuffer = 5
         buffer_enc = []
-        
+
         # Set train mode for the encoder and any heads
         encoder.train()
         for h in heads.values(): h.train()
@@ -276,13 +273,13 @@ def run_training(rank, world_size, args):
         t0 = time.time()
         first_batch_latency = None
         for bcoords, bfeats, blabels, this_batch_size in train_loader:
-
+            
             if first_batch_latency == None:
                 first_batch_latency = time.time() - t0
 
             ## Update weight decay to allow for scheduling
             this_wd = update_weight_decay(optimizer,
-			                  weight_decay,
+	        	                  weight_decay,
                                           weight_decay_final,
                                           global_iter,
                                           nstep_total)
@@ -313,11 +310,11 @@ def run_training(rank, world_size, args):
             ## Get a few batches for calculating the running deff
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=True))
+                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=False))
 
             ## Supervision specific metrics:
             with torch.no_grad(): clf_metrics.update(sup_batch, blabels)
-            
+
             # Backward pass
             optimizer.zero_grad(set_to_none=True)
             tot_loss .backward()
@@ -337,7 +334,7 @@ def run_training(rank, world_size, args):
             tot_loss_tensor += tot_loss.detach()
 
             ME.clear_global_coordinate_manager()
-            
+
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
 
@@ -346,22 +343,24 @@ def run_training(rank, world_size, args):
         ## But I kept it in to avoid my own headaches...
         dist.all_reduce(tot_loss_tensor, op=dist.ReduceOp.SUM)
         for name in losses_tensor.keys(): dist.all_reduce(losses_tensor[name], op=dist.ReduceOp.SUM)
-        # dist.all_reduce(total_acc_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_enc_align_tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_enc_unif_tensor, op=dist.ReduceOp.SUM)
-        
+
         av_tot_loss = tot_loss_tensor.item() / (nbatches * world_size)
         av_losses = {
             name: losses_tensor[name].item() / (nbatches * world_size)
             for name in losses_tensor.keys()
         }
-        # av_acc = total_acc_tensor.item() / (nbatches * world_size)
         av_enc_align = total_enc_align_tensor.item() / (nbatches * world_size)
         av_enc_unif  = total_enc_unif_tensor.item() / (nbatches * world_size)
 
         ## Other geometry calculations
-        enc_geom = basic_geometry_metrics(buffer_enc, device)
-        
+        with torch.no_grad(): enc_geom = basic_geometry_metrics(buffer_enc, device)
+
+        ## Sort out the metrics (needs to be on all ranks due to collective ops)
+        clf_metrics.reduce()
+        metric_results = clf_metrics.compute()
+
         ## Reporting, but only for rank 0
         if rank==0:
             metrics["iteration"].append(iteration)
@@ -370,8 +369,6 @@ def run_training(rank, world_size, args):
                 log_scalar(writer, metrics, 'loss/'+name, av_losses[name], iteration)
 
             ## Supervised training metrics
-            clf_metrics.reduce()
-            metric_results = clf_metrics.compute()
             for name, m in metric_results.items():
                 log_scalar(writer, metrics, f'acc/{name}_accuracy',           m['accuracy'],           iteration)
                 log_scalar(writer, metrics, f'acc/{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
@@ -380,7 +377,6 @@ def run_training(rank, world_size, args):
                 for c, val in enumerate(m['per_class_acc']):
                     if not math.isnan(val):
                         log_scalar(writer, metrics, f'acc/{name}_class{c}_acc', val, iteration)
-
                 
             ## Add metrics for debugging/training diagnostics
             log_scalar(writer, metrics, 'monitor/enc_alignment', av_enc_align, iteration)
@@ -410,7 +406,7 @@ def run_training(rank, world_size, args):
             iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f}"
             print(iter_string)
             print(f"Time taken: {(time.time()-tstart):.2f}")
-            
+
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
             save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
@@ -431,7 +427,6 @@ def run_training(rank, world_size, args):
             log_scalar(writer, metrics, 'syst_monitor/mem_pressure', vm.available / vm.total, iteration)
             log_scalar(writer, metrics, 'syst_monitor/first_batch_latency', first_batch_latency, iteration)
 
-            
     ## Final version of the model
     if rank==0:
         save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
