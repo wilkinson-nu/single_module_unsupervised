@@ -6,6 +6,7 @@ from glob import glob
 from bisect import bisect
 import MinkowskiEngine as ME
 import torch
+import time
 
 class paired_2d_dataset_ME(Dataset):
 
@@ -199,7 +200,7 @@ def solo_labelled_collate_fn(batch,
     
     ## Concatenate all lists
     bfeats  = torch.from_numpy(np.concatenate(feats, 0)).float()
-
+    
     ## Batch the labels into dict of tensors
     label_names = labels[0].dtype.names
     blabels = {}
@@ -207,7 +208,7 @@ def solo_labelled_collate_fn(batch,
     ## Make a batched set of labels
     for name in label_names:
         blabels[name] = torch.from_numpy( np.array([l[name] for l in labels]))
-
+        
     ## Compute derived labels from unclamped values
     if derived_labels:
         for name, fn in derived_labels.items():
