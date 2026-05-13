@@ -1,5 +1,8 @@
+import torch
 from torch import nn
 import torch.nn.functional as F
+import torch.distributed as dist
+import math
 
 ## These config options are interrelated, so I'm putting them here for now
 LABEL_CLAMP = {
@@ -12,9 +15,16 @@ LABEL_CLAMP = {
     'nka0':      1,
     'nlambda0':  1,
 }
+
+def _ncharged(l):
+    return l['nproton'] + l['npipm'] + l['nkapm']
+
+def _ncluster(l):
+    return l['ndeuteron'] + l['nalpha'] + l['nhelium3']
+
 DERIVED_LABELS = {
-    'ncharged': lambda l: l['nproton'] + l['npipm'] + l['nkapm'],
-    'ncluster': lambda l: l['ndeuteron'] + l['nalpha'] + l['nhelium3'] + l['ntritium'] + l['nnuclfrag'],
+    'ncharged': _ncharged,
+    'ncluster': _ncluster,
 }
 
 DEFAULT_CLASSIFIER_CONFIG = {
