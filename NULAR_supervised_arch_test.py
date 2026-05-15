@@ -245,7 +245,8 @@ def run_training(rank, world_size, args):
 
     ## Set up metrics:
     clf_metrics = ClassificationMetrics(DEFAULT_CLASSIFIER_CONFIG, device=device)
-        
+    val_metrics = ClassificationMetrics(DEFAULT_CLASSIFIER_CONFIG, device=device)
+
     ## Loop over the desired iterations
     global_iter = 0
     for iteration in range(start_iteration, start_iteration+num_iterations):
@@ -338,6 +339,44 @@ def run_training(rank, world_size, args):
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
 
+        ## Validation pass
+        encoder.eval()
+        for h in heads.values(): h.eval()
+
+        val_tot_loss_tensor = torch.tensor(0.0, device=device)
+        val_losses_tensor = {name: torch.tensor(0.0, device=device) for name in DEFAULT_CLASSIFIER_CONFIG}
+        val_metrics.reset()
+        val_nbatches = 0
+
+        with torch.no_grad():
+            for bcoords, bfeats, blabels, this_batch_size in val_loader:
+
+                blabels = {name: val.to(device, non_blocking=True) for name, val in blabels.items()}
+                bcoords = bcoords.to(device, non_blocking=True)
+                bfeats  = bfeats .to(device)
+                batch   = ME.SparseTensor(bfeats, bcoords, device=device)
+
+                encoded_batch = encoder(batch, this_batch_size)
+                if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
+
+                sup_batch = heads["sup"](encoded_batch)
+                sup_loss, sup_loss_dict = loss_fns["sup"](sup_batch, blabels, DEFAULT_CLASSIFIER_CONFIG)
+
+                for name, loss_val in sup_loss_dict.items():
+                    val_losses_tensor[name] += loss_val
+                val_tot_loss_tensor += sup_loss
+
+                val_metrics.update(sup_batch, blabels)
+                val_nbatches += 1
+
+                ME.clear_global_coordinate_manager()
+
+        torch.cuda.empty_cache()
+
+        # Resume train mode for next iteration
+        encoder.train()
+        for h in heads.values(): h.train()
+        
         ## Although the gradients are handled correctly by GatherLayer, the losses are global
         ## Strictly speaking this step isn't necessary as each mini-batch gives the same loss value
         ## But I kept it in to avoid my own headaches...
@@ -355,12 +394,25 @@ def run_training(rank, world_size, args):
         av_enc_unif  = total_enc_unif_tensor.item() / (nbatches * world_size)
 
         ## Other geometry calculations
-        with torch.no_grad(): enc_geom = basic_geometry_metrics(buffer_enc, device)
+        with torch.no_grad():
+            enc_geom = basic_geometry_metrics(buffer_enc, device)
 
         ## Sort out the metrics (needs to be on all ranks due to collective ops)
         clf_metrics.reduce()
         metric_results = clf_metrics.compute()
 
+        ## Also deal with validation metrics
+        dist.all_reduce(val_tot_loss_tensor, op=dist.ReduceOp.SUM)
+        for name in val_losses_tensor.keys():
+            dist.all_reduce(val_losses_tensor[name], op=dist.ReduceOp.SUM)
+        av_val_tot_loss = tot_loss_tensor.item() / (val_nbatches * world_size)
+        av_losses = {
+            name: val_losses_tensor[name].item() / (val_nbatches * world_size)
+            for name in val_losses_tensor.keys()
+        }
+        val_metrics.reduce()
+        val_metrices_results = val_metrics.compute()
+        
         ## Reporting, but only for rank 0
         if rank==0:
             metrics["iteration"].append(iteration)
