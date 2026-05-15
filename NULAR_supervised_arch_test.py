@@ -12,7 +12,7 @@ from functools import partial
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -67,34 +67,54 @@ def print_model_summary(model):
             total_params += param.numel()
     print("Total parameters =", total_params)
     
-def get_supervised_dataloader(args, rank, world_size, num_workers=8):
+def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
 
     ## Get the augmentation from the argument name
     aug_transform = get_transform('256x256', args.aug_type, args.aug_prob)
     
     ## Get the concrete dataset
-    dataset = single_2d_dataset_ME(args.data_dir, \
+    full_dataset = single_2d_dataset_ME(args.data_dir, \
                                    transform=aug_transform, \
                                    max_events=args.nevents)
-    if rank==0: print("Training with", args.nevents, "data events!")
-    
-    sampler = DistributedSampler(dataset, num_replicas=world_size)
+    if rank==0:
+        print(f"Loaded {len(full_dataset)} events, "
+              f"training with {args.nevents}, validating with {args.nval}")
 
+    ## Split indices -- no shuffle needed since data is already randomly ordered
+    train_indices = list(range(args.nevents))
+    val_indices = list(range(args.nevents, args.nevents + args.nval))
+
+    train_dataset = Subset(full_dataset, train_indices)
+    val_dataset = Subset(full_dataset, val_indices)
+    
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size)
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False)
+    
     ## Slightly hacky way to manipulate the labels
     this_collate_fn = partial(solo_labelled_collate_fn,
                               label_clamp=LABEL_CLAMP,
                               derived_labels=DERIVED_LABELS)
     
-    dataloader = torch.utils.data.DataLoader(dataset,
-                                             collate_fn=this_collate_fn,
-                                             batch_size=args.batch_size,
-                                             shuffle=False,  # Set to False, as DistributedSampler handles shuffling
-                                             num_workers=num_workers,
-                                             drop_last=True,
-                                             persistent_workers=False,
-                                             prefetch_factor=2,
-                                             sampler=sampler)
-    return dataset, dataloader
+    train_dataloader = torch.utils.data.DataLoader(dataset,
+                                                   collate_fn=this_collate_fn,
+                                                   batch_size=args.batch_size,
+                                                   shuffle=False,
+                                                   num_workers=num_workers,
+                                                   drop_last=True,
+                                                   persistent_workers=False,
+                                                   prefetch_factor=2,
+                                                   sampler=sampler)
+    
+    val_dataloader = torch.utils.data.DataLoader(val_dataset,
+                                                 collate_fn=this_collate_fn,
+                                                 batch_size=args.batch_size,
+                                                 shuffle=False,
+                                                 num_workers=num_workers,
+                                                 drop_last=True,
+                                                 persistent_workers=False,
+                                                 prefetch_factor=2,
+                                                 sampler=val_sampler)
+    return train_dataset, train_dataloader, val_dataset, val_dataloader
 
     
 def manage_cuda_memory(rank, gpu_threshold):
@@ -190,7 +210,7 @@ def run_training(rank, world_size, args):
     loss_fns["sup"] = supervised_loss
     
     ## Set up the distributed dataset
-    train_dataset, train_loader = get_supervised_dataloader(args, rank, world_size, 6)
+    train_dataset, train_dataloader, val_dataset, val_dataloader = get_supervised_dataloaders(args, rank, world_size, 6)
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -452,6 +472,7 @@ if __name__ == '__main__':
     # Basic job setup
     parser.add_argument('--data_dir', type=str)
     parser.add_argument('--nevents', type=int)
+    parser.add_argument('--nval', type=int)
     parser.add_argument('--log', type=str, default=None)    
     parser.add_argument('--state_file', type=str)
     parser.add_argument('--pretrained', type=str, default=None)
