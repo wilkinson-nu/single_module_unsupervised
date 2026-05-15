@@ -488,10 +488,6 @@ if __name__ == '__main__':
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
     # parser.add_argument('--enc_arch_final_linear', type=int, default=512)
 
-    ## Projection head
-    parser.add_argument('--proj_arch', type=str, default="two")
-    parser.add_argument('--nhidden', type=int, default=512)
-
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
