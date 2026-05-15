@@ -36,7 +36,13 @@ def get_opt_and_sched(args, encoder, heads, total_steps):
             lr=args.lr,
         )
         if args.scheduler == "onecycle":
-            scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr*500, total_steps=total_steps, cycle_momentum=False)
+            scheduler = optim.lr_scheduler.OneCycleLR(optimizer,
+                                                      max_lr=args.lr,
+                                                      total_steps=total_steps,
+                                                      pct_start=0.1,      # 10% warmup
+                                                      div_factor=25,      # start at max_lr/25
+                                                      final_div_factor=1e4,  # end at max_lr/1e4
+                                                      cycle_momentum=False)
         if args.scheduler == "step":
             scheduler = optim.lr_scheduler.MultiStepLR(optimizer,
                                                        milestones=[150,300,450],
