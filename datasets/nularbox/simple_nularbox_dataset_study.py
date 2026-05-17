@@ -257,7 +257,7 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     maxE_hist      = TH1Dish(np.logspace(-1, 2.4, 125))
     enu_hist       = TH1Dish(np.linspace(0, 50, 100))
     q0_hist        = TH1Dish(np.linspace(0, 50, 100))
-    
+
     ## Test out a range of transforms
     alpha_min=1
     alpha_max=10
@@ -283,6 +283,10 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     nhelium3_hist  = TH1Iish(nbins=6)
     nnuclfrag_hist = TH1Iish(nbins=6)
 
+    ## Special hists
+    ncluster_hist  = TH1Iish(nbins=11)
+    ncharged_hist  = TH1Iish(nbins=21)
+    
     ## Special enum histograms
     topo_hist      = TH1Enum(Topology)
     mode_hist      = TH1Enum(Mode)
@@ -348,6 +352,12 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
             mode_hist     .Fill(label['mode'])
             enu_hist      .Fill(label['enu'])
             q0_hist       .Fill(label['q0'])
+
+            ncharged = label['nproton'] + label['npipm'] + label['nkapm']
+            ncluster = label['ndeuteron'] + label['nalpha'] + label['nhelium3'] + label['ntritium'] + label['nnuclfrag']
+
+            ncharged_hist .Fill(ncharged)
+            ncluster_hist .Fill(ncluster)
             
             ## Increment counter
             sum_images += 1
@@ -391,6 +401,8 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     nalpha_hist    .Draw(output_name_root+"nalpha.png", xtitle='N. alpha', logy=True)
     nhelium3_hist  .Draw(output_name_root+"nhelium3.png", xtitle=r'N. $^{3}$He', logy=True)
     nnuclfrag_hist .Draw(output_name_root+"nnuclfrag.png", xtitle='N. nuclear fragments', logy=True)
+    ncluster_hist  .Draw(output_name_root+"ncluster.png", xtitle='N. cluster', logy=True)
+    ncharged_hist  .Draw(output_name_root+"ncharged.png", xtitle='N. charged', logy=True)    
     topo_hist      .Draw(output_name_root+"topology.png")
     topo_hist      .Draw(output_name_root+"topology_logy.png", logy=True)
     mode_hist      .Draw(output_name_root+"mode.png")
