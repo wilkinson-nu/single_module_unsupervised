@@ -6,11 +6,12 @@ import math
 
 ## These config options are interrelated, so I'm putting them here for now
 LABEL_CLAMP = {
-    'nproton':   5,
-    'npipm':     5,
-    'npi0':      3,
+    'nproton':   3,
+    'npipm':     2,
+    'npi0':      2,
+    'nem':       2,
     'ncluster':  3,
-    'ncharged': 10,
+    'ncharged':  5,
     'nkapm':     1,
     'nka0':      1,
     'nlambda0':  1,
@@ -20,7 +21,7 @@ def _ncharged(l):
     return l['nproton'] + l['npipm'] + l['nkapm']
 
 def _ncluster(l):
-    return l['ndeuteron'] + l['nalpha'] + l['nhelium3']
+    return l['ndeuteron'] + l['nalpha'] + l['nhelium3'] + l['ntritium'] + l['nnuclfrag']
 
 DERIVED_LABELS = {
     'ncharged': _ncharged,
@@ -28,14 +29,15 @@ DERIVED_LABELS = {
 }
 
 DEFAULT_CLASSIFIER_CONFIG = {
-    'nproton':   {'n_classes': 6,  'weight': 1.0},
-    'npipm':     {'n_classes': 6,  'weight': 1.0},
-    'npi0':      {'n_classes': 4,  'weight': 1.0},
-    'ncluster':  {'n_classes': 4,  'weight': 1.0},
-    'nlambda0':  {'n_classes': 2,  'weight': 2.0},  # upweight rare events
-    'nkapm':     {'n_classes': 2,  'weight': 2.0},  # upweight rare events    
-    'nka0':      {'n_classes': 2,  'weight': 2.0},  # upweight rare events    
-    'ncharged':  {'n_classes': 11, 'weight': 1.0},
+    'nproton':   {'n_classes': 4, 'weight': 1.0},
+    'npipm':     {'n_classes': 3, 'weight': 1.0},
+    'npi0':      {'n_classes': 3, 'weight': 1.0},
+    'nem':       {'n_classes': 3, 'weight': 1.0},
+    'ncluster':  {'n_classes': 4, 'weight': 1.0},
+    'nlambda0':  {'n_classes': 2, 'weight': 5.0},  # upweight rare events
+    'nkapm':     {'n_classes': 2, 'weight': 5.0},  # upweight rare events    
+    'nka0':      {'n_classes': 2, 'weight': 5.0},  # upweight rare events    
+    'ncharged':  {'n_classes': 6, 'weight': 1.0},
 }
 
 class SupervisedHead(nn.Module):
