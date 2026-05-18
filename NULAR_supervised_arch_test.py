@@ -95,7 +95,7 @@ def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
                               label_clamp=LABEL_CLAMP,
                               derived_labels=DERIVED_LABELS)
     
-    train_dataloader = torch.utils.data.DataLoader(dataset,
+    train_dataloader = torch.utils.data.DataLoader(train_dataset,
                                                    collate_fn=this_collate_fn,
                                                    batch_size=args.batch_size,
                                                    shuffle=False,
@@ -103,7 +103,7 @@ def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
                                                    drop_last=True,
                                                    persistent_workers=False,
                                                    prefetch_factor=2,
-                                                   sampler=sampler)
+                                                   sampler=train_sampler)
     
     val_dataloader = torch.utils.data.DataLoader(val_dataset,
                                                  collate_fn=this_collate_fn,
@@ -210,7 +210,7 @@ def run_training(rank, world_size, args):
     loss_fns["sup"] = supervised_loss
     
     ## Set up the distributed dataset
-    train_dataset, train_dataloader, val_dataset, val_dataloader = get_supervised_dataloaders(args, rank, world_size, 6)
+    train_dataset, train_loader, val_dataset, val_loader = get_supervised_dataloaders(args, rank, world_size, 6)
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -425,13 +425,13 @@ def run_training(rank, world_size, args):
         dist.all_reduce(val_tot_loss_tensor, op=dist.ReduceOp.SUM)
         for name in val_losses_tensor.keys():
             dist.all_reduce(val_losses_tensor[name], op=dist.ReduceOp.SUM)
-        av_val_tot_loss = tot_loss_tensor.item() / (val_nbatches * world_size)
-        av_losses = {
+        av_val_tot_loss = val_tot_loss_tensor.item() / (val_nbatches * world_size)
+        av_val_losses = {
             name: val_losses_tensor[name].item() / (val_nbatches * world_size)
             for name in val_losses_tensor.keys()
         }
         val_metrics.reduce()
-        val_metrices_results = val_metrics.compute()
+        val_metric_results = val_metrics.compute()
         
         ## Reporting, but only for rank 0
         if rank==0:
@@ -475,10 +475,25 @@ def run_training(rank, world_size, args):
             log_scalar(writer, metrics, 'train/weight_decay', this_wd, iteration)
 
             ## Build a string to report the outcome
-            iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f}"
+            iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f} (val loss = {av_val_tot_loss:.4f})"
             print(iter_string)
             print(f"Time taken: {(time.time()-tstart):.2f}")
 
+        ## Log validation now:
+        if rank == 0:
+            log_scalar(writer, metrics, 'loss/val_total', av_val_tot_loss, iteration)
+            for name in val_losses_tensor.keys():
+                log_scalar(writer, metrics, 'loss/val_'+name, av_val_losses[name], iteration)
+                
+            for name, m in val_metric_results.items():
+                log_scalar(writer, metrics, f'acc/val_{name}_accuracy',           m['accuracy'],           iteration)
+                log_scalar(writer, metrics, f'acc/val_{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
+                log_scalar(writer, metrics, f'acc/val_{name}_mae',                m['mae'],                iteration)
+                log_scalar(writer, metrics, f'acc/val_{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
+                for c, val in enumerate(m['per_class_acc']):
+                    if not math.isnan(val):
+                        log_scalar(writer, metrics, f'acc/val_{name}_class{c}_acc', val, iteration)
+            
         ## For checkpointing
         if rank==0 and iteration%25 == 0 and iteration != 0:
             save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
@@ -522,13 +537,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser("SimCLR training module")
 
     # Basic job setup
-    parser.add_argument('--data_dir', type=str)
-    parser.add_argument('--nevents', type=int)
-    parser.add_argument('--nval', type=int)
+    parser.add_argument('--data_dir', type=str, required=True)
+    parser.add_argument('--nevents', type=int, required=True)
+    parser.add_argument('--nval', type=int, required=True)
     parser.add_argument('--log', type=str, default=None)    
     parser.add_argument('--state_file', type=str)
     parser.add_argument('--pretrained', type=str, default=None)
-    parser.add_argument('--nstep', type=int, default=200)
+    parser.add_argument('--nstep', type=int, default=200, required=True)
     
     ## World size is the number of GPUs
     parser.add_argument('--world_size', type=int)
