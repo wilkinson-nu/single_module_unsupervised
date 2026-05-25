@@ -436,6 +436,7 @@ def run_training(rank, world_size, args):
         ## Reporting, but only for rank 0
         if rank==0:
             metrics["iteration"].append(iteration)
+            metrics['time/total_seconds'].append(time.time()-tstart)
             log_scalar(writer, metrics, 'loss/total', av_tot_loss, iteration)
             for name in losses_tensor.keys():
                 log_scalar(writer, metrics, 'loss/'+name, av_losses[name], iteration)
