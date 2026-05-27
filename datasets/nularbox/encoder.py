@@ -9,11 +9,12 @@ def get_encoder(args):
 
     stem_norm = bool(getattr(args, "enc_stem_norm", 0))
     init_stem_stride = bool(getattr(args, "enc_init_stem_stride", 2))
-    stem_pool = bool(getattr(args, "enc_stem_pool", 0))
+    stem_pool = getattr(args, "enc_stem_pool", None)
     stem_deep = bool(getattr(args, "enc_stem_deep", 0))
     res_pool = bool(getattr(args, "enc_res_pool", 0))
     final_pool = getattr(args, "enc_arch_pool", "avg")
     layer1_norm = bool(getattr(args, "enc_layer1_norm", 1))
+    bottleneck_dim = getattr(args, "enc_final_linear", None)
     
     ## Check for ResNet
     if "ResNet" in args.enc_arch:    
@@ -44,7 +45,8 @@ def get_encoder(args):
                       stem_deep=stem_deep,
                       res_pool=res_pool,
                       pool=final_pool,
-                      layer1_norm=layer1_norm)
+                      layer1_norm=layer1_norm,
+                      bottleneck_dim=bottleneck_dim)
         
         return encoder
 
