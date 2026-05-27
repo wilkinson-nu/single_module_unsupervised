@@ -15,13 +15,14 @@ class ResNetBase(nn.Module):
 
     ## In channels = 1 and outchannels are set by the network
     def __init__(self,
-                 stem_pool=False,
+                 stem_pool=None,
                  init_stem_stride=2,
                  stem_norm=False,
                  stem_deep=False,
                  res_pool=False,
                  layer1_norm=True,
                  pool="avg",
+                 bottleneck_dim=None,
                  D=2):
         nn.Module.__init__(self)
         self.D = D
@@ -34,14 +35,30 @@ class ResNetBase(nn.Module):
         self.stem_deep = stem_deep
         self.layer1_norm = layer1_norm
         self.network_initialization(D)
-        self.weight_initialization()
         self.pool = pool
+        self.bottleneck_dim = bottleneck_dim
 
+        ## Pooling options
         if self.pool == "max":
             self.global_pool = ME.MinkowskiGlobalMaxPooling()
-        else:
+        elif self.pool == "avg":
             self.global_pool = ME.MinkowskiGlobalAvgPooling()
+        elif self.pool == "both":
+            self.global_pool_avg = ME.MinkowskiGlobalAvgPooling()
+            self.global_pool_max = ME.MinkowskiGlobalMaxPooling()
+        else:
+            raise ValueError(f"Unknown pool type: {self.pool}")
 
+        ## Add the option for a bottleneck layer
+        if self.bottleneck_dim is not None:
+            self.bottleneck = nn.Linear(self.get_nchan(), bottleneck_dim, bias=False)
+        else:
+            self.bottleneck = None
+
+        ## Initialise all weights after everthing is built
+        self.weight_initialization()
+                    
+            
     def make_shallow_stem(self):
         stem = OrderedDict()
         stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.INIT_DIM, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
@@ -78,8 +95,10 @@ class ResNetBase(nn.Module):
         stem['relu3'] = ME.MinkowskiReLU(inplace=True)
         
         ## Option of having a pooling layer or an extra downsampling convolution
-        if self.stem_pool:
+        if self.stem_pool == "max":
             stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
+        elif self.stem_pool == "avg":
+            stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)            
         else:
             stem['conv4'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[1], kernel_size=3, stride=2, dimension=self.D)
 
@@ -124,6 +143,9 @@ class ResNetBase(nn.Module):
             if isinstance(m, ME.MinkowskiBatchNorm):
                 nn.init.constant_(m.bn.weight, 1)
                 nn.init.constant_(m.bn.bias, 0)
+            
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
 
 
     def _make_layer(self, block, planes, num_blocks, stride, dilation=1):
@@ -146,17 +168,26 @@ class ResNetBase(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.global_pool(x)
 
-        ## Return 2 copies for compatibility with older, slightly silly encoder
-        return x.F #, x.F
-
-    ## These are relics based on how things used to work, but... okay...
-    def get_nchan_instance(self):
-        return self.BLOCK.expansion * self.PLANES[-1]
-    def get_nchan_cluster(self):
-        return self.BLOCK.expansion * self.PLANES[-1]    
-
+        ## Deal with optional concatenation of pooling options
+        if self.pool == "both":
+            x = torch.cat([self.global_pool_avg(x).F, self.global_pool_max(x).F], dim=-1)
+        else:
+            x = self.global_pool(x).F
+            
+        ## Add the bottleneck if requested
+        if self.bottleneck is not None:
+            x = self.bottleneck(x)
+        return x
+    
+    def get_nchan(self):
+        base = self.BLOCK.expansion * self.PLANES[-1]
+        if self.pool == "both":
+            base = base * 2
+        if self.bottleneck_dim is not None:
+            return self.bottleneck_dim
+        return base
+    
     
 class ResNet18v2(ResNetBase):
     BLOCK = PreActBasicBlock

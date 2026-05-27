@@ -571,10 +571,10 @@ if __name__ == '__main__':
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_init_stem_stride', type=int, default=2)
-    parser.add_argument('--enc_stem_pool', type=int, choices=[0,1], default=0)
+    parser.add_argument('--enc_stem_pool', type=str, default=None)
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
-    # parser.add_argument('--enc_arch_final_linear', type=int, default=512)
+    parser.add_argument('--enc_final_linear', type=int, default=None)
 
     ## Restart option
     parser.add_argument('--restart', action='store_true')
