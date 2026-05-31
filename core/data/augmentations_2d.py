@@ -748,7 +748,7 @@ class BilinearSplat:
 
 ## Add an optional threshold
 class BilinearSplatMod:
-    def __init__(self, threshold_min=0.04, threshold_max=0.04, p=0.5):
+    def __init__(self, threshold_min=0.04, threshold_max=0.04):
         self.threshold_min=threshold_min
         self.threshold_max=threshold_max
         self.p = p
@@ -793,21 +793,16 @@ class BilinearSplatMod:
         summed_feats = np.zeros(len(unique_hashes), dtype=features_combined.dtype)
         np.add.at(summed_feats, inverse, features_combined)
         unique_coords = np.stack([unique_hashes // W, unique_hashes % W], axis=-1)
-        
-        #unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
-        #summed_feats = np.zeros(len(unique_coords))    
-        #np.add.at(summed_feats, indices, features_combined)
 
         ## Get the threshold
         threshold = np.random.uniform(self.threshold_min, self.threshold_max)
         
-        if np.random.rand() < self.p:
-            # Create a mask for values above the threshold
-            mask = summed_feats >= threshold
-    
-            # Apply the mask to filter features and coordinates
-            unique_coords = unique_coords[mask]
-            summed_feats = summed_feats[mask]        
+        # Create a mask for values above the threshold
+        mask = summed_feats >= threshold
+        
+        # Apply the mask to filter features and coordinates
+        unique_coords = unique_coords[mask]
+        summed_feats = summed_feats[mask]        
         
         # Reshape summed_feats to (N, 1)
         summed_feats = summed_feats.reshape(-1, 1)
