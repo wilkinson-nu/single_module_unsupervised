@@ -15,29 +15,46 @@ class ResNetBase(nn.Module):
 
     ## In channels = 1 and outchannels are set by the network
     def __init__(self,
-                 stem_pool=None,
+                 enc_act="relu",
+                 stem_pool='none',
                  init_stem_stride=2,
+                 final_stem_stride=2,
                  stem_norm=False,
                  stem_deep=False,
                  res_pool=False,
                  layer1_norm=True,
                  pool="avg",
-                 bottleneck_dim=None,
+                 bottleneck_dim=-1,
+                 stem_channels=-1,
                  D=2):
         nn.Module.__init__(self)
         self.D = D
         assert self.BLOCK is not None
 
+        self.enc_act = enc_act
         self.stem_pool = stem_pool
         self.init_stem_stride = init_stem_stride
+        self.final_stem_stride = final_stem_stride
         self.res_pool = res_pool
         self.stem_norm = stem_norm
         self.stem_deep = stem_deep
         self.layer1_norm = layer1_norm
-        self.network_initialization(D)
         self.pool = pool
         self.bottleneck_dim = bottleneck_dim
-
+        self.stem_channels = stem_channels
+        
+        print("Loading an encoder with:",
+              "stem_pool =", stem_pool,
+              "init_stem_stride =", init_stem_stride,
+              "final_stem_stride =", final_stem_stride,
+	      "res_pool =", res_pool,
+              "stem_norm =", stem_norm,
+	      "stem_deep =", stem_deep,
+              "layer1_norm =", layer1_norm,
+              "pool =", pool,
+              "bottleneck_dim =", bottleneck_dim
+              )
+        
         ## Pooling options
         if self.pool == "max":
             self.global_pool = ME.MinkowskiGlobalMaxPooling()
@@ -49,9 +66,21 @@ class ResNetBase(nn.Module):
         else:
             raise ValueError(f"Unknown pool type: {self.pool}")
 
+        if self.enc_act == "relu":
+            self.act_fn = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "leakyrelu":
+            self.act_fn =  ME.MinkowskiLeakyReLU()
+        if self.enc_act == "gelu":
+            self.act_fn = ME.MinkowskiGELU()
+        if self.enc_act in ["silu", "swish"]:
+            self.act_fn = ME.MinkowskiSiLU()
+
+        ## Initialise the network
+        self.network_initialization(D)
+            
         ## Add the option for a bottleneck layer
-        if self.bottleneck_dim is not None:
-            self.bottleneck = nn.Linear(self.get_nchan(), bottleneck_dim, bias=False)
+        if self.bottleneck_dim > 0:
+            self.bottleneck = nn.Linear(self.get_pool_nchan(), bottleneck_dim, bias=False)
         else:
             self.bottleneck = None
 
@@ -60,39 +89,46 @@ class ResNetBase(nn.Module):
                     
             
     def make_shallow_stem(self):
+
+        ## Bit of a hack
+        if self.stem_channels < 0: self.stem_channels = self.INIT_DIM
+            
         stem = OrderedDict()
-        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.INIT_DIM, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
+        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.stem_channels, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
         if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(self.INIT_DIM)
-        stem['relu1'] = ME.MinkowskiReLU(inplace=True)
+        stem['act1'] = self.act_fn
 
         ## Option of having a pooling layer or an extra downsampling convolution
-        if self.stem_pool:
+        if self.stem_pool == 'max':
             stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
+        elif self.stem_pool == 'avg':
+            stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)            
         else:
-            stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.INIT_DIM, out_channels=self.INIT_DIM, kernel_size=3, stride=2, dimension=self.D)
+            stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.INIT_DIM, kernel_size=3, stride=self.final_stem_stride, dimension=self.D)
 
             ## Allow for v1 style
             if self.BLOCK in (Bottleneck, BasicBlock):
-                stem['relu2'] = ME.MinkowskiReLU(inplace=True)
+                stem['act2'] = self.act_fn
 
         return nn.Sequential(stem)
         
     def make_deep_stem(self):
         
         stem = OrderedDict()
-        ch = (self.INIT_DIM//2, self.INIT_DIM)
-        if self.stem_pool: ch = (self.INIT_DIM, self.INIT_DIM)
+
+        ## Bit of a hack
+        if self.stem_channels < 0: self.stem_channels = self.INIT_DIM
         
         ## As is common for ResNet implementations, use 3 3x3 convoutions instead of an initial 7x7 one
-        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=ch[0], kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
-        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(ch[0])
-        stem['relu1'] = ME.MinkowskiReLU(inplace=True)
-        stem['conv2'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[0], kernel_size=3, stride=1, dimension=self.D)
-        if self.stem_norm: stem['norm2'] = ME.MinkowskiInstanceNorm(ch[0])
-        stem['relu2'] = ME.MinkowskiReLU(inplace=True)
-        stem['conv3'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[0], kernel_size=3, stride=1, dimension=self.D)
-        if self.stem_norm: stem['norm3'] = ME.MinkowskiInstanceNorm(ch[0])
-        stem['relu3'] = ME.MinkowskiReLU(inplace=True)
+        stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.stem_channels, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
+        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+        stem['act1'] = self.act_fn
+        stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.stem_channels, kernel_size=3, stride=1, dimension=self.D)
+        if self.stem_norm: stem['norm2'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+        stem['act2'] = self.act_fn
+        stem['conv3'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.stem_channels, kernel_size=3, stride=1, dimension=self.D)
+        if self.stem_norm: stem['norm3'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+        stem['act3'] = self.act_fn
         
         ## Option of having a pooling layer or an extra downsampling convolution
         if self.stem_pool == "max":
@@ -100,11 +136,11 @@ class ResNetBase(nn.Module):
         elif self.stem_pool == "avg":
             stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)            
         else:
-            stem['conv4'] = ME.MinkowskiConvolution(in_channels=ch[0], out_channels=ch[1], kernel_size=3, stride=2, dimension=self.D)
+            stem['conv4'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.INIT_DIM, kernel_size=3, stride=self.final_stem_stride, dimension=self.D)
 
             ## Allow for v1 blocks later
             if self.BLOCK in (Bottleneck, BasicBlock):
-                stem['relu4'] =	ME.MinkowskiReLU(inplace=True)
+                stem['act4'] =	self.act_fn
 
         return nn.Sequential(stem)
 
@@ -150,10 +186,11 @@ class ResNetBase(nn.Module):
 
     def _make_layer(self, block, planes, num_blocks, stride, dilation=1):
 
-        ## A bit of a hack to remove BN from the first layer
+        ## A bit of a hack to optionally remove BN from the first layer
         apply_bn = True
         if stride == 1: apply_bn = False
-
+        if self.layer1_norm == True: apply_bn = True
+        
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
         for stride in strides:
@@ -179,16 +216,19 @@ class ResNetBase(nn.Module):
         if self.bottleneck is not None:
             x = self.bottleneck(x)
         return x
-    
-    def get_nchan(self):
+
+    def get_pool_nchan(self):
         base = self.BLOCK.expansion * self.PLANES[-1]
         if self.pool == "both":
             base = base * 2
-        if self.bottleneck_dim is not None:
-            return self.bottleneck_dim
         return base
+
+    def get_nchan(self):
+        if self.bottleneck_dim > 0:
+            return self.bottleneck_dim
+        return self.get_pool_nchan()
     
-    
+
 class ResNet18v2(ResNetBase):
     BLOCK = PreActBasicBlock
     INIT_DIM=64

@@ -17,13 +17,15 @@ class PreActBasicBlock(nn.Module):
                  bn_momentum=0.1,
                  res_pool=False,
                  apply_norm=True,
+                 enc_act='relu',
                  dimension=2):
         super(PreActBasicBlock, self).__init__()
         assert dimension > 0
 
         ## Make BN optional
         self.apply_norm	= apply_norm
-
+        self.enc_act = enc_act
+        
         if self.apply_norm:
             self.norm1 = ME.MinkowskiBatchNorm(inplanes, momentum=bn_momentum)
         else: self.norm1 = None
@@ -36,7 +38,14 @@ class PreActBasicBlock(nn.Module):
         self.conv2 = ME.MinkowskiConvolution(
             planes, planes, kernel_size=3, stride=1, dilation=dilation, dimension=dimension)
 
-        self.relu = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "relu":
+            self.act_fn = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "leakyrelu":
+            self.act_fn =  ME.MinkowskiLeakyReLU()
+        if self.enc_act == "gelu":
+            self.act_fn = ME.MinkowskiGELU()
+        if self.enc_act in ["silu", "swish"]:
+            self.act_fn = ME.MinkowskiSiLU()
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
@@ -51,14 +60,14 @@ class PreActBasicBlock(nn.Module):
     def forward(self, x):
         out = x
         if self.norm1: out = self.norm1(x)
-        out = self.relu(out)
+        out = self.act_fn(out)
 
-        ## Apply the downsampling shortcut after the normalization and relu in this version
+        ## Apply the downsampling shortcut after the normalization and act_fn in this version
         residual = self.shortcut(out) if hasattr(self, 'shortcut') else x
         
         out = self.conv1(out)
         if self.norm2: out = self.norm2(out)
-        out = self.relu(out)
+        out = self.act_fn(out)
         out = self.conv2(out)
         out += residual
         return out
@@ -75,13 +84,15 @@ class PreActBottleneck(nn.Module):
                  bn_momentum=0.1,
                  res_pool=False,
                  apply_norm=True,
+                 enc_act = 'relu',
                  dimension=2):
         super(PreActBottleneck, self).__init__()
         assert dimension > 0
 
         ## Make BN optional
         self.apply_norm	= apply_norm
-
+        self.enc_act = enc_act
+        
         if self.apply_norm:
             self.norm1 = ME.MinkowskiBatchNorm(inplanes, momentum=bn_momentum)
         else:
@@ -101,7 +112,14 @@ class PreActBottleneck(nn.Module):
         self.conv3 = ME.MinkowskiConvolution(
             planes, planes * self.expansion, kernel_size=1, dimension=dimension)
 
-        self.relu = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "relu":
+            self.act_fn = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "leakyrelu":
+            self.act_fn =  ME.MinkowskiLeakyReLU()
+        if self.enc_act == "gelu":
+            self.act_fn = ME.MinkowskiGELU()
+        if self.enc_act in ["silu", "swish"]:
+            self.act_fn = ME.MinkowskiSiLU()
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
@@ -117,17 +135,17 @@ class PreActBottleneck(nn.Module):
 
         out = x
         if self.norm1: out = self.norm1(x)
-        out = self.relu(out)
+        out = self.act_fn(out)
 
-        ## Apply the downsampling shortcut after the normalization and relu in this version
+        ## Apply the downsampling shortcut after the normalization and act_fn in this version
         residual = self.shortcut(out) if hasattr(self, 'shortcut') else x
         
         out = self.conv1(out)
         if self.norm2: out = self.norm2(out)
-        out = self.relu(out)
+        out = self.act_fn(out)
         out = self.conv2(out)
         if self.norm3: out = self.norm3(out)
-        out = self.relu(out)
+        out = self.act_fn(out)
         out = self.conv3(out)
         out += residual
         return out

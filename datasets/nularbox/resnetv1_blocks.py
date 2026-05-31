@@ -16,12 +16,14 @@ class BasicBlock(nn.Module):
                  bn_momentum=0.1,
                  res_pool=False,
                  apply_norm=True,
+                 enc_act='relu',
                  dimension=2):
         super(BasicBlock, self).__init__()
         assert dimension > 0
 
         ## Make BN optional
         self.apply_norm = apply_norm
+        self.enc_act = enc_act
         
         self.conv1 = ME.MinkowskiConvolution(
             inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, dimension=dimension)
@@ -37,7 +39,14 @@ class BasicBlock(nn.Module):
         else:
             self.norm2 = None
             
-        self.relu = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "relu":
+            self.act_fn = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "leakyrelu":
+            self.act_fn =  ME.MinkowskiLeakyReLU()
+        if self.enc_act == "gelu":
+            self.act_fn = ME.MinkowskiGELU()
+        if self.enc_act in ["silu", "swish"]:
+            self.act_fn = ME.MinkowskiSiLU()
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
@@ -56,11 +65,11 @@ class BasicBlock(nn.Module):
         residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
         if self.norm1 is not None: out = self.norm1(out)
-        out = self.relu(out)
+        out = self.act_fn(out)
         out = self.conv2(out)
         if self.norm1 is not None: out = self.norm2(out)
         out += residual
-        out = self.relu(out)
+        out = self.act_fn(out)
         return out
                 
 
@@ -75,12 +84,14 @@ class Bottleneck(nn.Module):
                  bn_momentum=0.1,
                  res_pool=False,
                  apply_norm=True,
+                 enc_act='relu',
                  dimension=2):
         super(Bottleneck, self).__init__()
         assert dimension > 0
 
         ## Make BN optional
         self.apply_norm	= apply_norm
+        self.enc_act = enc_act
         
         self.conv1 = ME.MinkowskiConvolution(
             inplanes, planes, kernel_size=1, dimension=dimension)
@@ -104,8 +115,15 @@ class Bottleneck(nn.Module):
             self.norm3 = ME.MinkowskiBatchNorm(planes * self.expansion, momentum=bn_momentum)
         else:
             self.norm3 = None
-        
-        self.relu = ME.MinkowskiReLU(inplace=True)
+
+        if self.enc_act == "relu":
+            self.act_fn = ME.MinkowskiReLU(inplace=True)
+        if self.enc_act == "leakyrelu":
+            self.act_fn =  ME.MinkowskiLeakyReLU()
+        if self.enc_act == "gelu":
+            self.act_fn = ME.MinkowskiGELU()
+        if self.enc_act in ["silu", "swish"]:
+            self.act_fn = ME.MinkowskiSiLU()
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
@@ -124,12 +142,12 @@ class Bottleneck(nn.Module):
         residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
         if self.norm1 is not None: out = self.norm1(out)
-        out = self.relu(out)
+        out = self.act_fn(out)
         out = self.conv2(out)
         if self.norm2 is not None: out = self.norm2(out)
-        out = self.relu(out)
+        out = self.act_fn(out)
         out = self.conv3(out)
         if self.norm3 is not None: out = self.norm3(out)
         out += residual
-        out = self.relu(out)
+        out = self.act_fn(out)
         return out
