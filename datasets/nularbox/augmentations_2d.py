@@ -211,16 +211,15 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
-     if aug_type == "dropout":
+    if aug_type == "dropout":
         return transforms.Compose([
-            aug.RandomDropout(0.2, p=aug_prob)
+            aug.RandomDropout(0.2, p=aug_prob),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
-     if aug_type == "alpha":
+    if aug_type == "alpha":
         return transforms.Compose([
-            aug.RandomDropout(0.2, p=aug_prob)
             LogAlphaChargeRandom(2, 8),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])    

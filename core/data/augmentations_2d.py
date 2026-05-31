@@ -751,7 +751,6 @@ class BilinearSplatMod:
     def __init__(self, threshold_min=0.04, threshold_max=0.04):
         self.threshold_min=threshold_min
         self.threshold_max=threshold_max
-        self.p = p
         
     def __call__(self, coords, feats):
 
