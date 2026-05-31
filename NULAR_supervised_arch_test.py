@@ -191,7 +191,7 @@ def run_training(rank, world_size, args):
     ## Setup the encoder
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
-    encoder_nchan_instance = encoder.get_nchan_instance()
+    encoder_nchan = encoder.get_nchan()
     encoder .to(device)
     encoder = DDP(encoder, device_ids=[rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
@@ -202,7 +202,7 @@ def run_training(rank, world_size, args):
     loss_fns = {}
 
     ## Set up head and loss for projection space
-    sup_head = SupervisedHead(encoder_nchan_instance,
+    sup_head = SupervisedHead(encoder_nchan,
                               classifier_config=DEFAULT_CLASSIFIER_CONFIG)
     sup_head .to(device)
     sup_head = DDP(sup_head, device_ids=[rank])
@@ -556,7 +556,6 @@ if __name__ == '__main__':
     parser.add_argument('--scheduler', type=str, default=None)
     parser.add_argument('--lars_trust_coeff', type=float, default=0.01)
     parser.add_argument('--lars_momentum', type=float, default=0.9)
-    parser.add_argument('--enc_act', type=str, default="silu")
     parser.add_argument('--dropout', type=float, default=0)
     parser.add_argument('--aug_type', type=str, default=None)
     parser.add_argument('--aug_prob', type=float, default=1)
@@ -567,15 +566,18 @@ if __name__ == '__main__':
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
     
     ## Encoder architecture choices
+    parser.add_argument('--enc_act', type=str, default="relu")
     parser.add_argument('--enc_arch', type=str, default=None)
     parser.add_argument('--enc_arch_pool', type=str, default="avg")
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_init_stem_stride', type=int, default=2)
-    parser.add_argument('--enc_stem_pool', type=str, default=None)
+    parser.add_argument('--enc_final_stem_stride', type=int, default=2)
+    parser.add_argument('--enc_stem_pool', type=str, default='none')
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
-    parser.add_argument('--enc_final_linear', type=int, default=None)
+    parser.add_argument('--enc_final_linear', type=int, default=-1)
+    parser.add_argument('--enc_stem_channels', type=int, default=-1)
 
     ## Restart option
     parser.add_argument('--restart', action='store_true')
