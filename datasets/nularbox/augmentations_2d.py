@@ -233,11 +233,30 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
+    if aug_type == "splatsmalljit":
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+    
     if aug_type == "rotate":
         return transforms.Compose([
             aug.GridJitter(),
             aug.JitterCoords(),
             RandomCentralRotation2D(30, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    if aug_type == "rotatesmall":
+        return transforms.Compose([
+            aug.GridJitter(),
+            aug.JitterCoords(),
+            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
