@@ -501,15 +501,16 @@ class SplitJitterCoords:
 
 ## Move the initial grid within a pixel width in both dimensions
 class GridJitter:
-    def __init__(self, ndim=2):
+    def __init__(self, ndim=2, jitter=0.5):
         self.ndim = ndim
+        self.jitter =jitter
 
     def __call__(self, coords, feats):
 
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
-        grid_offset = np.random.uniform(-0.5, 0.5, size=self.ndim)
+        grid_offset = np.random.uniform(-self.jitter, self.jitter, size=self.ndim)
         return coords + grid_offset, feats
 
 
