@@ -262,6 +262,16 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
+    if aug_type == "rotatesmalljit":
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+    
     if aug_type == "shear":
         return transforms.Compose([
             aug.GridJitter(),
@@ -292,11 +302,61 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
+    if aug_type == "shearjit":
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    if aug_type == "stretchjit":
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    if aug_type == "gridjit":
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            aug.RandomGridDistortion2D(50, 4, 2, 10, p=aug_prob),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    
     if aug_type == "charge":
         return transforms.Compose([
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
             LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    if aug_type == "nominalsmalljit":
+        return transforms.Compose([
+            aug.RandomBlockZeroImproved([5,20], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            aug.RandomBlockZeroImproved([50,200], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+            aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+    	    aug.RandomGridDistortion2D(50, 4, 2, 10, p=aug_prob),
+    	    aug.RandomScaleCharge(0.05, p=aug_prob),
+            aug.RandomJitterCharge(0.05, p=aug_prob),
+    	    aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
     
