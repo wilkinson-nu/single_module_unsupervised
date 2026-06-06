@@ -276,6 +276,32 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
+
+    if aug_type == "threshtest":
+        threshold = 0.3
+        if aug_val is not None:
+            threshold = aug_val
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            aug.BilinearSplat(threshold),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    if aug_type == "croptest":
+        crop = 10
+        if aug_val is not None:
+            crop = aug_val
+        return transforms.Compose([
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralRotation2D(rotate_val, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            aug.BilinearSplatMod(0.2, 0.3),
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], crop)
+        ])     
     
     if aug_type == "shear":
         return transforms.Compose([
