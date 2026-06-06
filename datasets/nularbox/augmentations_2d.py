@@ -182,10 +182,9 @@ class LogAlphaChargeRandom:
         return coords, Z
     
 
-def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
+def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
 
-    x_max=256
-    y_max=256
+    x_max=y_max=image_size
 
     x_orig=512
     y_orig=512
@@ -212,8 +211,11 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
         ])
 
     if aug_type == "dropout":
+        drop_val = 0.2
+        if aug_val is not None:
+            drop_val = aug_val
         return transforms.Compose([
-            aug.RandomDropout(0.2, p=aug_prob),
+            aug.RandomDropout(drop_val, p=aug_prob),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
@@ -263,10 +265,13 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
         ])
 
     if aug_type == "rotatesmalljit":
+        rotate_val = 10
+        if aug_val is not None:
+            rotate_val = aug_val
         return transforms.Compose([
             aug.GridJitter(2, 0.1),
             aug.JitterCoords(0.1),
-            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            RandomCentralRotation2D(rotate_val, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
@@ -276,7 +281,7 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
         return transforms.Compose([
             aug.GridJitter(),
             aug.JitterCoords(),
-            RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
@@ -286,7 +291,7 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
         return transforms.Compose([
             aug.GridJitter(),
             aug.JitterCoords(),
-            RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
@@ -303,30 +308,39 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
         ])
 
     if aug_type == "shearjit":
+        shear_val = 0.2
+        if aug_val is not None:
+            shear_val = aug_val
         return transforms.Compose([
             aug.GridJitter(2, 0.1),
             aug.JitterCoords(0.1),
-            RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            RandomCentralShear2D(shear_val, shear_val, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
     if aug_type == "stretchjit":
+        stretch_val = 0.1
+        if aug_val is not None:
+            stretch_val = aug_val
         return transforms.Compose([
             aug.GridJitter(2, 0.1),
             aug.JitterCoords(0.1),
-            RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], frac=0.4, p=aug_prob),
+            RandomCentralStretch2D(stretch_val, stretch_val, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
 
     if aug_type == "gridjit":
+        dist_val = 4
+        if aug_val is not None:
+            dist_val = aug_val
         return transforms.Compose([
             aug.GridJitter(2, 0.1),
             aug.JitterCoords(0.1),
-            aug.RandomGridDistortion2D(50, 4, 2, 10, p=aug_prob),
+            aug.RandomGridDistortion2D(50, aug_val, 2, 10, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
@@ -334,9 +348,12 @@ def get_transform(image_size="256x256", aug_type=None, aug_prob=1):
 
     
     if aug_type == "charge":
+        charge_val = 0.05
+        if aug_val is not None:
+            charge_val = aug_val
         return transforms.Compose([
-            aug.RandomScaleCharge(0.05, p=aug_prob),
-            aug.RandomJitterCharge(0.05, p=aug_prob),
+            aug.RandomScaleCharge(charge_val, p=aug_prob),
+            aug.RandomJitterCharge(charge_val, p=aug_prob),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
