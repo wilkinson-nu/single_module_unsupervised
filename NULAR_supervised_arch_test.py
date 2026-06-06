@@ -70,7 +70,7 @@ def print_model_summary(model):
 def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
 
     ## Get the augmentation from the argument name
-    aug_transform = get_transform('256x256', args.aug_type, args.aug_prob)
+    aug_transform = get_transform(args.out_image_size, args.aug_type, args.aug_prob, getattr(args, "aug_val", None))
     
     ## Get the concrete dataset
     full_dataset = single_2d_dataset_ME(args.data_dir, \
@@ -557,14 +557,18 @@ if __name__ == '__main__':
     parser.add_argument('--lars_trust_coeff', type=float, default=0.01)
     parser.add_argument('--lars_momentum', type=float, default=0.9)
     parser.add_argument('--dropout', type=float, default=0)
-    parser.add_argument('--aug_type', type=str, default=None)
-    parser.add_argument('--aug_prob', type=float, default=1)
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--weight_decay_final', type=float, default=-1)
     parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
     parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
-    
+
+    ## Image size and augmentations
+    parser.add_argument('--out_image_size', type=int, default=256)
+    parser.add_argument('--aug_type', type=str, default=None)
+    parser.add_argument('--aug_prob', type=float, default=1)
+    parser.add_argument('--aug_val', type=float)
+
     ## Encoder architecture choices
     parser.add_argument('--enc_act', type=str, default="relu")
     parser.add_argument('--enc_arch', type=str, default=None)
