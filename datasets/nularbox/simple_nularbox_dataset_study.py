@@ -258,6 +258,10 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     enu_hist       = TH1Dish(np.linspace(0, 50, 100))
     q0_hist        = TH1Dish(np.linspace(0, 50, 100))
 
+    ## Investigate the distribution of hit positions
+    row_hist       = TH1Dish(np.linspace(0, 511, 256))
+    col_hist       = TH1Dish(np.linspace(0, 511, 256))
+    
     ## Test out a range of transforms
     alpha_min=1
     alpha_max=10
@@ -312,6 +316,8 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
             ## Make a dense array for ease of use
             group = f[str(i)]
             data = group['data'][:]
+            row  = group['row'][:]
+            col  = group['col'][:]
             if len(data) < 1:
                 nEmpty += 1
                 continue
@@ -322,6 +328,10 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
             nhits_log_hist .Fill(np.count_nonzero(data))
             SumE_hist      .Fill(np.sum(data))
             maxE_hist      .Fill(np.max(data))
+
+            ## Fill position histograms
+            row_hist       .Fill(row)
+            col_hist       .Fill(col)
             
             ## Alpha histograms
             for a in range(alpha_min, alpha_max+1):
@@ -364,6 +374,8 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
             
         ## Flush the histograms which get filled per hit
         E_hist        .FlushBuffer()
+        row_hist      .FlushBuffer()
+        col_hist      .FlushBuffer()
         for a in range(alpha_min, alpha_max+1): alpha_hist_list[a-alpha_min] .FlushBuffer()
 
         ## End of this file
@@ -378,6 +390,11 @@ def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
     enu_hist       .Draw(output_name_root+"enu.png", xtitle=r'$E_{\nu}$ (GeV)')   
     q0_hist        .Draw(output_name_root+"q0.png", xtitle=r'$q_{0}$ (GeV)')
 
+    row_hist       .Draw(output_name_root+"row_logy.png", xtitle='Row coord.', logy=True)
+    col_hist       .Draw(output_name_root+"col_logy.png", xtitle='Column coord.', logy=True)
+    row_hist       .Draw(output_name_root+"row_liny.png", xtitle='Row coord.', logy=False)
+    col_hist       .Draw(output_name_root+"col_liny.png", xtitle='Column coord.', logy=False)
+    
     for a in range(alpha_min, alpha_max+1):
         alpha_hist_list[a-alpha_min] .Draw(output_name_root+"LogAlphaE"+str(a)+"_lin_distribution.png", xtitle=r'log$_{10}$(1 + '+str(a)+'E)/log$_{10}$(1 + '+str(a)+')', logy=False)
         alpha_hist_list[a-alpha_min] .Draw(output_name_root+"LogAlphaE"+str(a)+"_log_distribution.png", xtitle=r'log$_{10}$(1 + '+str(a)+'E)/log$_{10}$(1 + '+str(a)+')', logy=True)       
