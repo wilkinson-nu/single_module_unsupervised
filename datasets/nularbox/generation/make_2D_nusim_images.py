@@ -10,6 +10,7 @@ from collections import defaultdict
 import json
 from truth_labels import LABEL_DTYPE_EXP, Topology, Mode
 import argparse
+from PIL import Image
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
@@ -135,7 +136,7 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if abs(x) != 321]
     labels["nka0"] = sum(1 for x in pdg_list if abs(x) in [310, 311])
     pdg_list = [x for x in pdg_list if abs(x) not in [310, 311]]
-    labels["nem"] = sum(1 for x in pdg_list if abs(x) not in [22, 11])
+    labels["nem"] = sum(1 for x in pdg_list if abs(x) in [22, 11])
     pdg_list = [x for x in pdg_list if abs(x) not in [22, 11]]
     labels["nlambda0"] = sum(1 for x in pdg_list if abs(x) == 3122)
     pdg_list = [x for x in pdg_list if abs(x) != 3122]    
@@ -155,7 +156,7 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if x != 1000020030]
     labels["ntritium"] = sum(1 for x in pdg_list if x == 1000010030)
     pdg_list = [x for x in pdg_list if x != 1000010030] 
-    labels["nnuclfrag"] = sum(1 for x in pdg_list if (x > 1000030060 and x < 1000180400))
+    labels["nnuclfrag"] = sum(1 for x in pdg_list if (x >= 1000020060 and x < 1000180400))
     pdg_list = [x for x in pdg_list if not (x >= 1000020060 and x < 1000180400)]
     
     ## Also remove remnant nuclei (coherent events)
@@ -211,27 +212,24 @@ def get_low_energy_ids(event, low_E_cut=10):
     return set(x.GetTrackId() for x in event.Trajectories if x.GetInitialMomentum().E() < low_E_cut)
 
 
-def exit_downstream(point, box_size):
+def muon_exits_downstream(point, bbox):
 
     px = point[0]
     py = point[1]
     pz = point[2]
 
     ## Shortcut negative z values
-    if pz <= 0: return False
+    if pz <= bbox[1][2]: return False
     
-    hx = box_size[0]/2
-    hy = box_size[1]/2
-    hz = box_size[2]/2
+    t = bbox[1][2] / pz
+    x_hit = px * t
+    y_hit = py * t
+    return bbox[0][0] <= x_hit <= bbox[1][0] and bbox[0][1] <= y_hit <= bbox[1][1]
 
-    x_hit = px * hz / pz
-    y_hit = py * hz / pz
-
-    return abs(x_hit) <= hx and abs(y_hit) <= hy
-
-
-## Check whether the muon exits
-def exiting_muon(event, muon_id, box_size, downstream=False):
+## Check whether:
+## - The muon exits the volume of interest
+## - (Optionally) the muon exits downstream, aka in the +z direction
+def exiting_muon(event, muon_id, bbox, downstream=False):
 
     ## Loop over detector segments
     for seg in event.SegmentDetectors:
@@ -247,17 +245,17 @@ def exiting_muon(event, muon_id, box_size, downstream=False):
             pos = seg[1][n].GetStop()
 
             ## If it exits out of z, treat in a special way
-            if abs(pos[2]) > box_size[2]/2.:
+            if pos[2] > bbox[1][2] or pos[2] < bbox[0][2]:
 
                 ## If we require a downstream muon, check
-                if downstream: return exit_downstream(pos, box_size)
+                if downstream: return muon_exits_downstream(pos, bbox)
                 else: return True
 
             ## If not, consider x and y
-            if abs(pos[0]) > box_size[0]/2.:
+            if pos[0] > bbox[1][0] or pos[0] < bbox[0][0]:
                 if downstream: return False
                 else: return True
-            if abs(pos[1]) > box_size[1]/2.:
+            if pos[1] > bbox[1][1] or pos[1] < bbox[0][1]:
                 if downstream: return False
                 else: return True
 
@@ -265,21 +263,12 @@ def exiting_muon(event, muon_id, box_size, downstream=False):
 
 
 ## This is designed to select a set of events in which:
-## - The muon exits the volume of interest
-## - (Optionally) the muon exits downstream, aka in the +z direction
 ## - No other activity escapes the volume of interest except for neutrons or low energy junk, or neutrinos
 ## - Where the volume of interest can be a defined cube of voxels
-## - It simply returns true or false
-def cc_contained_cut(event, box_size, downstream=True):
+def hadron_contained_cut(event, bbox):
     
     ## Get the primary lepton (assumes a well ordered stack)
     out_lep = event.Primaries[0].Particles[0]
-
-    ## Check this is a numuCC event
-    if abs(out_lep.GetPDGCode()) != 13: return False
-
-    ## Check if the muon exits
-    if not exiting_muon(event, out_lep.GetTrackId(), box_size, downstream): return False
     
     ## Get all neutrons and neutron descendents in the event
     neutron_ids = get_neutron_and_daughter_ids(event)
@@ -316,12 +305,15 @@ def cc_contained_cut(event, box_size, downstream=True):
             ## Skip anything which is very low energy (delta rays often escape the volume and distort the containment numbers)
             if key_contrib in low_energy_ids: continue
             
-            ## See if this is outside my "contained" box
+            ## See if this is outside my bounding box
             pos = seg[1][n].GetStop()
+            if np.any(pos.Vect() < bbox[0]) or np.any(pos.Vect() > bbox[1]): return False
 
-            if abs(pos[0]) > box_size[0]/2.: return False
-            if abs(pos[1]) > box_size[1]/2.: return False
-            if abs(pos[2]) > box_size[2]/2.: return False
+            ## Just be really sure...
+            pos = seg[1][n].GetStart()
+            if np.any(pos.Vect() < bbox[0]) or np.any(pos.Vect() > bbox[1]):
+                print("Removed hadron that started outside my bounding box")
+                return False
             
     ## If we got here, it's good!
     return True
@@ -340,7 +332,7 @@ def get_3D_image_from_event(event, origin, voxel_size):
         ## Loop over the segments in that volume
         nChunks = len(seg[1])
         for n in range(nChunks):
-            
+
             ## Get the start point, end point and deposited energy
             p0_tlv = seg[1][n].GetStart()
             p1_tlv = seg[1][n].GetStop()
@@ -395,15 +387,16 @@ def get_3D_image_from_event(event, origin, voxel_size):
                 l_voxel = (t_next - t) * length
                 ## Add fraction of charge to the accumulator 
                 acc[tuple(voxel)] += E * (l_voxel / length)
-                
+
                 ## Check for edge case if this is the last voxel:
-                if t_next >= 1.0: break
+                if t_next >= 1.0 or np.all(voxel==voxel_end): break
                 
-                # Advance along the axis that has the next crossing point
-                axis = np.argmin(t_max)
-                voxel[axis] += step[axis]
+                # Step along all axes with a crossing at t_next
+                axes = np.where(np.abs(t_max - t_next) < 1E-10)[0]
+                for axis in axes:
+                    voxel[axis] += step[axis]
+                    t_max[axis] += t_delta[axis]
                 t = t_next
-                t_max[axis] += t_delta[axis]
 
     ## Prepare for COO coordinates
     coords = np.array(list(acc.keys()), dtype=np.int32)
@@ -422,18 +415,19 @@ def get_3D_image_from_event(event, origin, voxel_size):
 def make_images(infilelist,
                 output_file_name,
                 image_size,
+                offset,
                 box_size,
+                box_offset,
                 exit_downstream,
                 min_hits,
-                threshold):
+                threshold,
+                hadron_cont):
 
-    output_size = np.array([image_size, image_size, image_size])
+    output_full_size = np.array([image_size, image_size, image_size])
+    output_half_size = output_full_size//2
+    offset = np.array(offset)
+
     
-    ## For debugging
-    if make_plots:
-        plt.ion()
-        plt.figure(figsize=(7, 7))
-        
     ## Uniform and small pixel pitch
     ## Uses mm, the default output unit for edep-sim
     dx, dy, dz = 3.72, 3.72, 3.72
@@ -442,9 +436,17 @@ def make_images(infilelist,
     ## Origin for the grid, offset to avoid the vertex being at a bin edge, maybe better to jitter?
     origin = voxel_size/2
 
-    ## Change box_size to a real physical size
-    if box_size is not None: box_size *= voxel_size
+    ## Set the bounding box for defining containment
+    bbox_size = output_half_size
+    bbox_offset = offset
     
+    ## Allow for explicit bbox setting
+    if box_size is not None: bbox_size = np.array([box_size, box_size, box_size])//2
+    if box_offset is not None: bbox_offset = np.array(box_offset)
+    
+    bbox = np.array([(-bbox_size - bbox_offset) * voxel_size + origin,
+                     (bbox_size - bbox_offset) * voxel_size + origin])
+   
     ## Get the file(s)
     edep_tree = ROOT.TChain("EDepSimEvents")
     groo_tree = ROOT.TChain("DetSimPassThru/gRooTracker")
@@ -459,11 +461,12 @@ def make_images(infilelist,
     edep_tree.SetBranchAddress("Event", event)
 
     ## lists of the objects we want to keep
-    sparse_image_list = []
-    event_id_list = []
-    label_list = []
+    event_data_list = []
 
-    nrejected = 0
+    nnc       = 0
+    nmuonfail = 0
+    nhadfail  = 0
+    nminhits  = 0
     nselected = 0
     
     ## Loop over events
@@ -475,74 +478,104 @@ def make_images(infilelist,
         ## Add a check for empty images
         if len(event.Trajectories) <=1: continue
 
-        ## Apply pre-selection
-        if box_size is not None:
-            if not cc_contained_cut(event, box_size, exit_downstream): continue
-        nselected += 1 
+        ## Get the primary lepton (assumes a well ordered stack)
+        out_lep = event.Primaries[0].Particles[0]
+
+        ## Check this is a numuCC event
+        if abs(out_lep.GetPDGCode()) != 13:
+            nnc += 1
+            continue
         
-        coords_3d_raw, values_3d_raw = get_3D_image_from_event(event, origin, voxel_size)
+        ## Check if the muon exits
+        if not exiting_muon(event, out_lep.GetTrackId(), bbox, exit_downstream):
+            nmuonfail += 1
+            continue
+    
+        if hadron_cont and not hadron_contained_cut(event, bbox):
+            nhadfail += 1
+            continue
 
-        x = coords_3d_raw[:, 0]
-        y = coords_3d_raw[:, 1]
-        z = coords_3d_raw[:, 2]
-        
-        ## Restrict to an area around the vertex and mask out the image
-        ## Apply the restriction in 3D to avoid integrating over an arbitrary z region...
-        mask = ((x >= -output_size[0]/2) & (x < output_size[0]/2) &
-                (y >= -output_size[1]/2) & (y < output_size[1]/2) &
-                (z >= -output_size[2]/2) & (z < output_size[2]/2))
-        values_3d = values_3d_raw[mask]
-
-        ## Shift so the masked coordinates start at (0,0,0)
-        coords_3d = coords_3d_raw[mask] + output_size/2
-
-        ## Which axes to project onto
-        keep_axes = [0, 2]
-        keep_shape = (output_size[keep_axes[0]], output_size[keep_axes[1]])
-        row = coords_3d[:, keep_axes[0]]
-        col = coords_3d[:, keep_axes[1]]
-
-        ## Make a 2D projection by summing duplicates
-        this_sparse_2d = coo_matrix((values_3d, (row, col)), shape=keep_shape)
-        this_sparse_2d .sum_duplicates() 
-
-        ## Modify the array by removing below threshold hits
-        if threshold > 0:
-            mask = this_sparse_2d.data >= threshold
-            this_sparse_2d.data = this_sparse_2d.data[mask]
-            this_sparse_2d.row  = this_sparse_2d.row[mask]
-            this_sparse_2d.col  = this_sparse_2d.col[mask]
-        
+        ## If we pass the main selection cuts, get truth info
         vertex = edep_tree.Event.Primaries[0]
         labels = get_truth_labels(vertex, groo_tree)
 
-        ## Decide whether to proceed given the number of hits in the central region
-        central_mask = (this_sparse_2d.row > (output_size[0]/4)-1) & (this_sparse_2d.row < (output_size[0]*3/4)-1) \
-            & (this_sparse_2d.col > (output_size[1]/4)-1) & (this_sparse_2d.col < (output_size[1]*3/4)-1)
+        ## Get voxelised 3D hits
+        coords_3d_raw, values_3d_raw = get_3D_image_from_event(event, origin, voxel_size)
+        x_raw = coords_3d_raw[:, 0]
+        y_raw = coords_3d_raw[:, 1]
+        z_raw = coords_3d_raw[:, 2]
         
-        if np.count_nonzero(this_sparse_2d.data[central_mask]) < min_hits:
+        ## Restrict to an area around the vertex and mask out the image
+        mask = ((x_raw >= -output_half_size[0] - offset[0]) & (x_raw < output_half_size[0] - offset[0]) &
+                (y_raw >= -output_half_size[1] - offset[1]) & (y_raw < output_half_size[1] - offset[1]) &
+                (z_raw >= -output_half_size[2] - offset[2]) & (z_raw < output_half_size[2] - offset[2]))
+        values_3d = values_3d_raw[mask]
+
+        ## Shift so the masked coordinates start at (offset))
+        coords_3d = coords_3d_raw[mask] + offset + output_half_size 
+
+        ## Apply threshold to 3D hits only
+        if threshold > 0:
+            mask = values_3d >= threshold
+            values_3d = values_3d[mask]
+            coords_3d = coords_3d[mask]
+
+        ## Check we're above the minimum number of hits (in 3D)
+        if np.count_nonzero(values_3d) < min_hits:
             print("Rejected event with labels:", labels)
             print("Topology =", Topology.name_from_index(labels['topology']))
             print("Mode =", Mode.name_from_index(labels['mode']))
-            print("N. hits (central) =", np.count_nonzero(this_sparse_2d.data), "(", np.count_nonzero(this_sparse_2d.data[central_mask]), ")")
-            nrejected += 1
-            continue
+            print("N. hits =", np.count_nonzero(values_3d))
+            nminhits += 1
+            continue        
+        nselected += 1
         
-        ## At this point, save
-        sparse_image_list .append(this_sparse_2d)
-        event_id_list     .append(evt)
-        label_list        .append(labels)
+        if coords_3d.size > 0:
+            assert coords_3d.min() >= 0, f"Negative coordinate: {coords_3d.min()}"
+            assert coords_3d.max() < image_size, f"Coordinate too large: {coords_3d.max()}"
+        
+        ## Project onto XZ (and sum duplicates)
+        shape_xz = (output_full_size[0], output_full_size[2])
+        row_xz = coords_3d[:, 0]
+        col_xz = coords_3d[:, 2]
+        this_xz = coo_matrix((values_3d, (row_xz, col_xz)), shape=shape_xz)
+        this_xz .sum_duplicates()
+        #img = Image.fromarray((arr * 255).astype(np.uint8))
+        #img.save("plots/image_"+str(evt)+".png")
+
+        ## Project onto XY (and sum duplicates)
+        shape_xy = (output_full_size[0], output_full_size[1])
+        row_xy = coords_3d[:, 0]
+        col_xy = coords_3d[:, 1]
+        this_xy = coo_matrix((values_3d, (row_xy, col_xy)), shape=shape_xy)
+        this_xy .sum_duplicates()        
+        
+        ## Keep track of events that get this far
+        event_data_list.append({
+            'image_xz':  this_xz,
+            'image_xy':  this_xy,
+            'coords_3d':  coords_3d,
+            'values_3d':  values_3d,
+            'event_id':   evt,
+            'label':      labels,
+        })
 
         ## Optionally dump out some files to have a look at
         if make_plots:
-            plt.imshow(this_sparse_2d.toarray(), origin='lower')
-            plt.savefig("plots/image_"+str(evt)+".png")
+            plt.figure(figsize=(7,7))
+            plt.imshow(this_xz.toarray(), origin='lower')
+            plt.savefig("plots/image_"+str(evt)+"_xz.png")
+            plt.close()
+            plt.figure(figsize=(7,7))
+            plt.imshow(this_xy.toarray(), origin='lower')
+            plt.savefig("plots/image_"+str(evt)+"_xy.png")
+            plt.close()            
             
     ## Write the images to an hdf5 file
     with h5py.File(output_file_name, 'w') as fout:
-
+        
         ## Save the number of images in the file
-        fout.attrs['N'] = len(sparse_image_list)
+        fout.attrs['N'] = len(event_data_list)
 
         ## Store label_struct schema
         fout.attrs['label_dtype'] = LABEL_DTYPE_EXP.descr
@@ -550,20 +583,37 @@ def make_images(infilelist,
         ## Save enums defined when making the file
         fout.attrs['Topology_enum'] = json.dumps({m.name: m.value for m in Topology})
         fout.attrs['Mode_enum'] = json.dumps({m.name: m.value for m in Mode})
-        
-        for i, (sparse_image, event_id, label_struct) in enumerate(zip(sparse_image_list, event_id_list, label_list)):
+
+        for i, ev in enumerate(event_data_list):
             group = fout.create_group(str(i))
-            group.create_dataset('data', data=sparse_image.data)
-            group.create_dataset('row', data=sparse_image.row.astype(np.uint16))
-            group.create_dataset('col', data=sparse_image.col.astype(np.uint16))
-            group.create_dataset('label', data=label_struct, dtype=LABEL_DTYPE_EXP)
-            group.attrs['shape'] = np.array(sparse_image.shape, dtype=np.uint16)
-            group.attrs['event_id'] = np.uint32(event_id)
+            
+            # 3D sparse
+            group.create_dataset('data_3d',   data=ev['values_3d'], dtype=np.float32)
+            group.create_dataset('coords_3d', data=ev['coords_3d'].astype(np.uint16))
+            group.attrs['shape_3d'] = np.array(output_full_size, dtype=np.uint16)
+            
+            # XZ projection
+            group.create_dataset('data_xz', data=ev['image_xz'].data, dtype=np.float32)
+            group.create_dataset('row_xz',  data=ev['image_xz'].row.astype(np.uint16))
+            group.create_dataset('col_xz',  data=ev['image_xz'].col.astype(np.uint16))
+            group.attrs['shape_xz'] = np.array(ev['image_xz'].shape, dtype=np.uint16)
+            
+            # XY projection
+            group.create_dataset('data_xy', data=ev['image_xy'].data, dtype=np.float32)
+            group.create_dataset('row_xy',  data=ev['image_xy'].row.astype(np.uint16))
+            group.create_dataset('col_xy',  data=ev['image_xy'].col.astype(np.uint16))
+            group.attrs['shape_xy'] = np.array(ev['image_xy'].shape, dtype=np.uint16)
+            
+            ## Shared info
+            group.create_dataset('label', data=ev['label'], dtype=LABEL_DTYPE_EXP)
+            group.attrs['event_id'] = np.uint32(ev['event_id'])
 
     ## Report summary
     print("Selected", nselected, "/", nevts, "events")
-    print("Of which", nrejected, "cut with N. hits <", min_hits)
-    print("Saved:", nselected - nrejected)
+    print("Rejected", nnc, "/", nevts, "as NC")
+    print("Rejected", nmuonfail, "/", nevts, "for muon kinematics")
+    print("Rejected", nhadfail, "/", nevts, "for uncontained hadrons")
+    print("Rejected", nminhits, "/", nevts, "which had N. hits <", min_hits)
     ## Done
     
     
@@ -577,19 +627,26 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=str)
 
     ## Image size option
-    parser.add_argument('--image_size', type=int, default=512)    
+    parser.add_argument('--image_size', type=int, default=512)
 
-    ## Box size for containment (not necessarily the same as image size)
-    parser.add_argument('--box_size', type=int, default=256)
+    ## Add vertex offset option    
+    parser.add_argument('--offset', type=int, nargs=3, default=[0, 0, 0], metavar=('OX', 'OY', 'OZ'))
+
+    ## Box size and offset for containment (otherwise image size and offset will be used)
+    parser.add_argument('--box_size', type=int, default=None)
+    parser.add_argument('--box_offset', type=int, nargs=3, default=None, metavar=('OX', 'OY', 'OZ'))
 
     ## Do we require the muon to exit downstream of the box (if it exists)
-    parser.add_argument('--exit_downstream', type=int, default=1)
+    parser.add_argument('--exit_downstream', type=int, choices=[0,1], default=1)
     
     ## Allow a minimum number of hits cut
     parser.add_argument('--min_hits', type=int, default=1)
 
     ## Add a threshold option
     parser.add_argument('--threshold', type=float, default=0)
+
+    ## Add containment option
+    parser.add_argument('--hadron_cont', type=int, choices=[0,1], default=1)
     
     # Parse arguments from command line
     args = parser.parse_args()
@@ -600,7 +657,10 @@ if __name__ == '__main__':
     make_images(args.input,
                 args.output,
                 args.image_size,
+                args.offset,
                 args.box_size,
-                args.exit_downstream,
+                args.box_offset,
+                bool(args.exit_downstream),
                 args.min_hits,
-                args.threshold)
+                args.threshold,
+                bool(args.hadron_cont))
