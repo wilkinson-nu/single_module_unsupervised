@@ -588,8 +588,8 @@ def make_images(infilelist,
             group = fout.create_group(str(i))
             
             # 3D sparse
-            group.create_dataset('data_3d',   data=ev['values_3d'], dtype=np.float32)
-            group.create_dataset('coords_3d', data=ev['coords_3d'].astype(np.uint16))
+            group.create_dataset('data_xyz',   data=ev['values_3d'], dtype=np.float32)
+            group.create_dataset('coords_xyz', data=ev['coords_3d'].astype(np.uint16))
             group.attrs['shape_3d'] = np.array(output_full_size, dtype=np.uint16)
             
             # XZ projection
