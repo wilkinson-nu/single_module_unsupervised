@@ -4,13 +4,14 @@ from glob import glob
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib
+from matplotlib import cm
 from scipy.sparse import coo_matrix
 from collections import defaultdict
 import json
 from truth_labels import LABEL_DTYPE_EXP, Topology, Mode
 import argparse
 from PIL import Image
+import matplotlib.patches as patches
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
@@ -446,7 +447,9 @@ def make_images(infilelist,
     
     bbox = np.array([(-bbox_size - bbox_offset) * voxel_size + origin,
                      (bbox_size - bbox_offset) * voxel_size + origin])
-   
+    bbox_pixel = np.array([-bbox_size - bbox_offset,
+                           bbox_size - bbox_offset])
+    
     ## Get the file(s)
     edep_tree = ROOT.TChain("EDepSimEvents")
     groo_tree = ROOT.TChain("DetSimPassThru/gRooTracker")
@@ -562,14 +565,39 @@ def make_images(infilelist,
 
         ## Optionally dump out some files to have a look at
         if make_plots:
+            cmap = cm.turbo.copy()
+            cmap.set_under("#F0F0F0")
+            
+            ## Rectangle is [x, y]
+            xz_rect = patches.Rectangle((bbox_pixel[0][2]+256+offset[2], bbox_pixel[0][0]+256+offset[0]),
+                                        bbox_pixel[1][2]-bbox_pixel[0][2],
+                                        bbox_pixel[1][0]-bbox_pixel[0][0],
+                                        linewidth=1, edgecolor='red', facecolor='none',
+                                        linestyle='dashed')
+            
             plt.figure(figsize=(7,7))
-            plt.imshow(this_xz.toarray(), origin='lower')
+            ## This plots as [row, col] --> [x, y]
+            plt.imshow(this_xz.toarray(), origin='lower', vmin=1e-6, cmap=cmap)
+            plt.gca().add_patch(xz_rect)
+            plt.xlabel('Z')
+            plt.ylabel('X')
+            plt.tight_layout()
             plt.savefig("plots/image_"+str(evt)+"_xz.png")
             plt.close()
+
+            xy_rect = patches.Rectangle((bbox_pixel[0][1]+256+offset[1], bbox_pixel[0][0]+256+offset[0]),
+                                        bbox_pixel[1][1]-bbox_pixel[0][1],
+                                        bbox_pixel[1][0]-bbox_pixel[0][0],
+                                        linewidth=1, edgecolor='red', facecolor='none',
+                                        linestyle='dashed')
             plt.figure(figsize=(7,7))
-            plt.imshow(this_xy.toarray(), origin='lower')
+            plt.imshow(this_xy.toarray(), origin='lower', vmin=1e-6, cmap=cmap)
+            plt.gca().add_patch(xy_rect)
+            plt.xlabel('Y')
+            plt.ylabel('X')
+            plt.tight_layout()
             plt.savefig("plots/image_"+str(evt)+"_xy.png")
-            plt.close()            
+            plt.close()
             
     ## Write the images to an hdf5 file
     with h5py.File(output_file_name, 'w') as fout:
