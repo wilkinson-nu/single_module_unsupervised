@@ -45,11 +45,21 @@ class ApplyThreshold:
         return mask_coords, mask_feats
 
 class RandomCentralRotation2D:
-    def __init__(self, angle, img_size, frac=0.2, p=1):
+    def __init__(self,
+                 angle,
+                 img_size,
+                 center=None,
+                 frac=0.2,
+                 p=1):
         self.p = p
         self.angle = angle
         self.img_size = img_size
         self.frac = frac
+
+        ## If center isn't defined, default to the literal image center
+        self.center = center
+        if self.center is None:
+            self.center = img_size//2.
 
     def _M(self, theta):
         # Generate a 2D rotation matrix for a given angle theta
@@ -72,8 +82,8 @@ class RandomCentralRotation2D:
 
         ## Pick a point close to the center of the original image size to rotate around
         center = np.array([
-            self.img_size[1]*(0.5 + np.random.uniform(-0.5, 0.5)*self.frac),
-            self.img_size[0]*(0.5 + np.random.uniform(-0.5, 0.5)*self.frac)
+            self.center + self.img_size[1]*np.random.uniform(-0.5, 0.5)*self.frac,
+            self.center + self.img_size[0]*np.random.uniform(-0.5, 0.5)*self.frac
         ])
         
         # Get the 2D rotation matrix
@@ -85,6 +95,7 @@ class RandomCentralRotation2D:
         rotated_coords = rotated + center        
         return rotated_coords, feats
 
+    
 class RandomCentralShear2D:
     def __init__(self, sigma_y, sigma_x, img_size, frac=0.2, p=1):
         self.p = p
@@ -297,7 +308,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
         return transforms.Compose([
             aug.GridJitter(2, 0.1),
             aug.JitterCoords(0.1),
-            RandomCentralRotation2D(rotate_val, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
+            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], frac=0.2, p=aug_prob),
             aug.BilinearSplatMod(0.2, 0.3),
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], crop)
