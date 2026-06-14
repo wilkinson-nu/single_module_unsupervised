@@ -190,7 +190,6 @@ class RandomCentralStretch2D:
 
         # Pick a point close to the center of the original image size to stretch around
         center = np.array([
-         center = np.array([
             self.center[1] + np.random.uniform(-self.jitter, self.jitter),
             self.center[0] + np.random.uniform(-self.jitter, self.jitter)
         ])
