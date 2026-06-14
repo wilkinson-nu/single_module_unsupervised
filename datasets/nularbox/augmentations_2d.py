@@ -5,11 +5,19 @@ import core.data.augmentations_2d as aug
 
 ## Crop an x by y region from the center of the image, with a jitter on the center position
 class RandomCenterCrop:
-    def __init__(self, orig_size, new_size, jitter=10):
+    def __init__(self,
+                 orig_size,
+                 new_size,
+                 center=None,
+                 jitter=10):
         self.orig_size = orig_size
         self.new_size = new_size
         self.jitter = jitter
 
+        ## If center isn't defined, default to the literal image center
+        self.center = (self.img_size / 2.0 if center is None
+                       else np.asarray(center, dtype=float))
+        
     def __call__(self, coords, feats):
 
         ## Guard against empty input
@@ -20,8 +28,8 @@ class RandomCenterCrop:
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
         
-        shift_y = self.new_size[0]//2 - self.orig_size[0]//2 + random.randint(-self.jitter,self.jitter)
-        shift_x = self.new_size[1]//2 - self.orig_size[1]//2 + random.randint(-self.jitter,self.jitter)
+        shift_y = self.center[0] - self.orig_size[0]//2 + random.randint(-self.jitter,self.jitter)
+        shift_x = self.center[1] - self.orig_size[1]//2 + random.randint(-self.jitter,self.jitter)
 
         new_coords = new_coords + np.array([shift_y, shift_x])        
         mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_size[0])) \
