@@ -731,10 +731,6 @@ class BilinearSplat:
         np.add.at(summed_feats, inverse, features_combined)
         unique_coords = np.stack([unique_hashes // W, unique_hashes % W], axis=-1)
 
-        #unique_coords, indices = np.unique(coords_combined, axis=0, return_inverse=True)
-        #summed_feats = np.zeros(len(unique_coords))    
-        #np.add.at(summed_feats, indices, features_combined)
-
         # Create a mask for values above the threshold
         mask = summed_feats >= self.threshold
     
