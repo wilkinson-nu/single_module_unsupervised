@@ -15,8 +15,8 @@ class RandomCenterCrop:
         self.jitter = jitter
 
         ## If center isn't defined, default to the literal image center
-        self.center = (self.img_size / 2.0 if center is None
-                       else np.asarray(center, dtype=float))
+        self.center = (self.img_size // 2.0 if center is None
+                       else np.asarray(center, dtype=int))
         
     def __call__(self, coords, feats):
 
@@ -157,7 +157,7 @@ class RandomCentralStretch2D:
                  stretch_y,
                  stretch_x,
                  img_size,
-                 central=None,
+                 center=None,
                  jitter=10,
                  p=1):
         self.p = p
