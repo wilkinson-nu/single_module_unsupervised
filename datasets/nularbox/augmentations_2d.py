@@ -97,13 +97,24 @@ class RandomCentralRotation2D:
     
     
 class RandomCentralShear2D:
-    def __init__(self, sigma_y, sigma_x, img_size, frac=0.2, p=1):
+    def __init__(self,
+                 sigma_y,
+                 sigma_x,
+                 img_size,
+                 center=None,
+                 jitter=10,
+                 p=1):
         self.p = p
         self.sigma_x = sigma_x
         self.sigma_y = sigma_y
         self.img_size = img_size
-        self.frac = frac
+        self.jitter = jitter
 
+        ## If center isn't defined, default to the literal image center
+        self.center = (self.img_size / 2.0 if center is None
+                       else np.asarray(center, dtype=float))
+
+        
     def __call__(self, coords, feats):
 
         ## Guard against empty input
@@ -123,8 +134,8 @@ class RandomCentralShear2D:
 
         # Pick a point close to the center of the original image size to shear around
         center = np.array([
-            self.img_size[1]*(0.5 + np.random.uniform(-0.5, 0.5)*self.frac),
-            self.img_size[0]*(0.5 + np.random.uniform(-0.5, 0.5)*self.frac)
+            self.center[1] + np.random.uniform(-self.jitter, self.jitter),
+            self.center[0] + np.random.uniform(-self.jitter, self.jitter)
         ])
             
         shifted = fcoords - center
@@ -134,12 +145,22 @@ class RandomCentralShear2D:
 
 
 class RandomCentralStretch2D:
-    def __init__(self, stretch_y, stretch_x, img_size, frac=0.2, p=1):
+    def __init__(self,
+                 stretch_y,
+                 stretch_x,
+                 img_size,
+                 central=None,
+                 jitter=10,
+                 p=1):
         self.p = p
         self.stretch_y = stretch_y
         self.stretch_x = stretch_x
         self.img_size = img_size
-        self.frac = frac
+        self.jitter = jitter
+
+        ## If center isn't defined, default to the literal image center
+        self.center = (self.img_size / 2.0 if center is None
+                       else np.asarray(center, dtype=float))
         
     def __call__(self, coords, feats):
 
@@ -161,8 +182,9 @@ class RandomCentralStretch2D:
 
         # Pick a point close to the center of the original image size to stretch around
         center = np.array([
-            self.img_size[1]*(0.5 + np.random.uniform(-0.5, 0.5)*self.frac),
-            self.img_size[0]*(0.5 + np.random.uniform(-0.5, 0.5)*self.frac)
+         center = np.array([
+            self.center[1] + np.random.uniform(-self.jitter, self.jitter),
+            self.center[0] + np.random.uniform(-self.jitter, self.jitter)
         ])
             
         shifted = fcoords - center
