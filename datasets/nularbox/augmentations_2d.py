@@ -49,17 +49,16 @@ class RandomCentralRotation2D:
                  angle,
                  img_size,
                  center=None,
-                 frac=0.2,
+                 jitter=10,
                  p=1):
         self.p = p
         self.angle = angle
         self.img_size = img_size
-        self.frac = frac
+        self.jitter = jitter
 
         ## If center isn't defined, default to the literal image center
-        self.center = center
-        if self.center is None:
-            self.center = img_size//2.
+        self.center = (self.img_size / 2.0 if center is None
+                       else np.asarray(center, dtype=float))
 
     def _M(self, theta):
         # Generate a 2D rotation matrix for a given angle theta
@@ -82,8 +81,8 @@ class RandomCentralRotation2D:
 
         ## Pick a point close to the center of the original image size to rotate around
         center = np.array([
-            self.center + self.img_size[1]*np.random.uniform(-0.5, 0.5)*self.frac,
-            self.center + self.img_size[0]*np.random.uniform(-0.5, 0.5)*self.frac
+            self.center[1] + np.random.uniform(-self.jitter, self.jitter),
+            self.center[0] + np.random.uniform(-self.jitter, self.jitter)
         ])
         
         # Get the 2D rotation matrix
@@ -95,6 +94,7 @@ class RandomCentralRotation2D:
         rotated_coords = rotated + center        
         return rotated_coords, feats
 
+    
     
 class RandomCentralShear2D:
     def __init__(self, sigma_y, sigma_x, img_size, frac=0.2, p=1):
