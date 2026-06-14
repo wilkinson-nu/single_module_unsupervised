@@ -9,8 +9,8 @@ class CenterCrop:
         self.orig_x = orig_size[1]
         self.new_y = new_size[0]
         self.new_x = new_size[1]
-        self.pad_y = (self.orig_y - self.new_y)/2
-        self.pad_x = (self.orig_x - self.new_x)/2
+        self.pad_y = (self.orig_y - self.new_y)//2
+        self.pad_x = (self.orig_x - self.new_x)//2
 
     def __call__(self, coords, feats):
 

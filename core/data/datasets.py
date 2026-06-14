@@ -55,9 +55,9 @@ class paired_2d_dataset_ME(Dataset):
 
         with h5py.File(file_path, 'r', libver='latest') as f:
             group = f[str(this_idx)]
-            data = group['data'][:]
-            row  = group['row'][:]
-            col  = group['col'][:]
+            data = group['data_xz'][:]
+            row  = group['row_xz'][:]
+            col  = group['col_xz'][:]
 
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
@@ -156,9 +156,9 @@ class single_2d_dataset_ME(Dataset):
 
         with h5py.File(file_path, 'r', libver='latest') as f:
             group = f[str(this_idx)]
-            data = group['data'][:]
-            row  = group['row'][:]
-            col  = group['col'][:]
+            data = group['data_xz'][:]
+            row  = group['row_xz'][:]
+            col  = group['col_xz'][:]
 
             # Check for 'label' dataset and fall back if missing
             label = -1
