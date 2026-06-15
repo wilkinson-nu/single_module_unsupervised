@@ -159,10 +159,13 @@ class single_2d_dataset_ME(Dataset):
             data = group['data_xz'][:]
             row  = group['row_xz'][:]
             col  = group['col_xz'][:]
-
+            
             # Check for 'label' dataset and fall back if missing
             label = -1
             if 'label' in group: label = group['label'][()]
+
+            ## Get the event_id if requested
+            event_id = group.attrs.get("event_id", this_idx)
             
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
@@ -172,8 +175,7 @@ class single_2d_dataset_ME(Dataset):
         coords, feats = self.apply_aug_with_retry(coords, feats)
 
         if self.return_metadata:
-            event_id = group.attrs.get("event_id", this_idx)
-            filename = os.path.basename(self.hdf5_files[file_index])
+            filename = os.path.basename(file_path)
             return coords, feats, label, filename, event_id        
         return coords, feats, label
     
