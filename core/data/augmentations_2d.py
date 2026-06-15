@@ -15,8 +15,8 @@ class CenterCrop:
     def __call__(self, coords, feats):
 
         coords = coords - np.array([self.pad_y, self.pad_x])
-        mask = (coords[:,0] > 0) & (coords[:,0] < (self.new_y)) \
-             & (coords[:,1] > 0) & (coords[:,1] < (self.new_x))
+        mask = (coords[:,0] >= 0) & (coords[:,0] < (self.new_y)) \
+             & (coords[:,1] >= 0) & (coords[:,1] < (self.new_x))
 
         return coords[mask], feats[mask]
 
@@ -187,8 +187,8 @@ class RandomCrop:
         shift_y = random.randint(y_min-self.clip, (y_max+self.clip) - self.new_y)
 
         new_coords = new_coords + np.array([shift_y, shift_x])        
-        mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_y)) \
-             & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_x))
+        mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.new_y)) \
+             & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.new_x))
                 
         return new_coords[mask], new_feats[mask]
 
@@ -203,8 +203,8 @@ class SimpleCrop:
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
 
-        mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.max_y)) \
-	     & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.max_x))
+        mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.max_y)) \
+	     & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.max_x))
 
         return new_coords[mask], new_feats[mask]
 
@@ -679,8 +679,8 @@ class SemiRandomCrop:
             shift_y = random.randint(-y_min-self.clip_y, self.new_y-y_max+self.clip_y)
             
         new_coords = new_coords + np.array([shift_y, shift_x])
-        mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_y)) \
-        & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_x))
+        mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.new_y)) \
+            & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.new_x))
         
         return new_coords[mask], new_feats[mask]
     
