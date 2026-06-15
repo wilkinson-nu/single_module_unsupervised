@@ -15,7 +15,7 @@ class RandomCenterCrop:
         self.jitter = jitter
 
         ## If center isn't defined, default to the literal image center
-        self.center = (self.img_size // 2.0 if center is None
+        self.center = (self.orig_size // 2 if center is None
                        else np.asarray(center, dtype=int))
         
     def __call__(self, coords, feats):
@@ -27,10 +27,10 @@ class RandomCenterCrop:
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
-        
-        shift_y = self.center[0] - self.orig_size[0]//2 + random.randint(-self.jitter,self.jitter)
-        shift_x = self.center[1] - self.orig_size[1]//2 + random.randint(-self.jitter,self.jitter)
 
+        shift_y = self.new_size[0]//2 - self.center[0] + random.randint(-self.jitter,self.jitter)
+        shift_x = self.new_size[1]//2 - self.center[1] + random.randint(-self.jitter,self.jitter)
+        
         new_coords = new_coords + np.array([shift_y, shift_x])        
         mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_size[0])) \
              & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_size[1]))
@@ -234,6 +234,13 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             LogAlphaCharge(5),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
         ])
+
+    if aug_type == "minnew":
+        return transforms.Compose([
+            LogAlphaCharge(5),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10)
+        ])
+
 
     if aug_type == "flip":
         return transforms.Compose([
@@ -441,6 +448,25 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             LogAlphaCharge(5),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], 10)
+        ])
+
+    if aug_type == "nomnew":
+        return transforms.Compose([
+            aug.RandomBlockZeroImproved([5,20], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
+            aug.RandomBlockZeroImproved([50,200], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
+            aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            RandomCentralRotation2D(10, img_size=[y_orig, x_orig], center=[256,128], jitter=10, p=aug_prob),
+            RandomCentralShear2D(0.2, 0.2, img_size=[y_orig, x_orig], center=[256,128], jitter=10, p=aug_prob),
+            RandomCentralStretch2D(0.1, 0.1, img_size=[y_orig, x_orig], center=[256,128], jitter=10, p=aug_prob),
+            aug.RandomGridDistortion2D(50, 4, 2, 10, p=aug_prob),
+            aug.RandomScaleCharge(0.05, p=aug_prob),
+            aug.RandomJitterCharge(0.05, p=aug_prob),
+            aug.BilinearSplatMod(0, 0.2),
+            LogAlphaCharge(5),
+            aug.RandomDropout(0.1, p=aug_prob),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10)
         ])
     
     return transforms.Compose([
