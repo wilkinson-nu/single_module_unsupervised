@@ -236,8 +236,11 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
         ])
 
     if aug_type == "minnew":
+        threshold = 0
+        if aug_val is not None: threshold = threshold
         return transforms.Compose([
             LogAlphaCharge(5),
+            ApplyThreshold(threshold),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10)
         ])
 
@@ -451,6 +454,8 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
         ])
 
     if aug_type == "nomnew":
+        threshold = 0
+        if aug_val is not None: aug_val = threshold
         return transforms.Compose([
             aug.RandomBlockZeroImproved([5,20], [5,10], [0,x_orig], [0,y_orig], p=aug_prob),
             aug.RandomBlockZeroImproved([50,200], [1,3], [0,x_orig], [0,y_orig], p=aug_prob),
@@ -467,6 +472,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             LogAlphaCharge(5),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10)
+            ApplyThreshold(threshold),
         ])
     
     return transforms.Compose([
