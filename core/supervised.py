@@ -71,8 +71,8 @@ class ClassificationMetrics:
         self.reset()
 
     def reset(self):
-        self.correct = {name: torch.tensor(0, device=self.device) for name in self.classifier_config}
-        self.total = {name: torch.tensor(0, device=self.device) for name in self.classifier_config}
+        self.correct = {name: torch.zeros((), dtype=torch.long, device=self.device) for name in self.classifier_config}
+        self.total = {name: torch.zeros((), dtype=torch.long, device=self.device) for name in self.classifier_config}
         self.per_class_correct = {
             name: torch.zeros(cfg['n_classes'], device=self.device)
             for name, cfg in self.classifier_config.items()
@@ -81,25 +81,27 @@ class ClassificationMetrics:
             name: torch.zeros(cfg['n_classes'], device=self.device)
             for name, cfg in self.classifier_config.items()
         }
-        self.abs_error = {name: torch.tensor(0.0, device=self.device) for name in self.classifier_config}
-        self.mae_total = {name: torch.tensor(0,   device=self.device) for name in self.classifier_config}
+        self.abs_error = {name: torch.zeros((), device=self.device) for name in self.classifier_config}
+        self.mae_total = {name: torch.zeros((), dtype=torch.long,   device=self.device) for name in self.classifier_config}
+
 
     def update(self, outputs, labels):
         for name, logits in outputs.items():
             preds   = logits.argmax(dim=-1)
             targets = labels[name].long()
-
-            self.correct[name] += (preds == targets).sum()
+            
+            correct = (preds == targets)
+            self.correct[name] += correct.sum()
             self.total[name]   += targets.numel()
-
-            n_classes = self.classifier_config[name]['n_classes']
-            for c in range(n_classes):
-                mask = targets == c
-                self.per_class_correct[name][c] += (preds[mask] == targets[mask]).sum()
-                self.per_class_total[name][c]   += mask.sum()
-
+            
+            pc_total   = self.per_class_total[name]
+            pc_correct = self.per_class_correct[name]
+            pc_total.scatter_add_(0, targets, torch.ones_like(targets, dtype=pc_total.dtype))
+            pc_correct.scatter_add_(0, targets, correct.to(pc_correct.dtype))
+            
             self.abs_error[name] += (preds.float() - targets.float()).abs().sum()
             self.mae_total[name] += targets.numel()
+            
 
     def reduce(self):
         for name in self.classifier_config:
@@ -110,36 +112,33 @@ class ClassificationMetrics:
             dist.all_reduce(self.abs_error[name],         op=dist.ReduceOp.SUM)
             dist.all_reduce(self.mae_total[name],         op=dist.ReduceOp.SUM)
 
+
     def compute(self):
         results = {}
         for name, cfg in self.classifier_config.items():
             n_classes = cfg['n_classes']
 
-            acc = self.correct[name].item() / max(self.total[name].item(), 1)
+            correct          = self.correct[name].item()
+            total            = self.total[name].item()
+            pc_correct       = self.per_class_correct[name].cpu().tolist()
+            pc_total         = self.per_class_total[name].cpu().tolist()
+            abs_error        = self.abs_error[name].item()
+            mae_total        = self.mae_total[name].item()
 
-            per_class_acc = []
-            for c in range(n_classes):
-                total_c = self.per_class_total[name][c].item()
-                if total_c > 0:
-                    per_class_acc.append(
-                        self.per_class_correct[name][c].item() / total_c
-                    )
-                else:
-                    per_class_acc.append(float('nan'))
+            acc = correct / max(total, 1)
+
+            per_class_acc = [
+                (pc_correct[c] / pc_total[c]) if pc_total[c] > 0 else float('nan')
+                for c in range(n_classes)
+            ]
 
             valid = [x for x in per_class_acc if not math.isnan(x)]
             mean_per_class_acc = sum(valid) / len(valid) if valid else float('nan')
 
-            mae = self.abs_error[name].item() / max(self.mae_total[name].item(), 1)
+            mae = abs_error / max(mae_total, 1)
 
-            tp = sum(
-                self.per_class_correct[name][c].item()
-                for c in range(1, n_classes)
-            )
-            fn = sum(
-                (self.per_class_total[name][c] - self.per_class_correct[name][c]).item()
-                for c in range(1, n_classes)
-            )
+            tp = sum(pc_correct[1:n_classes])
+            fn = sum(pc_total[c] - pc_correct[c] for c in range(1, n_classes))
             recall_nonzero = tp / max(tp + fn, 1)
 
             results[name] = {
