@@ -32,8 +32,8 @@ class RandomCenterCrop:
         shift_x = self.new_size[1]//2 - self.center[1] + random.randint(-self.jitter,self.jitter)
         
         new_coords = new_coords + np.array([shift_y, shift_x])        
-        mask = (new_coords[:,0] > 0) & (new_coords[:,0] < (self.new_size[0])) \
-             & (new_coords[:,1] > 0) & (new_coords[:,1] < (self.new_size[1]))
+        mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.new_size[0])) \
+             & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.new_size[1]))
                 
         return new_coords[mask], new_feats[mask]
 
@@ -471,7 +471,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.BilinearSplatMod(0, 0.2),
             LogAlphaCharge(5),
             aug.RandomDropout(0.1, p=aug_prob),
-            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10)
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
             ApplyThreshold(threshold),
         ])
     
