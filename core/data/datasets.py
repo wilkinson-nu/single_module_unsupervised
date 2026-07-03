@@ -7,16 +7,21 @@ from bisect import bisect
 import MinkowskiEngine as ME
 import torch
 import time
+from collections import OrderedDict
 
 class paired_2d_dataset_ME(Dataset):
 
-    def __init__(self, infile_dir, nom_transform, aug_transform=None, max_events=None):
+    def __init__(self, infile_dir, nom_transform, aug_transform=None, max_events=None, max_open=9999):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
         self.file_indices = []
         self.nom_transform = nom_transform
         self.aug_transform = aug_transform
         self.max_events = max_events
 
+        ## For lazily caching files
+        self.max_open = max_open
+        self._handles = OrderedDict()
+        
         ## Sort out the file map
         self.create_file_indices()
 
@@ -36,6 +41,20 @@ class paired_2d_dataset_ME(Dataset):
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
+    def _get_file(self, file_index):
+        # Lazily open and cache handles (inside forked worker)
+        h = self._handles.get(file_index)
+        if h is not None:
+            self._handles.move_to_end(file_index)   # LRU touch
+            return h
+        h = h5py.File(self.hdf5_files[file_index], 'r',
+                      libver='latest', rdcc_nbytes=0)
+        self._handles[file_index] = h
+        if len(self._handles) > self.max_open:
+            _, old = self._handles.popitem(last=False)
+            old.close()
+        return h
+        
     def apply_aug_with_retry(self, coords, feats, max_retries=100):
         for _ in range(max_retries):
             out_coords, out_feats = self.aug_transform(coords, feats)
@@ -50,14 +69,13 @@ class paired_2d_dataset_ME(Dataset):
     def __getitem__(self,idx):
         file_index = bisect(self.file_indices, idx)-1
         this_idx = idx - self.file_indices[file_index]
-
         file_path = self.hdf5_files[file_index]
 
-        with h5py.File(file_path, 'r', libver='latest') as f:
-            group = f[str(this_idx)]
-            data = group['data_xz'][:]
-            row  = group['row_xz'][:]
-            col  = group['col_xz'][:]
+        f = self._get_file(file_index)
+        group = f[str(this_idx)]
+        data = group['data_xz'][:]
+        row  = group['row_xz'][:]
+        col  = group['col_xz'][:]
 
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
@@ -111,12 +129,16 @@ def cat_ME_collate_fn(batch):
 
 class single_2d_dataset_ME(Dataset):
 
-    def __init__(self, infile_dir, transform, max_events=None, return_metadata=False):
+    def __init__(self, infile_dir, transform, max_events=None, return_metadata=False, max_open=9999):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
         self.file_indices = []
         self.transform = transform
         self.max_events = max_events
         self.return_metadata = return_metadata
+
+        ## For lazily caching files
+        self.max_open = max_open
+        self._handles = OrderedDict()
         
         ## Sort out the file map
         self.create_file_indices()
@@ -136,6 +158,20 @@ class single_2d_dataset_ME(Dataset):
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
+    def _get_file(self, file_index):
+        # Lazily open and cache handles (inside forked worker)
+        h = self._handles.get(file_index)
+        if h is not None:
+            self._handles.move_to_end(file_index)   # LRU touch
+            return h
+        h = h5py.File(self.hdf5_files[file_index], 'r',
+                      libver='latest', rdcc_nbytes=0)
+        self._handles[file_index] = h
+        if len(self._handles) > self.max_open:
+            _, old = self._handles.popitem(last=False)
+            old.close()
+        return h
+        
     def apply_aug_with_retry(self, coords, feats, max_retries=100):
         for _ in range(max_retries):
             out_coords, out_feats = self.transform(coords, feats)
@@ -151,21 +187,20 @@ class single_2d_dataset_ME(Dataset):
 
         file_index = bisect(self.file_indices, idx)-1
         this_idx = idx - self.file_indices[file_index]
-
         file_path = self.hdf5_files[file_index]
 
-        with h5py.File(file_path, 'r', libver='latest') as f:
-            group = f[str(this_idx)]
-            data = group['data_xz'][:]
-            row  = group['row_xz'][:]
-            col  = group['col_xz'][:]
-            
-            # Check for 'label' dataset and fall back if missing
-            label = -1
-            if 'label' in group: label = group['label'][()]
-
-            ## Get the event_id if requested
-            event_id = group.attrs.get("event_id", this_idx)
+        f = self._get_file(file_index)
+        group = f[str(this_idx)]
+        data = group['data_xz'][:]
+        row  = group['row_xz'][:]
+        col  = group['col_xz'][:]
+        
+        # Check for 'label' dataset and fall back if missing
+        label = -1
+        if 'label' in group: label = group['label'][()]
+        
+        ## Get the event_id if requested
+        event_id = group.attrs.get("event_id", this_idx)
             
         ## Use the format that ME requires
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
