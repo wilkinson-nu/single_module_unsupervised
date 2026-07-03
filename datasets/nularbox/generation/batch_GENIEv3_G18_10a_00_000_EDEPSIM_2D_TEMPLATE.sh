@@ -2,9 +2,10 @@
 #SBATCH --image=docker:wilkinsonnu/simple_det_sim:latest
 #SBATCH --qos=shared
 #SBATCH --constraint=cpu
-#SBATCH --time=180
+#SBATCH --time=360
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
 #SBATCH --mem=4GB
 
 ## These can change for each job
@@ -25,7 +26,6 @@ EDEP_MAC=__EDEP_MAC__
 IMAGE_SIZE=__IMAGE_SIZE__
 MIN_HITS=__MIN_HITS__
 THRESHOLD=__THRESHOLD__
-BOX_SIZE=__BOX_SIZE__
 EXIT_DOWNSTREAM=__EXIT_DOWNSTREAM__
 
 ## Fixed
@@ -54,6 +54,7 @@ cp ${INPUTS_DIR}/../../*.py .
 
 echo "Starting gevgen..."
 shifter gevgen -n ${NEVENTS} -t ${TARG} -p ${NU_PDG} \
+	--event-generator-list CC \
         --cross-sections ${GENIE_TUNE}_splines.xml.gz \
 	--xml-path xml_override \
 	--tune ${GENIE_TUNE} --seed ${SEED} \
@@ -85,21 +86,42 @@ shifter edep-sim -o ${OUTFILE_ROOT}_EDEPSIM.root \
 ## fi
 ## cp ${tempDir}/${OUTFILE_ROOT}_EDEPSIM.root ${OUTDIR_ROOT}/EDEPSIM/.
 
-echo "Prepare 2D images..."
+echo "Prepare images..."
+## Make 2 sets:
+## - One where containment is required in the full image
+## - Another where containment is in a smaller region
 shifter python3 make_2D_nusim_images.py \
 	--input ${OUTFILE_ROOT}_EDEPSIM.root \
-	--output ${OUTFILE_ROOT}_IMAGES2D.h5 \
+	--output ${OUTFILE_ROOT}_IMAGES_CCCONT512.h5 \
 	--image_size ${IMAGE_SIZE} \
-	--box_size ${BOX_SIZE} \
+	--offset 0 0 -128 \
+	--box_size ${IMAGE_SIZE} \
 	--exit_downstream ${EXIT_DOWNSTREAM} \
 	--min_hits ${MIN_HITS} \
 	--threshold ${THRESHOLD}
 
 ## Copy back the images
-if [ ! -d "${OUTDIR_ROOT}/IMAGES2D" ]; then
-    mkdir -p ${OUTDIR_ROOT}/IMAGES2D
+if [ ! -d "${OUTDIR_ROOT}/IMAGES_CCCONT512" ]; then
+    mkdir -p ${OUTDIR_ROOT}/IMAGES_CCCONT512
 fi
-cp ${tempDir}/${OUTFILE_ROOT}_IMAGES2D.h5 ${OUTDIR_ROOT}/IMAGES2D/.
+cp ${tempDir}/${OUTFILE_ROOT}_IMAGES_CCCONT512.h5 ${OUTDIR_ROOT}/IMAGES_CCCONT512/.
+
+shifter python3 make_2D_nusim_images.py \
+	--input ${OUTFILE_ROOT}_EDEPSIM.root \
+	--output ${OUTFILE_ROOT}_IMAGES_CCCONT256.h5 \
+	--image_size ${IMAGE_SIZE} \
+        --offset 0 0 -128 \
+	--box_size 256 \
+	--box_offset 0 0 -64 \
+	--exit_downstream ${EXIT_DOWNSTREAM} \
+	--min_hits ${MIN_HITS} \
+        --threshold ${THRESHOLD}
+
+## Copy back the images
+if [ ! -d "${OUTDIR_ROOT}/IMAGES_CCCONT256" ]; then
+    mkdir -p ${OUTDIR_ROOT}/IMAGES_CCCONT256
+fi
+cp ${tempDir}/${OUTFILE_ROOT}_IMAGES_CCCONT256.h5 ${OUTDIR_ROOT}/IMAGES_CCCONT256/.
 
 ## Clean up
 rm -r ${tempDir}
