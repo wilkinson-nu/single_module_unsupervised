@@ -65,7 +65,7 @@ class RandomCentralRotation2D:
         self.jitter = jitter
 
         ## If center isn't defined, default to the literal image center
-        self.center = (self.img_size / 2.0 if center is None
+        self.center = (np.asarray(self.img_size, dtype=float) / 2.0 if center is None
                        else np.asarray(center, dtype=float))
 
     def _M(self, theta):
@@ -119,7 +119,7 @@ class RandomCentralShear2D:
         self.jitter = jitter
 
         ## If center isn't defined, default to the literal image center
-        self.center = (self.img_size / 2.0 if center is None
+        self.center = (np.asarray(self.img_size, dtype=float) / 2.0 if center is None
                        else np.asarray(center, dtype=float))
 
         
@@ -167,7 +167,7 @@ class RandomCentralStretch2D:
         self.jitter = jitter
 
         ## If center isn't defined, default to the literal image center
-        self.center = (self.img_size / 2.0 if center is None
+        self.center = (np.asarray(self.img_size, dtype=float) / 2.0 if center is None
                        else np.asarray(center, dtype=float))
         
     def __call__(self, coords, feats):
