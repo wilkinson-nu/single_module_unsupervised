@@ -10,7 +10,7 @@ from functools import partial
 
 ## The parallelisation libraries
 import torch.distributed as dist
-import torch.multiprocessing as mp
+# import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
@@ -27,6 +27,7 @@ from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
+from threadpoolctl import threadpool_limits
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -66,8 +67,11 @@ def print_model_summary(model):
             print(f"Layer: {name} | Size: {param.size()} | Number of parameters: {param.numel()}")
             total_params += param.numel()
     print("Total parameters =", total_params)
-    
-def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
+
+def worker_init_fn(worker_id):
+    threadpool_limits(limits=1)
+
+def get_supervised_dataloaders(args, rank, world_size):
 
     ## Get the augmentation from the argument name
     aug_transform = get_transform(args.out_image_size, args.aug_type, args.aug_prob, getattr(args, "aug_val", None))
@@ -87,7 +91,7 @@ def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
     train_dataset = Subset(full_dataset, train_indices)
     val_dataset = Subset(full_dataset, val_indices)
     
-    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size)
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False)
     
     ## Slightly hacky way to manipulate the labels
@@ -99,9 +103,10 @@ def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
                                                    collate_fn=this_collate_fn,
                                                    batch_size=args.batch_size,
                                                    shuffle=False,
-                                                   num_workers=num_workers,
+                                                   num_workers=args.num_workers,
+                                                   worker_init_fn=worker_init_fn,
                                                    drop_last=True,
-                                                   persistent_workers=False,
+                                                   persistent_workers=True,
                                                    prefetch_factor=2,
                                                    sampler=train_sampler)
     
@@ -109,9 +114,10 @@ def get_supervised_dataloaders(args, rank, world_size, num_workers=8):
                                                  collate_fn=this_collate_fn,
                                                  batch_size=args.batch_size,
                                                  shuffle=False,
-                                                 num_workers=num_workers,
+                                                 num_workers=args.num_workers,
+                                                 worker_init_fn=worker_init_fn,
                                                  drop_last=True,
-                                                 persistent_workers=False,
+                                                 persistent_workers=True,
                                                  prefetch_factor=2,
                                                  sampler=val_sampler)
     return train_dataset, train_dataloader, val_dataset, val_dataloader
@@ -172,22 +178,68 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metri
     torch.save(state_dict, state_file_name)
 
 
+def print_affinity(rank, local_rank, world_size):
+    import subprocess
+
+    # Cores this process is actually allowed to run on (post-binding).
+    try:
+        # sched_getaffinity is the ground truth for the current process.
+        allowed = sorted(os.sched_getaffinity(0))
+    except AttributeError:
+        allowed = None  # not available on all platforms
+
+    # Compact the core list into ranges for readable output, e.g. [0-15].
+    def compact(cores):
+        if not cores:
+            return "unknown"
+        ranges, start, prev = [], cores[0], cores[0]
+        for c in cores[1:]:
+            if c == prev + 1:
+                prev = c
+            else:
+                ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
+                start = prev = c
+        ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
+        return ",".join(ranges)
+
+    gpu_id = torch.cuda.current_device()
+    gpu_name = torch.cuda.get_device_name(gpu_id)
+    node = os.environ.get("SLURMD_NODENAME", "?")
+
+    msg = (
+        f"[rank {rank:2d} | local {local_rank} | world {world_size}] "
+        f"node={node} "
+        f"gpu=cuda:{gpu_id} ({gpu_name}) "
+        f"ncores={len(allowed) if allowed else '?'} "
+        f"cores=[{compact(allowed)}]"
+    )
+    # flush so lines from all ranks aren't buffered/interleaved oddly.
+    print(msg, flush=True)
+    
+
 ## Wrapped training function
-def run_training(rank, world_size, args):
+def run_training(rank, local_rank, world_size, args):
+
+    ## For parallel work
+    setup(rank, world_size)
+    ## Need a local device (allowing multiple nodes)
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f'cuda:{local_rank}')
+
+    ## A debugging test
+    print_affinity(rank, local_rank, world_size)
+    dist.barrier()
 
     ME.set_sparse_tensor_operation_mode(
         ME.SparseTensorOperationMode.SHARE_COORDINATE_MANAGER)
     
+    if bool(args.run_profiler) and rank==0:
+        torch.cuda.set_sync_debug_mode("warn")
+
     torch.autograd.set_detect_anomaly(False)
     ## For timing
     tstart = time.time()
-
-    ## For parallel work
-    setup(rank, world_size)
-    ## Need a local device
-    torch.cuda.set_device(rank)
-    device = torch.device(f'cuda:{rank}')
-
+    
     ## Setup the encoder
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
@@ -210,7 +262,7 @@ def run_training(rank, world_size, args):
     loss_fns["sup"] = supervised_loss
     
     ## Set up the distributed dataset
-    train_dataset, train_loader, val_dataset, val_loader = get_supervised_dataloaders(args, rank, world_size, 6)
+    train_dataset, train_loader, val_dataset, val_loader = get_supervised_dataloaders(args, rank, world_size)
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -253,14 +305,13 @@ def run_training(rank, world_size, args):
     if bool(args.run_profiler) and rank==0:
         
         prof = torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
+            activities=[torch.profiler.ProfilerActivity.CPU,
+                        torch.profiler.ProfilerActivity.CUDA
+                        ],
             record_shapes=True,
             profile_memory=True,
-            with_stack=True,
-        )
+            with_stack=True
+        )        
         prof.__enter__()
 
     ## Set up metrics:
@@ -274,13 +325,13 @@ def run_training(rank, world_size, args):
         # Ensure shuffling with the sampler each epoch
         train_loader.sampler.set_epoch(iteration)
         
-        tot_loss_tensor = torch.tensor(0.0, device=device)
-        losses_tensor = {name: torch.tensor(0.0, device=device) for name in DEFAULT_CLASSIFIER_CONFIG}
+        tot_loss_tensor = torch.zeros((), device=device)
+        losses_tensor = {name: torch.zeros((), device=device) for name in DEFAULT_CLASSIFIER_CONFIG}
         
         ## For monitoring
         clf_metrics.reset()
-        total_enc_align_tensor = torch.tensor(0.0, device=device)
-        total_enc_unif_tensor = torch.tensor(0.0, device=device)
+        total_enc_align_tensor = torch.zeros((), device=device)
+        total_enc_unif_tensor = torch.zeros((), device=device)
 
         ## Add more monitoring tools
         nbuffer = 5
@@ -293,11 +344,12 @@ def run_training(rank, world_size, args):
         # Iterate over batches of images with the dataloader
         t0 = time.time()
         first_batch_latency = None
+        step = 0
         for bcoords, bfeats, blabels, this_batch_size in train_loader:
             
             if first_batch_latency == None:
                 first_batch_latency = time.time() - t0
-
+                
             ## Update weight decay to allow for scheduling
             this_wd = update_weight_decay(optimizer,
 	        	                  weight_decay,
@@ -308,89 +360,93 @@ def run_training(rank, world_size, args):
             ## Send to the device, then make the sparse tensors
             blabels = {name: val.to(device, non_blocking=True) for name, val in blabels.items()}
             bcoords = bcoords.to(device, non_blocking=True)
-            bfeats  = bfeats .to(device)
+            bfeats  = bfeats .to(device, non_blocking=True)
             batch   = ME.SparseTensor(bfeats, bcoords, device=device)
-
+            
             ## Now do the forward passes
             encoded_batch = encoder(batch, this_batch_size)
-
+            
             ## L2 norm the encoder
             if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
-                           
+
             ## Deal with the projection loss
             sup_batch = heads["sup"](encoded_batch)
             sup_loss, sup_loss_dict = loss_fns["sup"](sup_batch, blabels, DEFAULT_CLASSIFIER_CONFIG)
-            tot_loss = sup_loss
             for name, loss_val in sup_loss_dict.items():
-                losses_tensor[name] += loss_val
+                losses_tensor[name] += loss_val.detach()
 
             ## Add to metrics
             total_enc_align_tensor += alignment(encoded_batch)
             total_enc_unif_tensor += uniformity(encoded_batch)
-
+            
             ## Get a few batches for calculating the running deff
+            ## If the number of batches is large w.r.t. the total number (e.g., for testing), non_blocking will cause an issue here
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=False))
-
+                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=True))
+            
             ## Supervision specific metrics:
             with torch.no_grad(): clf_metrics.update(sup_batch, blabels)
 
             # Backward pass
             optimizer.zero_grad(set_to_none=True)
-            tot_loss .backward()
-
+            sup_loss .backward()
+            
             if clip_gradients:
                 torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
                 for h in heads.values(): torch.nn.utils.clip_grad_norm_(h.parameters(), max_norm=1.0)
-            
+
             ## Update optimizer and scheduler
             optimizer.step()
             if scheduler: scheduler.step()
-
+            
             ## Increment global_iter
             global_iter += 1
+            step += 1
             
             ## keep track of losses
-            tot_loss_tensor += tot_loss.detach()
+            tot_loss_tensor += sup_loss.detach()
 
+            #if step % 10 == 0:
+            #    torch.cuda.empty_cache()
             ME.clear_global_coordinate_manager()
-
-        # Manage CUDA memory for ME
         torch.cuda.empty_cache()
-
+            
         ## Validation pass
         encoder.eval()
         for h in heads.values(): h.eval()
 
-        val_tot_loss_tensor = torch.tensor(0.0, device=device)
-        val_losses_tensor = {name: torch.tensor(0.0, device=device) for name in DEFAULT_CLASSIFIER_CONFIG}
+        val_tot_loss_tensor = torch.zeros((), device=device)
+        val_losses_tensor = {name: torch.zeros((), device=device) for name in DEFAULT_CLASSIFIER_CONFIG}
         val_metrics.reset()
         val_nbatches = 0
+        step = 0
 
         with torch.no_grad():
             for bcoords, bfeats, blabels, this_batch_size in val_loader:
-
+        
                 blabels = {name: val.to(device, non_blocking=True) for name, val in blabels.items()}
                 bcoords = bcoords.to(device, non_blocking=True)
-                bfeats  = bfeats .to(device)
+                bfeats  = bfeats .to(device, non_blocking=True)
                 batch   = ME.SparseTensor(bfeats, bcoords, device=device)
-
+        
                 encoded_batch = encoder(batch, this_batch_size)
                 if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
-
+        
                 sup_batch = heads["sup"](encoded_batch)
                 sup_loss, sup_loss_dict = loss_fns["sup"](sup_batch, blabels, DEFAULT_CLASSIFIER_CONFIG)
-
+        
                 for name, loss_val in sup_loss_dict.items():
                     val_losses_tensor[name] += loss_val
                 val_tot_loss_tensor += sup_loss
-
+        
                 val_metrics.update(sup_batch, blabels)
                 val_nbatches += 1
-
+                step += 1
+                
+                #if step % 10 == 0:
+                #    torch.cuda.empty_cache()
                 ME.clear_global_coordinate_manager()
-
         torch.cuda.empty_cache()
 
         # Resume train mode for next iteration
@@ -499,6 +555,20 @@ def run_training(rank, world_size, args):
         if rank==0 and iteration%25 == 0 and iteration != 0:
             save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
 
+        ## Add per GPU logging
+        allocated_gb = torch.tensor(torch.cuda.memory_allocated() / 1e9, device=device)
+        reserved_gb  = torch.tensor(torch.cuda.memory_reserved()  / 1e9, device=device)
+        peak_alloc_gb = torch.tensor(torch.cuda.max_memory_allocated() / 1e9, device=device)
+        torch.cuda.reset_peak_memory_stats()
+
+        all_allocated  = [torch.zeros(1, device=device) for _ in range(world_size)]
+        all_reserved   = [torch.zeros(1, device=device) for _ in range(world_size)]
+        all_peak_alloc = [torch.zeros(1, device=device) for _ in range(world_size)]
+        
+        dist.all_gather(all_allocated,  allocated_gb.unsqueeze(0))
+        dist.all_gather(all_reserved,   reserved_gb.unsqueeze(0))
+        dist.all_gather(all_peak_alloc, peak_alloc_gb.unsqueeze(0))
+            
         ## Enhanced logging
         if rank == 0:
             vm = psutil.virtual_memory()
@@ -515,6 +585,11 @@ def run_training(rank, world_size, args):
             log_scalar(writer, metrics, 'syst_monitor/mem_pressure', vm.available / vm.total, iteration)
             log_scalar(writer, metrics, 'syst_monitor/first_batch_latency', first_batch_latency, iteration)
 
+            for gpu_rank in range(world_size):
+                log_scalar(writer, metrics, f'syst_monitor/gpu{gpu_rank}_allocated_gb',  all_allocated[gpu_rank].item(),  iteration)
+                log_scalar(writer, metrics, f'syst_monitor/gpu{gpu_rank}_reserved_gb',   all_reserved[gpu_rank].item(),   iteration)
+                log_scalar(writer, metrics, f'syst_monitor/gpu{gpu_rank}_peak_alloc_gb', all_peak_alloc[gpu_rank].item(), iteration)
+            
     ## Final version of the model
     if rank==0:
         save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
@@ -524,8 +599,8 @@ def run_training(rank, world_size, args):
     if bool(args.run_profiler) and rank == 0:
         prof.__exit__(None, None, None)
         
-        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
-        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=100))
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
         
     ## Clear things up
     dist.destroy_process_group()
@@ -545,6 +620,7 @@ if __name__ == '__main__':
     parser.add_argument('--state_file', type=str)
     parser.add_argument('--pretrained', type=str, default=None)
     parser.add_argument('--nstep', type=int, default=200, required=True)
+    parser.add_argument('--num_workers', type=int, default=8)
     
     ## World size is the number of GPUs
     parser.add_argument('--world_size', type=int)
@@ -592,10 +668,14 @@ if __name__ == '__main__':
     # Parse arguments from command line
     args = parser.parse_args()
 
-    ## Report arguments
-    for arg in vars(args): print(arg, getattr(args, arg))
+    ## Note global and local ranks to allow multi-node training
+    rank       = int(os.environ["SLURM_PROCID"])
+    local_rank = int(os.environ["SLURM_LOCALID"])
+    world_size = int(os.environ["SLURM_NTASKS"])
+
+    ## Report arguments (but only rank 0)
+    if rank==0:
+        for arg in vars(args): print(arg, getattr(args, arg))
     
-    mp.spawn(run_training,
-             args=(args.world_size, args),
-             nprocs=args.world_size,
-             join=True)
+    ## Removed mp.spawn, now requires srun
+    run_training(rank, local_rank, world_size, args)
