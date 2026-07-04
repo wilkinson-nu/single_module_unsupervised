@@ -523,7 +523,7 @@ def draw_data_histograms(hists, output_name_root, alpha_min, alpha_max, p="xz"):
 def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
 
     alpha_min, alpha_max = 5, 5
-    max_images  = 1e7
+    max_images  = 1e5
     sum_images  = 0
     total_images = 0
     nEmpty       = 0
