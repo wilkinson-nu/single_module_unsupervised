@@ -11,7 +11,7 @@ def log_scalar(writer, metrics, name, value, step):
 def log_grad_norm(module, tag, writer, iteration):
     if writer is None: return
     device = next(module.parameters()).device
-    total = torch.tensor(0.0, device=device)
+    total = torch.zeros((), device=device)
     for name, p in module.named_parameters():
         if p.grad is None:
             continue
@@ -26,7 +26,7 @@ def log_grad_rms(module, tag, writer, iteration):
     if writer is None: return
 
     device = next(module.parameters()).device
-    total = torch.tensor(0.0, device=device)
+    total = torch.zeros((), device=device)
     count = 0
     for name, p in module.named_parameters():
         if p.grad is None:
@@ -42,8 +42,8 @@ def log_grad_rms(module, tag, writer, iteration):
 def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
     if writer is None: return
     device = next(module.parameters()).device
-    g2 = torch.tensor(0.0, device=device)
-    w2 = torch.tensor(0.0, device=device)
+    g2 = torch.zeros((), device=device)
+    w2 = torch.zeros((), device=device)
     
     for name, p in module.named_parameters():
         if p.grad is None:
