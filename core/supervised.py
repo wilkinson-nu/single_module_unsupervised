@@ -71,8 +71,14 @@ class ClassificationMetrics:
         self.reset()
 
     def reset(self):
-        self.correct = {name: torch.zeros((), dtype=torch.long, device=self.device) for name in self.classifier_config}
-        self.total = {name: torch.zeros((), dtype=torch.long, device=self.device) for name in self.classifier_config}
+        self.correct = {
+            name: torch.tensor(0, device=self.device)
+            for name in self.classifier_config
+        }
+        self.total = {
+            name: torch.tensor(0, device=self.device)
+            for name in self.classifier_config
+        }
         self.per_class_correct = {
             name: torch.zeros(cfg['n_classes'], device=self.device)
             for name, cfg in self.classifier_config.items()
@@ -81,64 +87,84 @@ class ClassificationMetrics:
             name: torch.zeros(cfg['n_classes'], device=self.device)
             for name, cfg in self.classifier_config.items()
         }
-        self.abs_error = {name: torch.zeros((), device=self.device) for name in self.classifier_config}
-        self.mae_total = {name: torch.zeros((), dtype=torch.long,   device=self.device) for name in self.classifier_config}
-
+        self.abs_error = {
+            name: torch.tensor(0.0, device=self.device)
+            for name in self.classifier_config
+        }
+        # Removed mae_total — it's identical to total, no need to track separately
 
     def update(self, outputs, labels):
         for name, logits in outputs.items():
-            preds   = logits.argmax(dim=-1)
-            targets = labels[name].long()
-            
-            correct = (preds == targets)
-            self.correct[name] += correct.sum()
-            self.total[name]   += targets.numel()
-            
-            pc_total   = self.per_class_total[name]
-            pc_correct = self.per_class_correct[name]
-            pc_total.scatter_add_(0, targets, torch.ones_like(targets, dtype=pc_total.dtype))
-            pc_correct.scatter_add_(0, targets, correct.to(pc_correct.dtype))
-            
-            self.abs_error[name] += (preds.float() - targets.float()).abs().sum()
-            self.mae_total[name] += targets.numel()
-            
+            with torch.no_grad():
+                preds   = logits.argmax(dim=-1)
+                targets = labels[name].long()
+                n_classes = self.classifier_config[name]['n_classes']
+                
+                self.correct[name] += (preds == targets).sum()
+                self.total[name]   += targets.numel()
+                
+                # Vectorized per-class counts — eliminates Python loop + GPU syncs
+                # one_hot: (N, n_classes), then mask by correct predictions
+                one_hot = torch.nn.functional.one_hot(targets, num_classes=n_classes).float()  # (N, C)
+                correct_mask = (preds == targets).float().unsqueeze(1)                          # (N, 1)
+                self.per_class_correct[name] += (one_hot * correct_mask).sum(dim=0)
+                self.per_class_total[name]   += one_hot.sum(dim=0)
+                
+                self.abs_error[name] += (preds.float() - targets.float()).abs().sum()
 
     def reduce(self):
+        # Batch all tensors into a single all_reduce per classifier to reduce
+        # communication overhead
         for name in self.classifier_config:
-            dist.all_reduce(self.correct[name],           op=dist.ReduceOp.SUM)
-            dist.all_reduce(self.total[name],             op=dist.ReduceOp.SUM)
-            dist.all_reduce(self.per_class_correct[name], op=dist.ReduceOp.SUM)
-            dist.all_reduce(self.per_class_total[name],   op=dist.ReduceOp.SUM)
-            dist.all_reduce(self.abs_error[name],         op=dist.ReduceOp.SUM)
-            dist.all_reduce(self.mae_total[name],         op=dist.ReduceOp.SUM)
+            # Stack scalars + per_class vectors into one tensor
+            packed = torch.cat([
+                self.correct[name].unsqueeze(0).float(),
+                self.total[name].unsqueeze(0).float(),
+                self.abs_error[name].unsqueeze(0),
+                self.per_class_correct[name],
+                self.per_class_total[name],
+            ])
+            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
 
+            # Unpack
+            n = self.classifier_config[name]['n_classes']
+            self.correct[name]           = packed[0].long()
+            self.total[name]             = packed[1].long()
+            self.abs_error[name]         = packed[2]
+            self.per_class_correct[name] = packed[3:3 + n]
+            self.per_class_total[name]   = packed[3 + n:3 + 2 * n]
 
     def compute(self):
+        # All .item() calls are deferred to here — called once per epoch,
+        # so syncs are acceptable
         results = {}
         for name, cfg in self.classifier_config.items():
             n_classes = cfg['n_classes']
 
-            correct          = self.correct[name].item()
             total            = self.total[name].item()
-            pc_correct       = self.per_class_correct[name].cpu().tolist()
-            pc_total         = self.per_class_total[name].cpu().tolist()
-            abs_error        = self.abs_error[name].item()
-            mae_total        = self.mae_total[name].item()
+            correct          = self.correct[name].item()
+            per_class_correct = self.per_class_correct[name].cpu()  # single transfer
+            per_class_total   = self.per_class_total[name].cpu()
 
             acc = correct / max(total, 1)
 
-            per_class_acc = [
-                (pc_correct[c] / pc_total[c]) if pc_total[c] > 0 else float('nan')
-                for c in range(n_classes)
-            ]
+            # Vectorized per-class accuracy — no Python loop
+            valid_mask     = per_class_total > 0
+            per_class_acc_tensor = torch.where(
+                valid_mask,
+                per_class_correct / per_class_total.clamp(min=1),
+                torch.full_like(per_class_correct, float('nan')),
+            )
+            per_class_acc = per_class_acc_tensor.tolist()
 
-            valid = [x for x in per_class_acc if not math.isnan(x)]
-            mean_per_class_acc = sum(valid) / len(valid) if valid else float('nan')
+            valid_accs         = per_class_acc_tensor[valid_mask]
+            mean_per_class_acc = valid_accs.mean().item() if valid_mask.any() else float('nan')
 
-            mae = abs_error / max(mae_total, 1)
+            mae = self.abs_error[name].item() / max(total, 1)
 
-            tp = sum(pc_correct[1:n_classes])
-            fn = sum(pc_total[c] - pc_correct[c] for c in range(1, n_classes))
+            # Vectorized recall — slice off class 0
+            tp             = per_class_correct[1:].sum().item()
+            fn             = (per_class_total[1:] - per_class_correct[1:]).sum().item()
             recall_nonzero = tp / max(tp + fn, 1)
 
             results[name] = {
