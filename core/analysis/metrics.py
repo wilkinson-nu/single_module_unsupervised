@@ -17,7 +17,11 @@ def uniformity(z, t=2):
     sim = z @ z.T  # cosine similarity matrix since z is normalised
     sq_pdist = 2 - 2 * sim
     mask = ~torch.eye(z.size(0), device=z.device, dtype=torch.bool)
-    return torch.log(torch.exp(-t * sq_pdist)[mask].mean())
+    vals = torch.exp(-t * sq_pdist)
+    masked_sum = (vals * mask).sum()
+    masked_cnt = mask.sum()
+    return torch.log(masked_sum / masked_cnt)
+# return torch.log(torch.exp(-t * sq_pdist)[mask].mean())
     
 @torch.no_grad()
 def argmax_consistency(c_cat):
@@ -50,7 +54,7 @@ def simclr_geometry_metrics(buffer, device):
     ## loop over buffer
     for emb_cat_cpu in buffer:
 
-        emb_cat = emb_cat_cpu.to(device, non_blocking=True)
+        emb_cat = emb_cat_cpu.to(device)
         
         batch_size = emb_cat.shape[0]//2
         z_cat = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
@@ -112,51 +116,37 @@ def simclr_geometry_metrics(buffer, device):
 
 @torch.no_grad()
 def basic_geometry_metrics(buffer, device):
-    '''
-    A simplified version of the simclr geometry metrics, no need for complex gather layers etc
-    '''
-
     dim = buffer[0].shape[1]
-    
-    ## First pass: calculate global mean across all batches and GPUs
-    sum_z = torch.zeros(dim, device=device)
-    n = 0
-    for emb_cat_cpu in buffer:
-        emb_cat = emb_cat_cpu.to(device)
-        z = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
-        sum_z += z.sum(dim=0)
-        n += z.shape[0]
 
-        
-    ## ## Gather across GPUs if we're in a multi-GPU setting
+    emb_all = torch.cat(buffer, dim=0).to(device, non_blocking=True)
+    z = emb_all / (emb_all.norm(dim=1, keepdim=True) + 1e-8)   # normalize once
+
+    # global mean across all samples and GPUs
+    sum_z = z.sum(dim=0)
+    n = z.shape[0]
     if dist.is_initialized():
         dist.all_reduce(sum_z, op=dist.ReduceOp.SUM)
-        n_tensor = torch.tensor(n, device=device, dtype=torch.float32)
+        n_tensor = torch.zeros((), device=device, dtype=torch.float32)
+        n_tensor += n
         dist.all_reduce(n_tensor, op=dist.ReduceOp.SUM)
-        n = n_tensor.item()
-    
-    ## Find the global mean
+        n = n_tensor.item()   # one unavoidable sync, fine — runs once
+
     global_mean = sum_z / n
-    
-    ## Second pass, calculate the covariance
-    cov = torch.zeros(dim, dim, device=device)
-    for emb_cat_cpu in buffer:
-        emb_cat = emb_cat_cpu.to(device)
-        z = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
-        z = z - global_mean
-        cov += z.T @ z
-    
+
+    # covariance
+    zc = z - global_mean
+    cov = zc.T @ zc
     if dist.is_initialized():
         dist.all_reduce(cov, op=dist.ReduceOp.SUM)
-    
-    ## Calculate the covariance info
     cov = cov / (n - 1)
-    eigvals = torch.linalg.eigvalsh(cov.cpu())
+
+    eigvals = torch.linalg.eigvalsh(cov)   # on GPU
+
     deff = (eigvals.sum()**2) / (eigvals.pow(2).sum())
     lambda1_ratio = eigvals.max() / eigvals.sum()
-    
-    return {"deff": deff.item(),
-            "l1_ratio": lambda1_ratio.item(),
-            "eigvals": eigvals.flip(0)[:10].cpu()
-            }
 
+    return {
+        "deff": deff.item(),
+        "l1_ratio": lambda1_ratio.item(),
+        "eigvals": eigvals.flip(0)[:10].cpu(),
+    }
