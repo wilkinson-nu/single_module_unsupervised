@@ -10,7 +10,6 @@ from functools import partial
 
 ## The parallelisation libraries
 import torch.distributed as dist
-# import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
@@ -36,9 +35,6 @@ from torch.utils.tensorboard import SummaryWriter
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
-
-torch.set_num_threads(8)
-torch.set_num_interop_threads(8)
 
 ## Import transformations
 from core.data.augmentations_2d import DoNothing
@@ -123,11 +119,6 @@ def get_supervised_dataloaders(args, rank, world_size):
     return train_dataset, train_dataloader, val_dataset, val_dataloader
 
     
-def manage_cuda_memory(rank, gpu_threshold):
-    """Check and clear GPU memory if it exceeds the threshold."""
-    if torch.cuda.memory_allocated(rank) > gpu_threshold:
-        torch.cuda.empty_cache()
-
 def load_pretrained(encoder, heads, file_name):
     checkpoint = torch.load(file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
@@ -226,13 +217,16 @@ def run_training(rank, local_rank, world_size, args):
     torch.cuda.set_device(local_rank)
     device = torch.device(f'cuda:{local_rank}')
 
+    cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+    main_threads = max(1, cpus - args.num_workers)
+    if rank==0: print("Torch has", main_threads, "threads/task")
+    torch.set_num_threads(main_threads)
+    torch.set_num_interop_threads(1)
+    
     ## A debugging test
     print_affinity(rank, local_rank, world_size)
     dist.barrier()
 
-    ME.set_sparse_tensor_operation_mode(
-        ME.SparseTensorOperationMode.SHARE_COORDINATE_MANAGER)
-    
     if bool(args.run_profiler) and rank==0:
         torch.cuda.set_sync_debug_mode("warn")
 
@@ -245,7 +239,7 @@ def run_training(rank, local_rank, world_size, args):
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
     encoder_nchan = encoder.get_nchan()
     encoder .to(device)
-    encoder = DDP(encoder, device_ids=[rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
+    encoder = DDP(encoder, device_ids=[local_rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
     ## Dictionary of heads
     heads = {}
@@ -257,7 +251,7 @@ def run_training(rank, local_rank, world_size, args):
     sup_head = SupervisedHead(encoder_nchan,
                               classifier_config=DEFAULT_CLASSIFIER_CONFIG)
     sup_head .to(device)
-    sup_head = DDP(sup_head, device_ids=[rank])
+    sup_head = DDP(sup_head, device_ids=[local_rank])
     heads["sup"] = sup_head
     loss_fns["sup"] = supervised_loss
     
@@ -347,7 +341,7 @@ def run_training(rank, local_rank, world_size, args):
         step = 0
         for bcoords, bfeats, blabels, this_batch_size in train_loader:
             
-            if first_batch_latency == None:
+            if first_batch_latency is None:
                 first_batch_latency = time.time() - t0
                 
             ## Update weight decay to allow for scheduling
@@ -379,11 +373,11 @@ def run_training(rank, local_rank, world_size, args):
             total_enc_align_tensor += alignment(encoded_batch)
             total_enc_unif_tensor += uniformity(encoded_batch)
             
-            ## Get a few batches for calculating the running deff
+            ## Get a few batches for cealculating the running deff
             ## If the number of batches is large w.r.t. the total number (e.g., for testing), non_blocking will cause an issue here
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=True))
+                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=False))
             
             ## Supervision specific metrics:
             with torch.no_grad(): clf_metrics.update(sup_batch, blabels)
@@ -407,9 +401,6 @@ def run_training(rank, local_rank, world_size, args):
             ## keep track of losses
             tot_loss_tensor += sup_loss.detach()
 
-            #if step % 10 == 0:
-            #    torch.cuda.empty_cache()
-            ME.clear_global_coordinate_manager()
         torch.cuda.empty_cache()
             
         ## Validation pass
@@ -444,9 +435,6 @@ def run_training(rank, local_rank, world_size, args):
                 val_nbatches += 1
                 step += 1
                 
-                #if step % 10 == 0:
-                #    torch.cuda.empty_cache()
-                ME.clear_global_coordinate_manager()
         torch.cuda.empty_cache()
 
         # Resume train mode for next iteration
@@ -622,9 +610,6 @@ if __name__ == '__main__':
     parser.add_argument('--nstep', type=int, default=200, required=True)
     parser.add_argument('--num_workers', type=int, default=8)
     
-    ## World size is the number of GPUs
-    parser.add_argument('--world_size', type=int)
-
     ## Training dynamics
     parser.add_argument('--lr', type=float)
     parser.add_argument('--batch_size', type=int, default=512)
