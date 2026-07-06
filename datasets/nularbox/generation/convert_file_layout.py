@@ -3,6 +3,7 @@ import numpy as np
 import h5py
 from glob import glob
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 def convert_file(in_path, out_path):
     with h5py.File(in_path, 'r', libver='latest') as fin:
@@ -110,16 +111,48 @@ def convert_file(in_path, out_path):
 
     os.replace(tmp_path, out_path)  # atomic; avoids half-written files on crash
 
+def _worker(paths):
+    """Top-level function so it's picklable. Returns (in_path, status, msg)."""
+    in_path, out_path = paths
+    try:
+        convert_file(in_path, out_path)
+        return (in_path, 'ok', None)
+    except Exception as e:
+        # Clean up any partial temp file
+        tmp = out_path + '.tmp'
+        if os.path.exists(tmp):
+            try: os.remove(tmp)
+            except OSError: pass
+        return (in_path, 'error', repr(e))
 
-def convert_dir(in_dir, out_dir):
+def convert_dir(in_dir, out_dir, workers):
     os.makedirs(out_dir, exist_ok=True)
+
+    jobs = []
     for in_path in sorted(glob(os.path.join(in_dir, '*.h5'))):
         out_path = os.path.join(out_dir, os.path.basename(in_path))
         if os.path.exists(out_path):
             print("skip (exists):", out_path); continue
-        print("converting", in_path)
-        convert_file(in_path, out_path)
+        jobs.append((in_path, out_path))
 
+    if not jobs:
+        print("nothing to do")
+        return
+
+    print(f"submitting {len(jobs)} files across {workers} workers")
+    done = errors = 0
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_worker, j): j[0] for j in jobs}
+        for fut in as_completed(futures):
+            in_path, status, msg = fut.result()
+            if status == 'ok':
+                done += 1
+                print(f"[{done + errors}/{len(jobs)}] ok: {in_path}")
+            else:
+                errors += 1
+                print(f"[{done + errors}/{len(jobs)}] ERROR {in_path}: {msg}")
+
+    print(f"finished: {done} ok, {errors} errors")
 
 if __name__ == '__main__':
 
@@ -129,11 +162,12 @@ if __name__ == '__main__':
     # Require an input file name and location to dump plots
     parser.add_argument('--indir', type=str)
     parser.add_argument('--outdir', type=str)
-
+    parser.add_argument('--workers', type=int, default=4)
+    
     # Parse arguments from command line
     args = parser.parse_args()
 
     ## Report arguments
     for arg in vars(args): print(arg, getattr(args, arg))
 
-    convert_dir(args.indir, args.outdir)
+    convert_dir(args.indir, args.outdir, args.workers)
