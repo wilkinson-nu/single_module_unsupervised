@@ -67,7 +67,7 @@ class BasicBlock(nn.Module):
         if self.norm1 is not None: out = self.norm1(out)
         out = self.act_fn(out)
         out = self.conv2(out)
-        if self.norm1 is not None: out = self.norm2(out)
+        if self.norm2 is not None: out = self.norm2(out)
         out += residual
         out = self.act_fn(out)
         return out
