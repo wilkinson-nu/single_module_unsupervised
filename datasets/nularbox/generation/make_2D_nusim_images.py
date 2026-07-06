@@ -600,42 +600,61 @@ def make_images(infilelist,
             plt.close()
             
     ## Write the images to an hdf5 file
-    with h5py.File(output_file_name, 'w') as fout:
-        
-        ## Save the number of images in the file
-        fout.attrs['N'] = len(event_data_list)
-
-        ## Store label_struct schema
+    with h5py.File(output_file_name, 'w', libver='latest') as fout:
+        N = len(event_data_list)
+        fout.attrs['N'] = N
         fout.attrs['label_dtype'] = LABEL_DTYPE_EXP.descr
-
-        ## Save enums defined when making the file
         fout.attrs['Topology_enum'] = json.dumps({m.name: m.value for m in Topology})
         fout.attrs['Mode_enum'] = json.dumps({m.name: m.value for m in Mode})
+        fout.attrs['shape_3d'] = np.array(output_full_size, dtype=np.uint16)
+        fout.attrs['shape_xz'] = np.array((output_full_size[0], output_full_size[2]), dtype=np.uint16)
+        fout.attrs['shape_xy'] = np.array((output_full_size[0], output_full_size[1]), dtype=np.uint16)
+
+        xyz_data, xyz_coords = [], []
+        xz_data, xz_row, xz_col = [], [], []
+        xy_data, xy_row, xy_col = [], [], []
+        labels, event_ids = [], []
+        xyz_off = np.zeros(N + 1, dtype=np.int64)
+        xz_off  = np.zeros(N + 1, dtype=np.int64)
+        xy_off  = np.zeros(N + 1, dtype=np.int64)
 
         for i, ev in enumerate(event_data_list):
-            group = fout.create_group(str(i))
-            
-            # 3D sparse
-            group.create_dataset('data_xyz',   data=ev['values_3d'], dtype=np.float32)
-            group.create_dataset('coords_xyz', data=ev['coords_3d'].astype(np.uint16))
-            group.attrs['shape_3d'] = np.array(output_full_size, dtype=np.uint16)
-            
-            # XZ projection
-            group.create_dataset('data_xz', data=ev['image_xz'].data, dtype=np.float32)
-            group.create_dataset('row_xz',  data=ev['image_xz'].row.astype(np.uint16))
-            group.create_dataset('col_xz',  data=ev['image_xz'].col.astype(np.uint16))
-            group.attrs['shape_xz'] = np.array(ev['image_xz'].shape, dtype=np.uint16)
-            
-            # XY projection
-            group.create_dataset('data_xy', data=ev['image_xy'].data, dtype=np.float32)
-            group.create_dataset('row_xy',  data=ev['image_xy'].row.astype(np.uint16))
-            group.create_dataset('col_xy',  data=ev['image_xy'].col.astype(np.uint16))
-            group.attrs['shape_xy'] = np.array(ev['image_xy'].shape, dtype=np.uint16)
-            
-            ## Shared info
-            group.create_dataset('label', data=ev['label'], dtype=LABEL_DTYPE_EXP)
-            group.attrs['event_id'] = np.uint32(ev['event_id'])
+            xyz_data.append(ev['values_3d'].astype(np.float32))
+            xyz_coords.append(ev['coords_3d'].astype(np.uint16))
+            xz_data.append(ev['image_xz'].data.astype(np.float32))
+            xz_row.append(ev['image_xz'].row.astype(np.uint16))
+            xz_col.append(ev['image_xz'].col.astype(np.uint16))
+            xy_data.append(ev['image_xy'].data.astype(np.float32))
+            xy_row.append(ev['image_xy'].row.astype(np.uint16))
+            xy_col.append(ev['image_xy'].col.astype(np.uint16))
+            labels.append(ev['label'])
+            event_ids.append(np.uint32(ev['event_id']))
+            xyz_off[i+1] = xyz_off[i] + len(ev['values_3d'])
+            xz_off[i+1]  = xz_off[i]  + len(ev['image_xz'].data)
+            xy_off[i+1]  = xy_off[i]  + len(ev['image_xy'].data)
 
+        def _cat1(chunks, dt): return np.concatenate(chunks).astype(dt) if chunks else np.zeros(0, dt)
+        def _cat2(chunks, dt, c):
+            ne = [x for x in chunks if x.size]
+            return np.concatenate(ne).astype(dt) if ne else np.zeros((0, c), dt)
+
+        ## Optionally include compression (none by default)
+        cargs = {} #dict(compression='gzip', compression_opts=1, shuffle=True)
+        fout.create_dataset('xyz_data',   data=_cat1(xyz_data, np.float32), **cargs)
+        fout.create_dataset('xyz_coords', data=_cat2(xyz_coords, np.uint16, 3), **cargs)
+        fout.create_dataset('xyz_offsets', data=xyz_off)
+        fout.create_dataset('xz_data', data=_cat1(xz_data, np.float32), **cargs)
+        fout.create_dataset('xz_row',  data=_cat1(xz_row, np.uint16), **cargs)
+        fout.create_dataset('xz_col',  data=_cat1(xz_col, np.uint16), **cargs)
+        fout.create_dataset('xz_offsets', data=xz_off)
+        fout.create_dataset('xy_data', data=_cat1(xy_data, np.float32), **cargs)
+        fout.create_dataset('xy_row',  data=_cat1(xy_row, np.uint16), **cargs)
+        fout.create_dataset('xy_col',  data=_cat1(xy_col, np.uint16), **cargs)
+        fout.create_dataset('xy_offsets', data=xy_off)
+        if N:
+            fout.create_dataset('labels', data=np.array(labels, dtype=LABEL_DTYPE_EXP))
+        fout.create_dataset('event_id', data=np.array(event_ids, dtype=np.uint32))
+            
     ## Report summary
     print("Selected", nselected, "/", nevts, "events")
     print("Rejected", nnc, "/", nevts, "as NC")
