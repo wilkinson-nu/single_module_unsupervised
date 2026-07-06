@@ -40,7 +40,7 @@ class BasicBlock(nn.Module):
             self.norm2 = None
             
         if self.enc_act == "relu":
-            self.act_fn = ME.MinkowskiReLU(inplace=True)
+            self.act_fn = ME.MinkowskiReLU(inplace=False)
         if self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
         if self.enc_act == "gelu":
@@ -67,7 +67,7 @@ class BasicBlock(nn.Module):
         if self.norm1 is not None: out = self.norm1(out)
         out = self.act_fn(out)
         out = self.conv2(out)
-        if self.norm1 is not None: out = self.norm2(out)
+        if self.norm2 is not None: out = self.norm2(out)
         out += residual
         out = self.act_fn(out)
         return out
@@ -117,7 +117,7 @@ class Bottleneck(nn.Module):
             self.norm3 = None
 
         if self.enc_act == "relu":
-            self.act_fn = ME.MinkowskiReLU(inplace=True)
+            self.act_fn = ME.MinkowskiReLU(inplace=False)
         if self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
         if self.enc_act == "gelu":

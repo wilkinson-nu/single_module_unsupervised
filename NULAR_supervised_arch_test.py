@@ -66,7 +66,9 @@ def print_model_summary(model):
 
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
-
+    seed = torch.initial_seed() % 2**32
+    np.random.seed(seed)
+    
 def get_supervised_dataloaders(args, rank, world_size):
 
     ## Get the augmentation from the argument name
@@ -377,7 +379,7 @@ def run_training(rank, local_rank, world_size, args):
             ## If the number of batches is large w.r.t. the total number (e.g., for testing), non_blocking will cause an issue here
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=False))
+                    buffer_enc .append(encoded_batch.detach().to("cpu"))
             
             ## Supervision specific metrics:
             with torch.no_grad(): clf_metrics.update(sup_batch, blabels)
