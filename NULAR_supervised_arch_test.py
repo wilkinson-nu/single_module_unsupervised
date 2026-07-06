@@ -103,7 +103,7 @@ def get_supervised_dataloaders(args, rank, world_size):
                                                    worker_init_fn=worker_init_fn,
                                                    drop_last=True,
                                                    persistent_workers=True,
-                                                   prefetch_factor=2,
+                                                   prefetch_factor=4,
                                                    sampler=train_sampler)
     
     val_dataloader = torch.utils.data.DataLoader(val_dataset,
@@ -114,7 +114,7 @@ def get_supervised_dataloaders(args, rank, world_size):
                                                  worker_init_fn=worker_init_fn,
                                                  drop_last=True,
                                                  persistent_workers=True,
-                                                 prefetch_factor=2,
+                                                 prefetch_factor=4,
                                                  sampler=val_sampler)
     return train_dataset, train_dataloader, val_dataset, val_dataloader
 
@@ -218,7 +218,7 @@ def run_training(rank, local_rank, world_size, args):
     device = torch.device(f'cuda:{local_rank}')
 
     cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
-    main_threads = max(1, cpus - args.num_workers)
+    main_threads = max(1, min(8, cpus - args.num_workers))
     if rank==0: print("Torch has", main_threads, "threads/task")
     torch.set_num_threads(main_threads)
     torch.set_num_interop_threads(1)
@@ -401,7 +401,7 @@ def run_training(rank, local_rank, world_size, args):
             ## keep track of losses
             tot_loss_tensor += sup_loss.detach()
 
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
             
         ## Validation pass
         encoder.eval()
