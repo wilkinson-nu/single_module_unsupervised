@@ -40,7 +40,7 @@ class BasicBlock(nn.Module):
             self.norm2 = None
             
         if self.enc_act == "relu":
-            self.act_fn = ME.MinkowskiReLU(inplace=True)
+            self.act_fn = ME.MinkowskiReLU(inplace=False)
         if self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
         if self.enc_act == "gelu":
@@ -117,7 +117,7 @@ class Bottleneck(nn.Module):
             self.norm3 = None
 
         if self.enc_act == "relu":
-            self.act_fn = ME.MinkowskiReLU(inplace=True)
+            self.act_fn = ME.MinkowskiReLU(inplace=False)
         if self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
         if self.enc_act == "gelu":
