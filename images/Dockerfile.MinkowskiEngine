@@ -19,7 +19,7 @@ RUN python -m pip install --upgrade pip
 RUN pip install "cuml-cu11" --extra-index-url=https://pypi.nvidia.com \
     && pip install "cupy-cuda11x"
 
-RUN pip install h5py notebook ipykernel tensorboard matplotlib scipy joblib scikit-learn pandas
+RUN pip install 'h5py>=3.16' notebook ipykernel tensorboard matplotlib scipy joblib scikit-learn pandas
 
 ## A GUI for matplotlib
 RUN pip install pyqt5
