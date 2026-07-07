@@ -805,6 +805,133 @@ class BilinearSplatMod:
         
         return unique_coords, summed_feats
 
+class BilinearSplatModFIX:
+    def __init__(self, threshold_min=0.04, threshold_max=0.04):
+        self.threshold_min=threshold_min
+        self.threshold_max=threshold_max
+        
+    def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
+        feats = feats.reshape(-1) # Remove single-dimensional entries from shape
+        
+        # Floor and ceil coordinates for each point
+        x0, y0 = np.floor(coords[:, 1]).astype(int), np.floor(coords[:, 0]).astype(int)
+        x1, y1 = x0 + 1, y0 + 1
+    
+        # Calculate the weights for bilinear interpolation
+        wx1 = coords[:, 1] - x0
+        wx0 = 1 - wx1
+        wy1 = coords[:, 0] - y0
+        wy0 = 1 - wy1
+    
+        # Coordinates for the four corners
+        coords00 = np.stack([y0, x0], axis=-1)
+        coords10 = np.stack([y1, x0], axis=-1)
+        coords01 = np.stack([y0, x1], axis=-1)
+        coords11 = np.stack([y1, x1], axis=-1)
+        
+        # Calculate interpolated feature values for each of the four corners
+        f00 = feats * (wx0 * wy0)
+        f10 = feats * (wx0 * wy1)
+        f01 = feats * (wx1 * wy0)
+        f11 = feats * (wx1 * wy1)
+        
+        # Combine coordinates and features
+        coords_combined = np.vstack([coords00,coords01,coords10,coords11])
+        features_combined = np.concatenate([f00, f01, f10, f11])
+    
+        # Consolidate features at unique coordinates
+        unique_coords, inverse = np.unique(coords_combined, axis=0, return_inverse=True)
+        inverse = inverse.ravel()
+        summed_feats = np.zeros(len(unique_coords), dtype=features_combined.dtype)
+        np.add.at(summed_feats, inverse, features_combined)
+
+        ## Apply the thresholding for each hit separately, not as a global
+        threshold = np.random.uniform(
+            self.threshold_min,
+            self.threshold_max,
+            size=summed_feats.shape[0],
+        )
+        
+        # Create a mask for values above the threshold
+        mask = summed_feats >= threshold
+        
+        # Apply the mask to filter features and coordinates
+        unique_coords = unique_coords[mask]
+        summed_feats = summed_feats[mask]        
+        
+        # Reshape summed_feats to (N, 1)
+        summed_feats = summed_feats.reshape(-1, 1)
+        
+        return unique_coords, summed_feats
+
+## This applies a soft threshold BEFORE the bilinear splat, and then all of the output is kept, no matter what the charge is
+class BilinearSplatPreThreshold:
+    def __init__(self, threshold_min=0.04, threshold_max=0.04):
+        self.threshold_min=threshold_min
+        self.threshold_max=threshold_max
+        
+    def __call__(self, coords, feats):
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+            
+        feats = feats.reshape(-1) # Remove single-dimensional entries from shape
+
+        ## Apply the thresholding before splatting
+        threshold = np.random.uniform(
+            self.threshold_min,
+            self.threshold_max,
+            size=feats.shape[0],
+        )
+                
+        # Create a mask for values above the threshold
+        mask = feats >= threshold
+        
+        # Apply the mask to filter features and coordinates
+        coords = coords[mask]
+        feats = feats[mask]   
+        
+        # Floor and ceil coordinates for each point
+        x0, y0 = np.floor(coords[:, 1]).astype(int), np.floor(coords[:, 0]).astype(int)
+        x1, y1 = x0 + 1, y0 + 1
+    
+        # Calculate the weights for bilinear interpolation
+        wx1 = coords[:, 1] - x0
+        wx0 = 1 - wx1
+        wy1 = coords[:, 0] - y0
+        wy0 = 1 - wy1
+    
+        # Coordinates for the four corners
+        coords00 = np.stack([y0, x0], axis=-1)
+        coords10 = np.stack([y1, x0], axis=-1)
+        coords01 = np.stack([y0, x1], axis=-1)
+        coords11 = np.stack([y1, x1], axis=-1)
+        
+        # Calculate interpolated feature values for each of the four corners
+        f00 = feats * (wx0 * wy0)
+        f10 = feats * (wx0 * wy1)
+        f01 = feats * (wx1 * wy0)
+        f11 = feats * (wx1 * wy1)
+        
+        # Combine coordinates and features
+        coords_combined = np.vstack([coords00,coords01,coords10,coords11])
+        features_combined = np.concatenate([f00, f01, f10, f11])
+    
+        # Consolidate features at unique coordinates
+        unique_coords, inverse = np.unique(coords_combined, axis=0, return_inverse=True)
+        inverse = inverse.ravel()
+        summed_feats = np.zeros(len(unique_coords), dtype=features_combined.dtype)
+        np.add.at(summed_feats, inverse, features_combined)     
+        
+        # Reshape summed_feats to (N, 1)
+        summed_feats = summed_feats.reshape(-1, 1)
+        
+        return unique_coords, summed_feats    
+    
 
 class ExpandedBilinearSplat:
     def __init__(self, threshold=0.04, radius=1):
