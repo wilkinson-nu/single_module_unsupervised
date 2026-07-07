@@ -842,13 +842,26 @@ class BilinearSplatModFIX:
         # Combine coordinates and features
         coords_combined = np.vstack([coords00,coords01,coords10,coords11])
         features_combined = np.concatenate([f00, f01, f10, f11])
-    
-        # Consolidate features at unique coordinates
-        unique_coords, inverse = np.unique(coords_combined, axis=0, return_inverse=True)
-        inverse = inverse.ravel()
-        summed_feats = np.zeros(len(unique_coords), dtype=features_combined.dtype)
-        np.add.at(summed_feats, inverse, features_combined)
 
+        ys = coords_combined[:, 0].astype(np.int64)
+        xs = coords_combined[:, 1].astype(np.int64)
+
+        x_min = xs.min()
+        y_min = ys.min()
+        W = xs.max() - x_min + 1
+
+        hash_vals = (ys - y_min) * W + (xs - x_min)
+
+        # Consolidate features at unique coordinates
+        unique_hashes, inverse = np.unique(hash_vals, return_inverse=True)
+        inverse = inverse.ravel()
+        summed_feats = np.bincount(inverse, weights=features_combined,
+                                   minlength=len(unique_hashes))
+
+        x_dec = (unique_hashes % W) + x_min
+        y_dec = (unique_hashes // W) + y_min
+        unique_coords = np.stack([y_dec, x_dec], axis=-1)
+        
         ## Apply the thresholding for each hit separately, not as a global
         threshold = np.random.uniform(
             self.threshold_min,
@@ -920,13 +933,26 @@ class BilinearSplatPreThreshold:
         # Combine coordinates and features
         coords_combined = np.vstack([coords00,coords01,coords10,coords11])
         features_combined = np.concatenate([f00, f01, f10, f11])
-    
+
+        ys = coords_combined[:, 0].astype(np.int64)
+        xs = coords_combined[:, 1].astype(np.int64)
+
+        x_min = xs.min()
+        y_min = ys.min()
+        W = xs.max() - x_min + 1
+
+        hash_vals = (ys - y_min) * W + (xs - x_min)
+
         # Consolidate features at unique coordinates
-        unique_coords, inverse = np.unique(coords_combined, axis=0, return_inverse=True)
+        unique_hashes, inverse = np.unique(hash_vals, return_inverse=True)
         inverse = inverse.ravel()
-        summed_feats = np.zeros(len(unique_coords), dtype=features_combined.dtype)
-        np.add.at(summed_feats, inverse, features_combined)     
-        
+        summed_feats = np.bincount(inverse, weights=features_combined,
+                                   minlength=len(unique_hashes))
+
+        x_dec = (unique_hashes % W) + x_min
+        y_dec = (unique_hashes // W) + y_min
+        unique_coords = np.stack([y_dec, x_dec], axis=-1)
+                
         # Reshape summed_feats to (N, 1)
         summed_feats = summed_feats.reshape(-1, 1)
         
