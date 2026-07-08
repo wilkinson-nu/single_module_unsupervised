@@ -952,7 +952,12 @@ class BilinearSplatPreThreshold:
         x_dec = (unique_hashes % W) + x_min
         y_dec = (unique_hashes // W) + y_min
         unique_coords = np.stack([y_dec, x_dec], axis=-1)
-                
+
+        ## Apply a second mask to remove small hits
+        mask = summed_feats >= self.threshold_min/4
+        unique_coords = unique_coords[mask]
+        summed_feats = summed_feats[mask]
+        
         # Reshape summed_feats to (N, 1)
         summed_feats = summed_feats.reshape(-1, 1)
         
