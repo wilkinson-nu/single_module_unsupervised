@@ -306,6 +306,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
 	])
+
     if aug_type == "v0prethreshsplat":
         return transforms.Compose([
             aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
@@ -319,6 +320,32 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
 	])
 
+    if aug_type == "v0prethreshsplat0.3":
+        return transforms.Compose([
+            aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            aug.RandomScaleCharge(0.05, p=aug_prob),
+            aug.RandomJitterCharge(0.05, p=aug_prob),
+            LogAlphaCharge(5),
+            aug.BilinearSplatPreThreshold(0.3, 0.3),
+            aug.RandomDropout(0.1, p=aug_prob),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
+        ])
+
+    if aug_type == "v0prethreshsplatsmall":
+        return transforms.Compose([
+            aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            aug.RandomScaleCharge(0.05, p=aug_prob),
+            aug.RandomJitterCharge(0.05, p=aug_prob),
+            LogAlphaCharge(5),
+            aug.BilinearSplatPreThreshold(0.1, 0.25),
+            aug.RandomDropout(0.1, p=aug_prob),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
+        ])
+
     if aug_type == "v0testsplatfix":
         return transforms.Compose([
             aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
@@ -330,7 +357,33 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.BilinearSplatModFIX(0.1, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
-	])    
+	])
+
+    if aug_type == "v0testsplatfix0.3":
+        return transforms.Compose([
+            aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            aug.RandomScaleCharge(0.05, p=aug_prob),
+            aug.RandomJitterCharge(0.05, p=aug_prob),
+            LogAlphaCharge(5),
+            aug.BilinearSplatModFIX(0.3, 0.3),
+            aug.RandomDropout(0.1, p=aug_prob),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
+        ])
+
+    if aug_type == "v0testsplatfixsmall":
+        return transforms.Compose([
+            aug.RandomVerticalFlip(y_max=y_orig, p=0.5),
+            aug.GridJitter(2, 0.1),
+            aug.JitterCoords(0.1),
+            aug.RandomScaleCharge(0.05, p=aug_prob),
+            aug.RandomJitterCharge(0.05, p=aug_prob),
+            LogAlphaCharge(5),
+            aug.BilinearSplatModFIX(0.1, 0.25),
+            aug.RandomDropout(0.1, p=aug_prob),
+            RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
+        ])
     
     if aug_type == "v0ongrid":
         return transforms.Compose([
