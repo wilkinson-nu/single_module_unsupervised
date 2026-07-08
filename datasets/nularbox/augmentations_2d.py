@@ -20,10 +20,13 @@ class RandomCenterCrop:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
-        new_feats = feats.copy()
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
@@ -35,7 +38,7 @@ class RandomCenterCrop:
         mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.new_size[0])) \
              & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.new_size[1]))
                 
-        return new_coords[mask], new_feats[mask]
+        return new_coords[mask], feats[mask]
 
 class ApplyThreshold:
     
@@ -44,6 +47,10 @@ class ApplyThreshold:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         mask = feats.squeeze() >= self.threshold
     
         # Apply the mask to filter features and coordinates
@@ -77,6 +84,10 @@ class RandomCentralRotation2D:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -84,7 +95,7 @@ class RandomCentralRotation2D:
         if np.random.rand() > self.p: return coords, feats
             
         # Generate a random rotation angle
-        angle = np.deg2rad(np.random.normal(loc=0, scale=self.angle))
+        angle = np.deg2rad(np.random.uniform(-self.angle, self.angle))
         fcoords = coords.astype(float)
 
         ## Pick a point close to the center of the original image size to rotate around
@@ -125,6 +136,10 @@ class RandomCentralShear2D:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -132,8 +147,8 @@ class RandomCentralShear2D:
         if np.random.rand() > self.p: return coords, feats
         fcoords = coords.astype(float)
 
-        shear_x = np.random.normal(loc=0, scale=self.sigma_x)
-        shear_y = np.random.normal(loc=0, scale=self.sigma_y)
+        shear_x = np.random.uniform(-self.sigma_x, self.sigma_x)
+        shear_y = np.random.uniform(-self.sigma_y, self.sigma_y)
 
         shear_matrix = np.array([
             [1, shear_x],
@@ -172,6 +187,10 @@ class RandomCentralStretch2D:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -180,8 +199,8 @@ class RandomCentralStretch2D:
         
         # Random scale factors
         fcoords = coords.astype(float)
-        scale_y = np.random.normal(loc=1.0, scale=self.stretch_y)
-        scale_x = np.random.normal(loc=1.0, scale=self.stretch_x)
+        scale_y = np.random.uniform(1-self.stretch_y, 1+self.stretch_y)
+        scale_x = np.random.uniform(1-self.stretch_x, 1+self.stretch_x)
 
         scale_matrix = np.array([
             [scale_y, 0.0],
@@ -205,6 +224,11 @@ class LogAlphaCharge:
         self.alpha = alpha
         
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         Z = np.log10(1.0 + self.alpha*np.maximum(feats, 0.0))/np.log10(1.0 + self.alpha)
         return coords, Z
 
@@ -214,6 +238,10 @@ class LogAlphaChargeRandom:
         self.alpha_max = alpha_max
         
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
         
         this_alpha = np.random.uniform(self.alpha_min,
                                        self.alpha_max)
@@ -272,7 +300,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomGridDistortion2D(100, 3, 2, 10, p=aug_prob),
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
-            LogAlphaChargeRandom(4,6),
+            LogAlphaChLogAlphaChargeRandomargeRandom(4,6),
             aug.BilinearSplatMod(0.1, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
