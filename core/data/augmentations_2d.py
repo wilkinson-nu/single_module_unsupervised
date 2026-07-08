@@ -14,6 +14,10 @@ class CenterCrop:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         coords = coords - np.array([self.pad_y, self.pad_x])
         mask = (coords[:,0] >= 0) & (coords[:,0] < (self.new_y)) \
              & (coords[:,1] >= 0) & (coords[:,1] < (self.new_x))
@@ -28,6 +32,11 @@ class MaxNonZeroCrop:
         self.new_x = new_size[1]
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+
         # Create a 2D histogram to count nonzeros in each pixel
         hist, xedges, yedges = np.histogram2d(coords[:, 1], coords[:, 0],
                                               bins=(self.orig_x, self.orig_y),
@@ -78,9 +87,11 @@ class MaxRegionCrop:
         }
 
     def __call__(self, coords, feats):
-        """
-        Crop the sparse coordinates and features to the region with the most non-zero hits.
-        """
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         max_count = 0
         best_region = None
 
@@ -133,6 +144,10 @@ class FirstRegionCrop:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         use_region = None
 
         # Iterate through predefined regions
@@ -173,7 +188,11 @@ class RandomCrop:
         self.clip = clip
 
     def __call__(self, coords, feats):
-        new_feats = feats.copy()
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
@@ -190,7 +209,7 @@ class RandomCrop:
         mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.new_y)) \
              & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.new_x))
                 
-        return new_coords[mask], new_feats[mask]
+        return new_coords[mask], feats[mask]
 
 class SimpleCrop:
     def __init__(self, max_y, max_x):
@@ -198,7 +217,11 @@ class SimpleCrop:
         self.max_x = max_x
 
     def __call__(self, coords, feats):
-        new_feats = feats.copy()
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
@@ -206,7 +229,7 @@ class SimpleCrop:
         mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.max_y)) \
 	     & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.max_x))
 
-        return new_coords[mask], new_feats[mask]
+        return new_coords[mask], feats[mask]
 
     
     
@@ -216,18 +239,20 @@ class RandomInPlaceHorizontalFlip:
         self.p = p
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
         
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
-        new_coords = coords.copy()
-        
         if np.random.rand() < self.p:
-            min_h = new_coords[:,1].min()
-            max_h = new_coords[:,1].max()
-            new_coords[:,1] = max_h - (new_coords[:,1] - min_h)
+            min_h = coords[:,1].min()
+            max_h = coords[:,1].max()
+            coords[:,1] = max_h - (coords[:,1] - min_h)
 
-        return new_coords,feats
+        return coords,feats
 
 class RandomInPlaceVerticalFlip:
     def __init__(self, p=0.5):
@@ -235,17 +260,19 @@ class RandomInPlaceVerticalFlip:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
-        new_coords = coords.copy()
-
         if np.random.rand() < self.p:
-            min_v = new_coords[:,0].min()
-            max_v = new_coords[:,0].max()
-            new_coords[:,0] = max_v - (new_coords[:,0] - min_v)
+            min_v = coords[:,0].min()
+            max_v = coords[:,0].max()
+            coords[:,0] = max_v - (coords[:,0] - min_v)
 
-        return new_coords,feats
+        return coords,feats
 
 class RandomHorizontalFlip:
     def __init__(self, p=0.5, x_max=256):
@@ -253,16 +280,18 @@ class RandomHorizontalFlip:
         self.x_max = x_max
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
         
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
-        new_coords = coords.copy()
-
         if np.random.rand() < self.p:
-            new_coords[:,1] = self.x_max - new_coords[:,1]
+            coords[:,1] = self.x_max - coords[:,1]
 
-        return new_coords,feats
+        return coords,feats
 
     
 class RandomVerticalFlip:
@@ -272,15 +301,17 @@ class RandomVerticalFlip:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
-        new_coords = coords.copy()
-        
         if np.random.rand() < self.p:
-            new_coords[:,0] = self.y_max - new_coords[:,0]
+            coords[:,0] = (self.y_max-1) - coords[:,0]
 
-        return new_coords,feats
+        return coords,feats
 
     
     
@@ -299,6 +330,10 @@ class RandomRotation2D:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -331,6 +366,10 @@ class RandomShear2D:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
 
@@ -359,6 +398,11 @@ class RandomPixelNoise2D:
         self.image_bounds = image_bounds
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         coords = np.round(coords).astype(np.int32)
 
         # Determine bounds from input data or fixed override
@@ -401,6 +445,10 @@ class RandomBlockZeroImproved:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -433,21 +481,21 @@ class RandomBlockZeroImproved:
 
 class RandomDropout:
     def __init__(self, max_frac=0.1, p=1):
-        self.p = 1
+        self.p = p
         self.max_frac = max_frac
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
-        if coords.shape[0] == 0: return coords, feats
+        N = coords.shape[0]
+        if N == 0: return coords, feats
         
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
-
-        N = coords.shape[0]
-        if N == 0:
-            # Return copies to avoid modifying original
-            return coords.copy(), feats.copy()
 
         # Determine how many points to keep
         frac = np.random.uniform(0.0, self.max_frac)
@@ -457,7 +505,7 @@ class RandomDropout:
         idx = np.random.choice(N, size=k, replace=False)
 
         # Return copies of selected coords and feats
-        return coords[idx].copy(), feats[idx].copy()
+        return coords[idx], feats[idx]
 
 ## This always needs to be done 
 class JitterCoords:
@@ -466,6 +514,10 @@ class JitterCoords:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -483,6 +535,10 @@ class SplitJitterCoords:
         self.coord_jitter = coord_jitter
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
 
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
@@ -507,6 +563,10 @@ class GridJitter:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
         
@@ -523,6 +583,10 @@ class RandomJitterCharge:
 
     def __call__(self,  coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
@@ -554,6 +618,10 @@ class RandomScaleCharge:
 
     def __call__(self,  coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
@@ -571,6 +639,11 @@ class ConstantCharge:
         self.value = value
 
     def __call__(self,  coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+
         new_feats = np.ones_like(feats)
         return coords, new_feats
 
@@ -578,7 +651,7 @@ class ConstantCharge:
 ## Apply distortions in a regular grid, with random strength at each point up to some maximum, smoothed by some amount
 ## Cell size is the size of the distortion grid (in pixels, assumed square)
 ## Distortion strength is the same
-class RandomGridDistortion2D:
+class RandomGridDistortion2DOld:
     def __init__(self, cell_size=50, distortion=5, padding_cells=2, cell_size_jitter=10, p=1):
         self.p = p
         self.cell_size = cell_size
@@ -587,6 +660,10 @@ class RandomGridDistortion2D:
         self.cell_size_jitter = cell_size_jitter
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()        
 
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
@@ -643,6 +720,73 @@ class RandomGridDistortion2D:
 
         return distorted_coords, feats
 
+class RandomGridDistortion2D:
+    def __init__(self, cell_size=50, distortion=5, padding_cells=2, cell_size_jitter=10, p=1):
+        self.p = p
+        self.cell_size = cell_size
+        self.distortion = distortion
+        self.padding_cells = padding_cells
+        self.cell_size_jitter = cell_size_jitter
+
+        assert self.cell_size_jitter < self.cell_size, "cell_size_jitter must be smaller than cell_size"
+
+    def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+
+        ## Guard against empty input
+        if coords.shape[0] == 0: return coords, feats
+
+        # Add some probability to return immediately
+        if np.random.rand() > self.p: return coords, feats
+
+        y_min, y_max = coords[:, 0].min(), coords[:, 0].max()
+        x_min, x_max = coords[:, 1].min(), coords[:, 1].max()
+        height = y_max - y_min + 1
+        width = x_max - x_min + 1
+
+        ## Add some randomness to the grid size
+        cell_size_h = np.random.uniform(self.cell_size-self.cell_size_jitter, self.cell_size+self.cell_size_jitter)
+        cell_size_w = np.random.uniform(self.cell_size-self.cell_size_jitter, self.cell_size+self.cell_size_jitter)
+
+        # Control grid size covering image + padding
+        grid_h_img = max(2, int(np.ceil(height / cell_size_h)))
+        grid_w_img = max(2, int(np.ceil(width / cell_size_w)))
+
+        grid_h = grid_h_img + 2 * self.padding_cells
+        grid_w = grid_w_img + 2 * self.padding_cells
+
+        # Create control grid pixel coords
+        control_y = np.linspace(
+            y_min - self.padding_cells * cell_size_h,
+            y_max + self.padding_cells * cell_size_h,
+            grid_h
+        )
+        control_x = np.linspace(
+            x_min - self.padding_cells * cell_size_w,
+            x_max + self.padding_cells * cell_size_w,
+            grid_w
+        )
+
+        # Random displacement per control point
+        displacement_x = np.random.uniform(-self.distortion, self.distortion, (grid_h, grid_w))
+        displacement_y = np.random.uniform(-self.distortion, self.distortion, (grid_h, grid_w))
+
+        # Normalize coords into control grid index space
+        coords_norm_x = (coords[:, 1] - control_x[0]) / (control_x[-1] - control_x[0]) * (grid_w - 1)
+        coords_norm_y = (coords[:, 0] - control_y[0]) / (control_y[-1] - control_y[0]) * (grid_h - 1)
+
+        # Interpolate the displacement field and add to original coords
+        interp_dx = map_coordinates(displacement_x, [coords_norm_y, coords_norm_x], order=3, mode='nearest')
+        interp_dy = map_coordinates(displacement_y, [coords_norm_y, coords_norm_x], order=3, mode='nearest')
+
+        distorted_coords = coords.astype(float)
+        distorted_coords[:, 0] += interp_dy
+        distorted_coords[:, 1] += interp_dx
+
+        return distorted_coords, feats    
     
 class DoNothing:
     def __call__(self, coords, feats):
@@ -657,7 +801,11 @@ class SemiRandomCrop:
         self.clip_y = clip_y
 
     def __call__(self, coords, feats):
-        new_feats = feats.copy()
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+
         y_round = np.round(coords[:, 0]).astype(np.int32)
         x_round = np.round(coords[:, 1]).astype(np.int32)
         new_coords = np.stack([y_round, x_round], axis=-1)
@@ -682,7 +830,7 @@ class SemiRandomCrop:
         mask = (new_coords[:,0] >= 0) & (new_coords[:,0] < (self.new_y)) \
             & (new_coords[:,1] >= 0) & (new_coords[:,1] < (self.new_x))
         
-        return new_coords[mask], new_feats[mask]
+        return new_coords[mask], feats[mask]
     
         
 
@@ -692,6 +840,10 @@ class BilinearSplat:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
@@ -751,6 +903,10 @@ class BilinearSplatMod:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
@@ -812,6 +968,10 @@ class BilinearSplatModFIX:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
@@ -889,6 +1049,10 @@ class BilinearSplatPreThreshold:
         
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
             
@@ -970,6 +1134,10 @@ class ExpandedBilinearSplat:
         self.radius = int(radius)
 
     def __call__(self, coords, feats):
+
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
         
         ## Guard against empty input
         if coords.shape[0] == 0: return coords, feats
@@ -1024,6 +1192,10 @@ class RandomStretch2D:
 
     def __call__(self, coords, feats):
 
+        ## Ensure no modifications in place, ever
+        coords = coords.copy()
+        feats = feats.copy()
+        
         # Add some probability to return immediately
         if np.random.rand() > self.p: return coords, feats
         
