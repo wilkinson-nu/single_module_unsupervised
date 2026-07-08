@@ -1060,64 +1060,149 @@ class BilinearSplatPreThreshold:
         summed_feats = summed_feats.reshape(-1, 1)
         
         return unique_coords, summed_feats    
-    
 
-class ExpandedBilinearSplat:
-    def __init__(self, threshold=0.04, radius=1):
-        self.threshold = threshold
-        self.radius = int(radius)
+class BilinearSplatReduce:
+    """
+    Bilinear splat to a regular grid with a choice of consolidation ("reduce")
+    strategy for voxels that receive multiple contributions.
+
+    reduce:
+        "sum"           - original behaviour; sums weighted corner contributions.
+                          Physically models coincident charge, but doubles charge
+                          where distinct deposits overlap (compression / diagonal
+                          rotation artifacts).
+        "max"           - keeps the largest weighted contribution per voxel.
+                          Kills doubling, but reintroduces a mild discontinuity at
+                          genuine overlaps (abrupt winner-flip).
+        "mean"          - plain mean of weighted contributions. Continuous, but
+                          faint splat scraps drag down legitimate charges. Fragile.
+        "weighted_mean" - sum(w * f) / sum(w). Continuous, parameter-free, and
+                          faint low-weight scraps barely move numerator or
+                          denominator. Recommended default.
+    """
+
+    def __init__(self,
+                 threshold_min=0.04,
+                 threshold_max=0.04,
+                 reduce="weighted_mean",
+                 weight_gate=0.0):
+        self.threshold_min = threshold_min
+        self.threshold_max = threshold_max
+        self.reduce = reduce
+        # Optional: discard corner contributions whose bilinear weight is below
+        # this value BEFORE consolidation. A pure geometric gate (independent of
+        # the charge-based detector threshold). 0.0 disables it.
+        self.weight_gate = weight_gate
+
+        assert reduce in ("sum", "max", "mean", "weighted_mean"), \
+            f"unknown reduce mode: {reduce}"
 
     def __call__(self, coords, feats):
 
         ## Ensure no modifications in place, ever
         coords = coords.copy()
         feats = feats.copy()
-        
+
         ## Guard against empty input
-        if coords.shape[0] == 0: return coords, feats
-            
-        feats = np.squeeze(feats)
-        x0 = np.floor(coords[:, 1]).astype(int)
-        y0 = np.floor(coords[:, 0]).astype(int)
-        fx = coords[:, 1] - x0
-        fy = coords[:, 0] - y0
+        if coords.shape[0] == 0:
+            return coords, feats
 
-        # All displacements in the local window
-        dx = np.arange(-self.radius, self.radius + 1)
-        dy = np.arange(-self.radius, self.radius + 1)
+        feats = feats.reshape(-1)
 
-        # Broadcast to all pixels in the radius × radius window
-        dx_grid, dy_grid = np.meshgrid(dx, dy, indexing='xy')
-        dx_flat = dx_grid.ravel()
-        dy_flat = dy_grid.ravel()
+        # Floor coordinates for each point (the "00" corner)
+        x0 = np.floor(coords[:, 1]).astype(np.int64)
+        y0 = np.floor(coords[:, 0]).astype(np.int64)
+        x1, y1 = x0 + 1, y0 + 1
 
-        # Compute bilinear weights for each displacement
-        wx = np.clip(1.0 - np.abs(dx_flat[None, :] - fx[:, None]), 0, 1)
-        wy = np.clip(1.0 - np.abs(dy_flat[None, :] - fy[:, None]), 0, 1)
-        w = wx * wy  # shape: (N_points, n_disp)
+        # Bilinear weights
+        wx1 = coords[:, 1] - x0
+        wx0 = 1.0 - wx1
+        wy1 = coords[:, 0] - y0
+        wy0 = 1.0 - wy1
 
-        # Compute displaced coordinates
-        cx = x0[:, None] + dx_flat[None, :]
-        cy = y0[:, None] + dy_flat[None, :]
+        # Per-corner geometric weights and their integer coords
+        w00 = wx0 * wy0
+        w10 = wx0 * wy1
+        w01 = wx1 * wy0
+        w11 = wx1 * wy1
 
-        # Flatten everything
-        coords_all = np.stack([cy.ravel(), cx.ravel()], axis=-1)
-        feats_all = (feats[:, None] * w).ravel()
+        coords00 = np.stack([y0, x0], axis=-1)
+        coords10 = np.stack([y1, x0], axis=-1)
+        coords01 = np.stack([y0, x1], axis=-1)
+        coords11 = np.stack([y1, x1], axis=-1)
 
-        # Consolidate features at unique coordinates
-        unique_coords, indices = np.unique(coords_all, axis=0, return_inverse=True)
-        summed_feats = np.zeros(len(unique_coords))
-        np.add.at(summed_feats, indices, feats_all)
+        # Stack all four corners of every hit into flat arrays
+        coords_combined = np.vstack([coords00, coords01, coords10, coords11])
+        weights_combined = np.concatenate([w00, w01, w10, w11])
+        # The underlying (pre-weight) hit charge, tiled once per corner
+        charge_combined = np.concatenate([feats, feats, feats, feats])
+        # The weighted contribution (what "sum" historically accumulated)
+        contrib_combined = weights_combined * charge_combined
 
-        # Apply threshold and reshape
-        mask = summed_feats >= self.threshold
+        # Optional geometric gate: drop negligible corner contributions before
+        # consolidation so they cannot distort a mean.
+        if self.weight_gate > 0.0:
+            keep = weights_combined >= self.weight_gate
+            coords_combined = coords_combined[keep]
+            weights_combined = weights_combined[keep]
+            charge_combined = charge_combined[keep]
+            contrib_combined = contrib_combined[keep]
+
+        if coords_combined.shape[0] == 0:
+            return (np.empty((0, 2), dtype=coords.dtype),
+                    np.empty((0, 1), dtype=float))
+
+        ys = coords_combined[:, 0]
+        xs = coords_combined[:, 1]
+
+        x_min = xs.min()
+        y_min = ys.min()
+        W = xs.max() - x_min + 1
+
+        hash_vals = (ys - y_min) * W + (xs - x_min)
+
+        unique_hashes, inverse = np.unique(hash_vals, return_inverse=True)
+        inverse = inverse.ravel()
+        n_out = len(unique_hashes)
+
+        # --- Consolidation: the one knob that differs between modes ---
+        if self.reduce == "sum":
+            out_feats = np.bincount(inverse, weights=contrib_combined,
+                                    minlength=n_out)
+
+        elif self.reduce == "mean":
+            num = np.bincount(inverse, weights=contrib_combined, minlength=n_out)
+            cnt = np.bincount(inverse, minlength=n_out)
+            out_feats = num / np.maximum(cnt, 1)
+
+        elif self.reduce == "weighted_mean":
+            num = np.bincount(inverse, weights=contrib_combined, minlength=n_out)
+            den = np.bincount(inverse, weights=weights_combined, minlength=n_out)
+            out_feats = num / np.maximum(den, 1e-12)
+
+        elif self.reduce == "max":
+            # np.maximum.at scatters an elementwise max into out_feats
+            out_feats = np.zeros(n_out, dtype=float)
+            np.maximum.at(out_feats, inverse, contrib_combined)
+
+        # Decode integer coords from hashes
+        x_dec = (unique_hashes % W) + x_min
+        y_dec = (unique_hashes // W) + y_min
+        unique_coords = np.stack([y_dec, x_dec], axis=-1)
+
+        # Per-voxel random threshold on the consolidated charge
+        threshold = np.random.uniform(
+            self.threshold_min,
+            self.threshold_max,
+            size=out_feats.shape[0],
+        )
+        mask = out_feats >= threshold
+
         unique_coords = unique_coords[mask]
-        summed_feats = summed_feats[mask].reshape(-1, 1)
+        out_feats = out_feats[mask].reshape(-1, 1)
 
-        return unique_coords, summed_feats
-
-
-
+        return unique_coords, out_feats
+    
 class RandomStretch2D:
     def __init__(self, stretch_y=0.06, stretch_x=0.06, p=1):
         self.p = p
