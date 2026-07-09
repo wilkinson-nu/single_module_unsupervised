@@ -11,50 +11,62 @@ from collections import OrderedDict
 
 class paired_2d_dataset_ME(Dataset):
 
-    def __init__(self, infile_dir, nom_transform, aug_transform=None, max_events=None, max_open=9999):
+    def __init__(self, infile_dir, nom_transform, aug_transform=None,
+                 max_events=None, projection="xz", max_open=9999):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
         self.file_indices = []
         self.nom_transform = nom_transform
         self.aug_transform = aug_transform
         self.max_events = max_events
 
+        ## 'xz', 'xy', or 'xyz'
+        self.proj = projection
+
         ## For lazily caching files
         self.max_open = max_open
         self._handles = OrderedDict()
-        
+
+        ## file_index -> offsets array for self.proj
+        self._offsets = {}
+
         ## Sort out the file map
         self.create_file_indices()
 
         ## Apply some limitation to the size
         if self.max_events and max_events < self.length:
             self.length = self.max_events
-
             
     def create_file_indices(self):
         cumulative_size = 0
-
+        
         for file in self.hdf5_files:
             self.file_indices.append(cumulative_size)
-            with h5py.File(file, 'r', libver='latest') as f:            
+            with h5py.File(file, 'r', libver='latest') as f:
                 cumulative_size += f.attrs['N']
-
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
     def _get_file(self, file_index):
-        # Lazily open and cache handles (inside forked worker)
         h = self._handles.get(file_index)
         if h is not None:
-            self._handles.move_to_end(file_index)   # LRU touch
+            self._handles.move_to_end(file_index)
             return h
-        h = h5py.File(self.hdf5_files[file_index], 'r',
-                      libver='latest', rdcc_nbytes=0)
+        f = h5py.File(self.hdf5_files[file_index], 'r', libver='latest', rdcc_nbytes=0)
+        # Cache the dataset objects once, not per __getitem__
+        dsets = {}
+        for name in (f'{self.proj}_data', f'{self.proj}_row', f'{self.proj}_col',
+                     'xyz_data', 'xyz_coords', 'labels', 'event_id'):
+            if name in f:
+                dsets[name] = f[name]
+        h = {'file': f, 'dsets': dsets}
         self._handles[file_index] = h
+        self._offsets[file_index] = f[f'{self.proj}_offsets'][:]
         if len(self._handles) > self.max_open:
-            _, old = self._handles.popitem(last=False)
-            old.close()
+            old_idx, old = self._handles.popitem(last=False)
+            old['file'].close()
+            self._offsets.pop(old_idx, None)
         return h
-        
+
     def apply_aug_with_retry(self, coords, feats, max_retries=100):
         for _ in range(max_retries):
             out_coords, out_feats = self.aug_transform(coords, feats)
@@ -69,19 +81,22 @@ class paired_2d_dataset_ME(Dataset):
     def __getitem__(self,idx):
         file_index = bisect(self.file_indices, idx)-1
         this_idx = idx - self.file_indices[file_index]
-        file_path = self.hdf5_files[file_index]
-
         f = self._get_file(file_index)
-        group = f[str(this_idx)]
-        data = group['data_xz'][:]
-        row  = group['row_xz'][:]
-        col  = group['col_xz'][:]
-
-        ## Use the format that ME requires
+        off = self._offsets[file_index]
+        s, e = int(off[this_idx]), int(off[this_idx + 1])
+    
+        d = f['dsets']
+        
         ## Note that we can't build the sparse tensor here because ME uses some sort of global indexing
         ## And this function is replicated * num_workers
-        raw_coords = np.vstack((row, col)).T
-        raw_feats = data.reshape(-1, 1)  # Reshape data to be of shape (N, 1)
+        if self.proj == 'xyz':
+            raw_feats = d['xyz_data'][s:e].reshape(-1, 1)
+            raw_coords = d['xyz_coords'][s:e]
+        else:
+            raw_feats = d[f'{self.proj}_data'][s:e].reshape(-1, 1)
+            row = d[f'{self.proj}_row'][s:e]
+            col = d[f'{self.proj}_col'][s:e]
+            raw_coords = np.vstack((row, col)).T
         
         ## Apply transforms to augment the data
         if not self.aug_transform:
@@ -96,6 +111,7 @@ class paired_2d_dataset_ME(Dataset):
 
         return aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats
 
+    
 def triple_ME_collate_fn(batch):
     aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats = zip(*batch)
 
@@ -197,7 +213,6 @@ class single_2d_dataset_ME(Dataset):
         return self.length
 
     def __getitem__(self,idx):
-    
         file_index = bisect(self.file_indices, idx)-1
         this_idx = idx - self.file_indices[file_index]
         f = self._get_file(file_index)
