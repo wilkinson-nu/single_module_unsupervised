@@ -568,7 +568,7 @@ if __name__ == '__main__':
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_init_stem_stride', type=int, default=2)
     parser.add_argument('--enc_final_stem_stride', type=int, default=2)
-    parser.add_argument('--enc_stem_pool', type=int, choices=[0,1], default=0)
+    parser.add_argument('--enc_stem_pool', type=str, default='none')
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_final_linear', type=int, default=-1)
