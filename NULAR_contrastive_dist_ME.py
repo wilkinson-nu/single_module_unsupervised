@@ -1,7 +1,5 @@
-## This file trains a simple encoder with a contrastive loss. It should work with any number of GPUs distributed across nodes
 import numpy as np
 import argparse
-from torch import optim
 import sys
 import MinkowskiEngine as ME
 import torch
@@ -11,7 +9,6 @@ from collections import defaultdict
 
 ## The parallelisation libraries
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch import nn
@@ -28,8 +25,9 @@ from core.analysis.metrics import argmax_consistency, uniformity, alignment, sim
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
-from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat, print_affinity
 import psutil, os
+from threadpoolctl import threadpool_limits
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
@@ -38,9 +36,6 @@ from torch.utils.tensorboard import SummaryWriter
 SEED=12345
 _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
-
-torch.set_num_threads(8)
-torch.set_num_interop_threads(8)
 
 ## Import transformations
 from core.data.augmentations_2d import DoNothing
@@ -66,6 +61,11 @@ def print_model_summary(model):
             total_params += param.numel()
     print("Total parameters =", total_params)
 
+def worker_init_fn(worker_id):
+    threadpool_limits(limits=1)
+    seed = torch.initial_seed() % 2**32
+    np.random.seed(seed)
+    
 def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
     dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -73,18 +73,14 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
                                              batch_size=batch_size,
                                              shuffle=False,  # Set to False, as DistributedSampler handles shuffling
                                              num_workers=num_workers,
+                                             worker_init_fn=worker_init_fn,
                                              drop_last=True,
-                                             persistent_workers=False,
+                                             persistent_workers=True,
                                              prefetch_factor=2,
                                              sampler=sampler)
     return dataloader
 
     
-def manage_cuda_memory(rank, gpu_threshold):
-    """Check and clear GPU memory if it exceeds the threshold."""
-    if torch.cuda.memory_allocated(rank) > gpu_threshold:
-        torch.cuda.empty_cache()
-
 def load_pretrained(encoder, heads, file_name):
     checkpoint = torch.load(file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
@@ -152,28 +148,39 @@ def get_dataset(args, rank=0):
 
 
 ## Wrapped training function
-def run_training(rank, world_size, args):
-
-    ME.set_sparse_tensor_operation_mode(
-        ME.SparseTensorOperationMode.SHARE_COORDINATE_MANAGER)
-    
-    torch.autograd.set_detect_anomaly(False)
-    ## For timing
-    tstart = time.time()
+def run_training(rank, local_rank, world_size, args):
 
     ## For parallel work
     setup(rank, world_size)
-    ## Need a local device
-    torch.cuda.set_device(rank)
-    device = torch.device(f'cuda:{rank}')
+    ## Need a local device (allowing multiple nodes)
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f'cuda:{local_rank}')
 
+    cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+    main_threads = max(1, min(8, cpus - args.num_workers))
+    if rank==0: print("Torch has", main_threads, "threads/task")
+    torch.set_num_threads(main_threads)
+    torch.set_num_interop_threads(1)
+
+    ## A debugging test
+    print_affinity(rank, local_rank, world_size)
+    dist.barrier()
+
+    if bool(args.run_profiler) and rank==0:
+        torch.cuda.set_sync_debug_mode("warn")
+
+    torch.autograd.set_detect_anomaly(False)
+    
+    ## For timing
+    tstart = time.time()
+    
     ## Setup the encoder
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
     encoder_nchan_instance = encoder.get_nchan_instance()
     encoder_nchan_cluster = encoder.get_nchan_cluster()
     encoder .to(device)
-    encoder = DDP(encoder, device_ids=[rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
+    encoder = DDP(encoder, device_ids=[local_rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
     ## Dictionary of heads
     heads = {}
@@ -185,7 +192,7 @@ def run_training(rank, world_size, args):
     proj_head = get_projhead(encoder_nchan_instance, args)
     proj_head = nn.SyncBatchNorm.convert_sync_batchnorm(proj_head)
     proj_head.to(device)
-    proj_head = DDP(proj_head, device_ids=[rank])
+    proj_head = DDP(proj_head, device_ids=[local_rank])
     heads["proj"] = proj_head
     loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
     
@@ -193,7 +200,7 @@ def run_training(rank, world_size, args):
     if args.clust_arch != "none":
         clust_head = get_clusthead(encoder_nchan_cluster, args)
         clust_head .to(device)
-        clust_head = DDP(clust_head, device_ids=[rank])
+        clust_head = DDP(clust_head, device_ids=[local_rank])
         heads["clust"] = clust_head
     
         if args.sharpened_cluster_loss == 0:
@@ -203,7 +210,7 @@ def run_training(rank, world_size, args):
         
     ## Set up the distributed dataset
     train_dataset = get_dataset(args, rank)
-    train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, 6)
+    train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, args.num_workers)
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -303,7 +310,7 @@ def run_training(rank, world_size, args):
             
             ## Send to the device, then make the sparse tensors
             cat_bcoords = cat_bcoords.to(device, non_blocking=True)
-            cat_bfeats  = cat_bfeats .to(device)
+            cat_bfeats  = cat_bfeats .to(device, non_blocking=True)
             cat_batch   = ME.SparseTensor(cat_bfeats, cat_bcoords, device=device)
 
             ## Now do the forward passes
@@ -328,7 +335,7 @@ def run_training(rank, world_size, args):
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
                     buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=True))
-                    buffer_proj.append(proj_batch.detach().to("cpu", non_blocking=True))
+                    buffer_proj.append(proj_batch.detach().to("cpu", non_blocking=False))
                     
             ## Optionally deal with clustering loss
             if "clust" in heads:
@@ -358,8 +365,6 @@ def run_training(rank, world_size, args):
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
-
-            ME.clear_global_coordinate_manager()
             
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
@@ -466,9 +471,23 @@ def run_training(rank, world_size, args):
             print(f"Time taken: {(time.time()-tstart):.2f}")
             
         ## For checkpointing
-        if rank==0 and iteration%25 == 0 and iteration != 0:
-            save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
+        #if rank==0 and iteration%25 == 0 and iteration != 0:
+        #    save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
 
+        ## Add per GPU logging
+        allocated_gb = torch.tensor(torch.cuda.memory_allocated() / 1e9, device=device)
+        reserved_gb  = torch.tensor(torch.cuda.memory_reserved()  / 1e9, device=device)
+        peak_alloc_gb = torch.tensor(torch.cuda.max_memory_allocated() / 1e9, device=device)
+        torch.cuda.reset_peak_memory_stats()
+
+        all_allocated  = [torch.zeros(1, device=device) for _ in range(world_size)]
+        all_reserved   = [torch.zeros(1, device=device) for _ in range(world_size)]
+        all_peak_alloc = [torch.zeros(1, device=device) for _ in range(world_size)]
+        
+        dist.all_gather(all_allocated,  allocated_gb.unsqueeze(0))
+        dist.all_gather(all_reserved,   reserved_gb.unsqueeze(0))
+        dist.all_gather(all_peak_alloc, peak_alloc_gb.unsqueeze(0))
+            
         ## Enhanced logging
         if rank == 0:
             vm = psutil.virtual_memory()
@@ -485,7 +504,11 @@ def run_training(rank, world_size, args):
             log_scalar(writer, metrics, 'syst_monitor/mem_pressure', vm.available / vm.total, iteration)
             log_scalar(writer, metrics, 'syst_monitor/first_batch_latency', first_batch_latency, iteration)
 
-            
+            for gpu_rank in range(world_size):
+                log_scalar(writer, metrics, f'syst_monitor/gpu{gpu_rank}_allocated_gb',  all_allocated[gpu_rank].item(),  iteration)
+                log_scalar(writer, metrics, f'syst_monitor/gpu{gpu_rank}_reserved_gb',   all_reserved[gpu_rank].item(),   iteration)
+                log_scalar(writer, metrics, f'syst_monitor/gpu{gpu_rank}_peak_alloc_gb', all_peak_alloc[gpu_rank].item(), iteration)
+                
     ## Final version of the model
     if rank==0:
         save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
@@ -495,8 +518,8 @@ def run_training(rank, world_size, args):
     if bool(args.run_profiler) and rank == 0:
         prof.__exit__(None, None, None)
         
-        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
-        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=100))
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
         
     ## Clear things up
     dist.destroy_process_group()
@@ -515,9 +538,7 @@ if __name__ == '__main__':
     parser.add_argument('--state_file', type=str)
     parser.add_argument('--pretrained', type=str, default=None)
     parser.add_argument('--nstep', type=int, default=200)
-    
-    ## World size is the number of GPUs
-    parser.add_argument('--world_size', type=int)
+    parser.add_argument('--num_workers', type=int, default=8)
 
     ## Training dynamics
     parser.add_argument('--lr', type=float)
@@ -526,26 +547,32 @@ if __name__ == '__main__':
     parser.add_argument('--scheduler', type=str, default=None)
     parser.add_argument('--lars_trust_coeff', type=float, default=0.01)
     parser.add_argument('--lars_momentum', type=float, default=0.9)
-    parser.add_argument('--enc_act', type=str, default="silu")
     parser.add_argument('--dropout', type=float, default=0)
-    parser.add_argument('--aug_type', type=str, default=None)
-    parser.add_argument('--aug_prob', type=float, default=1)
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--weight_decay_final', type=float, default=-1)
     parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
     parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
     
+    ## Image size and augmentations
+    parser.add_argument('--out_image_size', type=int, default=256)
+    parser.add_argument('--aug_type', type=str, default=None)
+    parser.add_argument('--aug_prob', type=float, default=1)
+    parser.add_argument('--aug_val', type=float)
+
     ## Encoder architecture choices
+    parser.add_argument('--enc_act', type=str, default="relu")
     parser.add_argument('--enc_arch', type=str, default=None)
     parser.add_argument('--enc_arch_pool', type=str, default="avg")
     parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_init_stem_stride', type=int, default=2)
+    parser.add_argument('--enc_final_stem_stride', type=int, default=2)
     parser.add_argument('--enc_stem_pool', type=int, choices=[0,1], default=0)
     parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
     parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
-    # parser.add_argument('--enc_arch_final_linear', type=int, default=512)
+    parser.add_argument('--enc_final_linear', type=int, default=-1)
+    parser.add_argument('--enc_stem_channels', type=int, default=-1)
 
     ## (Optional) clustering head
     parser.add_argument('--clust_arch', type=str, default="none")
@@ -573,10 +600,14 @@ if __name__ == '__main__':
     # Parse arguments from command line
     args = parser.parse_args()
 
-    ## Report arguments
-    for arg in vars(args): print(arg, getattr(args, arg))
+    ## Note global and local ranks to allow multi-node training
+    rank       = int(os.environ["SLURM_PROCID"])
+    local_rank = int(os.environ["SLURM_LOCALID"])
+    world_size = int(os.environ["SLURM_NTASKS"])
     
-    mp.spawn(run_training,
-             args=(args.world_size, args),
-             nprocs=args.world_size,
-             join=True)
+    ## Report arguments (but only rank 0)
+    if rank==0:
+        for arg in vars(args): print(arg, getattr(args, arg))
+
+    ## Removed mp.spawn, now requires srun
+    run_training(rank, local_rank, world_size, args)
