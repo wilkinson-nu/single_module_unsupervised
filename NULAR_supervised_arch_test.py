@@ -24,7 +24,7 @@ from core.analysis.metrics import uniformity, alignment, basic_geometry_metrics
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
-from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat, print_affinity
 import psutil, os
 from threadpoolctl import threadpool_limits
 
@@ -169,45 +169,6 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metri
         state_dict[f'{name}_head_state_dict'] = head.module.state_dict()
 
     torch.save(state_dict, state_file_name)
-
-
-def print_affinity(rank, local_rank, world_size):
-    import subprocess
-
-    # Cores this process is actually allowed to run on (post-binding).
-    try:
-        # sched_getaffinity is the ground truth for the current process.
-        allowed = sorted(os.sched_getaffinity(0))
-    except AttributeError:
-        allowed = None  # not available on all platforms
-
-    # Compact the core list into ranges for readable output, e.g. [0-15].
-    def compact(cores):
-        if not cores:
-            return "unknown"
-        ranges, start, prev = [], cores[0], cores[0]
-        for c in cores[1:]:
-            if c == prev + 1:
-                prev = c
-            else:
-                ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
-                start = prev = c
-        ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
-        return ",".join(ranges)
-
-    gpu_id = torch.cuda.current_device()
-    gpu_name = torch.cuda.get_device_name(gpu_id)
-    node = os.environ.get("SLURMD_NODENAME", "?")
-
-    msg = (
-        f"[rank {rank:2d} | local {local_rank} | world {world_size}] "
-        f"node={node} "
-        f"gpu=cuda:{gpu_id} ({gpu_name}) "
-        f"ncores={len(allowed) if allowed else '?'} "
-        f"cores=[{compact(allowed)}]"
-    )
-    # flush so lines from all ranks aren't buffered/interleaved oddly.
-    print(msg, flush=True)
     
 
 ## Wrapped training function
@@ -233,6 +194,7 @@ def run_training(rank, local_rank, world_size, args):
         torch.cuda.set_sync_debug_mode("warn")
 
     torch.autograd.set_detect_anomaly(False)
+    
     ## For timing
     tstart = time.time()
     
@@ -542,8 +504,9 @@ def run_training(rank, local_rank, world_size, args):
                         log_scalar(writer, metrics, f'acc/val_{name}_class{c}_acc', val, iteration)
             
         ## For checkpointing
-        if rank==0 and iteration%25 == 0 and iteration != 0:
-            save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
+
+        #if rank==0 and iteration%25 == 0 and iteration != 0:
+        #    save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
 
         ## Add per GPU logging
         allocated_gb = torch.tensor(torch.cuda.memory_allocated() / 1e9, device=device)
