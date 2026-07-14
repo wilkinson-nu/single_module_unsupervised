@@ -135,7 +135,7 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metri
 def get_dataset(args, rank=0):
 
     ## Get the augmentation from the argument name
-    aug_transform = get_transform('256x256', args.aug_type, args.aug_prob)
+    aug_transform = get_transform(args.out_image_size, args.aug_type, args.aug_prob, getattr(args, "aug_val", None))
     
     ## Get the concrete dataset
     data_dataset = paired_2d_dataset_ME(args.data_dir, \
@@ -177,8 +177,8 @@ def run_training(rank, local_rank, world_size, args):
     ## Setup the encoder
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
-    encoder_nchan_instance = encoder.get_nchan_instance()
-    encoder_nchan_cluster = encoder.get_nchan_cluster()
+    encoder_nchan_instance = encoder.get_nchan()
+    encoder_nchan_cluster = encoder.get_nchan()
     encoder .to(device)
     encoder = DDP(encoder, device_ids=[local_rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
@@ -318,10 +318,11 @@ def run_training(rank, local_rank, world_size, args):
 
             ## L2 norm the encoder
             if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
-                           
+
             ## Deal with the projection loss
             proj_batch = heads["proj"](encoded_batch)
             proj_loss = loss_fns["proj"](proj_batch)*instance_scale
+                
             tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
 
