@@ -399,7 +399,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
             LogAlphaCharge(5),
-            aug.BilinearSplatReduce(0.1, 0.4),
+            aug.BilinearSplatReduce(0.25, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
         ])
@@ -413,7 +413,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
             LogAlphaCharge(5),
-            aug.BilinearSplatReduce(0.1, 0.4),
+            aug.BilinearSplatReduce(0.25, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
         ])
@@ -427,7 +427,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
             LogAlphaCharge(5),
-            aug.BilinearSplatReduce(0.1, 0.4),
+            aug.BilinearSplatReduce(0.25, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
         ])
@@ -441,7 +441,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
             LogAlphaCharge(5),
-            aug.BilinearSplatReduce(0.1, 0.4),
+            aug.BilinearSplatReduce(0.25, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
         ])
@@ -454,7 +454,7 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
             aug.RandomScaleCharge(0.05, p=aug_prob),
             aug.RandomJitterCharge(0.05, p=aug_prob),
             LogAlphaChargeRandom(4,6),
-            aug.BilinearSplatReduce(0.1, 0.4),
+            aug.BilinearSplatReduce(0.25, 0.4),
             aug.RandomDropout(0.1, p=aug_prob),
             RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 10),
         ])
