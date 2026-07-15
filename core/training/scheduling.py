@@ -89,7 +89,10 @@ def build_param_groups(encoder,
     ## sort out weight scheduler logic
     weight_sched = weight_decay_final > 0
     head_weight_decay = weight_decay if weight_decay_head else 0.0
-            
+
+    print("Parameter groups:")
+    print(f"enc: {len(enc_params)}, omit: {len(omit_params)}, head: {len(head_params)}")
+    
     return [
         {"params": enc_params,  "weight_decay": weight_decay,      "weight_sched": weight_sched},
         {"params": omit_params, "weight_decay": 0.0,               "weight_sched": False, "lars_exclude": True},
