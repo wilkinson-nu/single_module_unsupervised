@@ -238,7 +238,7 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Sort out the optimizer (one for each GPU...)
     nstep_total = nbatches*args.nstep
-    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nbatches*args.nstep)
+    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nbatches*args.nstep, world_size)
     
     ## Set up metrics
     metrics = defaultdict(list)
@@ -455,9 +455,9 @@ def run_training(rank, local_rank, world_size, args):
                 log_scalar(writer, metrics, f'acc/{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
                 log_scalar(writer, metrics, f'acc/{name}_mae',                m['mae'],                iteration)
                 log_scalar(writer, metrics, f'acc/{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
-                for c, val in enumerate(m['per_class_acc']):
-                    if not math.isnan(val):
-                        log_scalar(writer, metrics, f'acc/{name}_class{c}_acc', val, iteration)
+                ## for c, val in enumerate(m['per_class_acc']):
+                ##     if not math.isnan(val):
+                ##         log_scalar(writer, metrics, f'acc/{name}_class{c}_acc', val, iteration)
                 
             ## Add metrics for debugging/training diagnostics
             log_scalar(writer, metrics, 'monitor/enc_alignment', av_enc_align, iteration)

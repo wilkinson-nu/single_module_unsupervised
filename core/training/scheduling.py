@@ -3,7 +3,7 @@ import math
 from torch import optim
 from core.training.lars import LARS, LARS_LRScheduler
 
-def get_opt_and_sched(args, encoder, heads, total_steps):
+def get_opt_and_sched(args, encoder, heads, total_steps, world_size):
 
     lr_scheduler = None
     wd_scheduler = None
@@ -18,7 +18,7 @@ def get_opt_and_sched(args, encoder, heads, total_steps):
     
     ## Sort out the optimizer (one for each GPU...)
     if args.optimizer == 'lars':
-        corr_lr = args.lr * (args.batch_size*args.world_size / 256)
+        corr_lr = args.lr * (args.batch_size*world_size / 256)
         optimizer = LARS(
             param_groups,
             lr=corr_lr,
