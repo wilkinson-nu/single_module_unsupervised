@@ -4,6 +4,7 @@ import sys
 import MinkowskiEngine as ME
 import torch
 import time
+#torch.cuda.memory._set_allocator_settings('expandable_segments:True,roundup_power2_divisions:8')
 import math
 from collections import defaultdict
 
@@ -45,12 +46,14 @@ from datasets.nularbox.augmentations_2d import get_transform
 from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
 
 ## For parallelising things
-def setup(rank, world_size):
+def setup_dist(rank, local_rank, world_size):
+    torch.cuda.set_device(local_rank)    
     dist.init_process_group(
         backend='nccl',
         init_method='env://',
         world_size=world_size,
-        rank=rank
+        rank=rank,
+        device_id=torch.device(f"cuda:{local_rank}"),
     )
 
 def print_model_summary(model):
@@ -151,9 +154,7 @@ def get_dataset(args, rank=0):
 def run_training(rank, local_rank, world_size, args):
 
     ## For parallel work
-    setup(rank, world_size)
-    ## Need a local device (allowing multiple nodes)
-    torch.cuda.set_device(local_rank)
+    setup_dist(rank, local_rank, world_size)
     device = torch.device(f'cuda:{local_rank}')
 
     cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
@@ -195,7 +196,7 @@ def run_training(rank, local_rank, world_size, args):
     proj_head = DDP(proj_head, device_ids=[local_rank])
     heads["proj"] = proj_head
     loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
-    
+        
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
         clust_head = get_clusthead(encoder_nchan_cluster, args)
@@ -229,7 +230,7 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Sort out the optimizer (one for each GPU...)
     nstep_total = nbatches*args.nstep
-    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nbatches*args.nstep, world_size)
+    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nstep_total, world_size)
     
     ## Set up metrics
     metrics = defaultdict(list)
@@ -335,7 +336,7 @@ def run_training(rank, local_rank, world_size, args):
             ## Get a few batches for calculating the running deff
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
-                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=True))
+                    buffer_enc .append(encoded_batch.detach().to("cpu", non_blocking=False))
                     buffer_proj.append(proj_batch.detach().to("cpu", non_blocking=False))
                     
             ## Optionally deal with clustering loss
@@ -366,7 +367,7 @@ def run_training(rank, local_rank, world_size, args):
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
-            
+
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
 
@@ -546,7 +547,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=512)
     parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--scheduler', type=str, default=None)
-    parser.add_argument('--lars_trust_coeff', type=float, default=0.01)
+    parser.add_argument('--lars_trust_coeff', type=float, default=0.001)
     parser.add_argument('--lars_momentum', type=float, default=0.9)
     parser.add_argument('--dropout', type=float, default=0)
     parser.add_argument('--weight_decay', type=float, default=0)
