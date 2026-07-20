@@ -31,10 +31,11 @@ def log_grad_rms(module, tag, writer, iteration):
     for name, p in module.named_parameters():
         if p.grad is None:
             continue
-        total += p.grad.pow(2).mean()
-        count += 1
+        total += p.grad.pow(2).sum()
+        count += p.grad.numel()
 
-    mean_rms = (total / count).sqrt()
+    if count == 0: return
+    mean_rms = (total / count).sqrt().item()
     writer.add_scalar(f'grads/{tag}/mean_grad_rms', mean_rms, iteration)
     return
 
@@ -55,3 +56,23 @@ def log_grad_over_wgt(module, tag, writer, iteration, eps=1e-12):
     ratio = (g2.sqrt() / (w2.sqrt() + eps)).item()
     writer.add_scalar(f'grads/{tag}/sum_grad_over_wgt', ratio, iteration)
     return
+
+@torch.no_grad()
+def log_weight_norm(module, tag, writer, iteration):
+    if writer is None: return
+    device = next(module.parameters()).device
+    total = torch.zeros((), device=device)
+    count = 0
+    for name, p in module.named_parameters():
+        if not p.requires_grad:
+            continue
+        total += p.pow(2).sum()
+        count += p.numel()
+
+    if count == 0: return
+
+    # global weight L2 norm and element-weighted RMS
+    weight_l2 = total.sqrt().item()
+    weight_rms = (total / count).sqrt().item()
+    writer.add_scalar(f'weights/{tag}/l2', weight_l2, iteration)
+    writer.add_scalar(f'weights/{tag}/rms', weight_rms, iteration)
