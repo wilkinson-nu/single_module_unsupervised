@@ -4,7 +4,7 @@ import sys
 import MinkowskiEngine as ME
 import torch
 import time
-#torch.cuda.memory._set_allocator_settings('expandable_segments:True,roundup_power2_divisions:8')
+import datetime
 import math
 from collections import defaultdict
 
@@ -23,7 +23,7 @@ from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
-from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
+from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat, print_affinity
@@ -53,6 +53,7 @@ def setup_dist(rank, local_rank, world_size):
         init_method='env://',
         world_size=world_size,
         rank=rank,
+        timeout=datetime.timedelta(minutes=30),
         device_id=torch.device(f"cuda:{local_rank}"),
     )
 
@@ -419,11 +420,13 @@ def run_training(rank, local_rank, world_size, args):
             log_grad_norm(encoder.module, "encoder", writer, iteration)
             log_grad_rms(encoder.module, "encoder", writer, iteration)
             log_grad_over_wgt(encoder.module, "encoder", writer, iteration)
-
+            log_weight_norm(encoder.module, "encoder", writer, iteration)
+            
             log_grad_norm(heads["proj"].module, "proj", writer, iteration)
             log_grad_rms(heads["proj"].module, "proj", writer, iteration)
             log_grad_over_wgt(heads["proj"].module, "proj", writer, iteration)
-
+            log_weight_norm(heads["proj"].module, "proj", writer, iteration)
+            
             ## Eigenvalue debugging
             log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
             log_scalar(writer, metrics, "eigen/proj_deff", proj_geom["deff"], iteration)
@@ -458,7 +461,7 @@ def run_training(rank, local_rank, world_size, args):
                 log_grad_norm(heads["clust"].module, "clust", writer, iteration)
                 log_grad_rms(heads["clust"].module, "clust", writer, iteration)
                 log_grad_over_wgt(heads["clust"].module, "clust", writer, iteration)
-
+                log_weight_norm(heads["clust"].module, "clust", writer, iteration)
                 
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
@@ -522,8 +525,10 @@ def run_training(rank, local_rank, world_size, args):
         
         print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=100))
         print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
-        
+
     ## Clear things up
+    torch.cuda.synchronize()
+    dist.barrier()
     dist.destroy_process_group()
 
     
