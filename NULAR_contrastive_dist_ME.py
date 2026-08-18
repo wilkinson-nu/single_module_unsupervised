@@ -96,13 +96,17 @@ def load_pretrained(encoder, heads, file_name):
             head.module.load_state_dict(checkpoint[key])
     return
 
-def load_checkpoint(encoder, heads, optimizer, state_file_name):
+def load_checkpoint(encoder, heads, optimizer, scheduler, state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')
     encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     torch.set_rng_state(checkpoint['rng_state'].cpu())
     torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
 
+    ## If we have a scheduler, load it
+    if 'scheduler_state_dict' in checkpoint and scheduler is not None:
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    
     ## Load heads as requested
     for	name, head in heads.items():
         key = f'{name}_head_state_dict'
@@ -116,7 +120,7 @@ def load_checkpoint(encoder, heads, optimizer, state_file_name):
 
     return start_epoch, metrics
 
-def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metrics, args):
+def save_checkpoint(encoder, heads, optimizer, scheduler, state_file_name, iteration, metrics, args):
 
     state_dict = {
         'epoch': iteration,
@@ -128,6 +132,10 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metri
         'args':vars(args)
     }
 
+    ## Save a scheduler if we have one
+    if scheduler is not None:
+        state_dict['scheduler_state_dict'] = scheduler.state_dict()
+    
     ## Save heads as needed:
     for name, head in heads.items():
         state_dict[f'{name}_head_state_dict'] = head.module.state_dict()
@@ -201,6 +209,7 @@ def run_training(rank, local_rank, world_size, args):
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
         clust_head = get_clusthead(encoder_nchan_cluster, args)
+        clust_head = nn.SyncBatchNorm.convert_sync_batchnorm(clust_head)
         clust_head .to(device)
         clust_head = DDP(clust_head, device_ids=[local_rank])
         heads["clust"] = clust_head
@@ -242,7 +251,8 @@ def run_training(rank, local_rank, world_size, args):
         if not args.state_file:
             if rank==0: print("Restart requested, but no state file provided, aborting")
             sys.exit()
-        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, args.state_file)
+        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, scheduler, args.state_file)
+        global_iter = start_iteration*nbatches
         if rank==0: print("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
@@ -300,7 +310,7 @@ def run_training(rank, local_rank, world_size, args):
         first_batch_latency = None
         for cat_bcoords, cat_bfeats, this_batch_size in train_loader:
 
-            if first_batch_latency == None:
+            if first_batch_latency is None:
                 first_batch_latency = time.time() - t0
 
             ## Update weight decay to allow for scheduling
@@ -516,7 +526,7 @@ def run_training(rank, local_rank, world_size, args):
                 
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
+        save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file, iteration, metrics, args)
         if log_dir: writer.close()
 
     ## Report profiler if requested
