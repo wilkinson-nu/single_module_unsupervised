@@ -224,7 +224,7 @@ def run_training(rank, local_rank, world_size, args):
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
-    num_iterations = args.nstep
+    num_iterations = args.nepoch
     log_dir = args.log
     instance_scale = args.instance_scale
     clip_gradients = bool(args.clip_gradients)
@@ -238,7 +238,7 @@ def run_training(rank, local_rank, world_size, args):
         writer = SummaryWriter(log_dir=log_dir)
 
     ## Sort out the optimizer (one for each GPU...)
-    nstep_total = nbatches*args.nstep
+    nstep_total = nbatches*args.nepoch
     optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nstep_total, world_size)
     
     ## Set up metrics
@@ -553,7 +553,7 @@ if __name__ == '__main__':
     parser.add_argument('--log', type=str, default=None)    
     parser.add_argument('--state_file', type=str)
     parser.add_argument('--pretrained', type=str, default=None)
-    parser.add_argument('--nstep', type=int, default=200)
+    parser.add_argument('--nepoch', type=int, default=200)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--seed', type=int, default=12345)
     
