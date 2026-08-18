@@ -33,11 +33,6 @@ from threadpoolctl import threadpool_limits
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
 
-## Seeding
-SEED=12345
-_=np.random.seed(SEED)
-_=torch.manual_seed(SEED)
-
 ## Import transformations
 from core.data.augmentations_2d import DoNothing
 from datasets.nularbox.augmentations_2d import get_transform
@@ -69,6 +64,7 @@ def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
     seed = torch.initial_seed() % 2**32
     np.random.seed(seed)
+    random.seed(seed)
     
 def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
@@ -164,6 +160,9 @@ def run_training(rank, local_rank, world_size, args):
 
     ## For parallel work
     setup_dist(rank, local_rank, world_size)
+    torch.manual_seed(args.seed + rank)
+    np.random.seed(args.seed + rank)
+    random.seed(args.seed + rank)
     device = torch.device(f'cuda:{local_rank}')
 
     cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
@@ -556,7 +555,8 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str, default=None)
     parser.add_argument('--nstep', type=int, default=200)
     parser.add_argument('--num_workers', type=int, default=8)
-
+    parser.add_argument('--seed', type=int, default=12345)
+    
     ## Training dynamics
     parser.add_argument('--lr', type=float)
     parser.add_argument('--batch_size', type=int, default=512)
