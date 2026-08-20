@@ -8,11 +8,12 @@ import datetime
 import math
 import random
 from collections import defaultdict
+from functools import partial
 
 ## The parallelisation libraries
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -41,6 +42,11 @@ from datasets.nularbox.augmentations_2d import get_transform
 ## Import dataset
 from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
 
+## Supervised for kNN monitoring
+from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
+from core.supervised import ClassificationMetrics
+from core.analysis.knn_monitoring import MONITOR_LABELS, extract_features, knn_votes
+
 ## For parallelising things
 def setup_dist(rank, local_rank, world_size):
     torch.cuda.set_device(local_rank)    
@@ -67,22 +73,95 @@ def worker_init_fn(worker_id):
     np.random.seed(seed)
     random.seed(seed)
     
-def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
-    sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
-    dataloader = torch.utils.data.DataLoader(train_dataset,
-                                             collate_fn=cat_ME_collate_fn,
-                                             batch_size=batch_size,
-                                             shuffle=False,  # Set to False, as DistributedSampler handles shuffling
-                                             num_workers=num_workers,
-                                             worker_init_fn=worker_init_fn,
-                                             drop_last=True,
-                                             persistent_workers=True,
-                                             prefetch_factor=2,
-                                             sampler=sampler)
-    return dataloader
+def get_training_dataloader(args, rank, world_size):
 
-def get_training_and_monitoring_dataloaders(args, rank, world_size):
-    return
+    ## Get the augmentation from the argument name
+    aug_transform = get_transform(args.out_image_size,
+                                  args.aug_type,
+                                  args.aug_prob,
+                                  getattr(args, "aug_val", None))
+    
+    ## Get the concrete dataset
+    dataset = paired_2d_dataset_ME(args.data_dir, 
+                                   nom_transform=DoNothing(),
+                                   aug_transform=aug_transform,
+                                   max_events=args.nevents)
+
+    ## Make sure we have sufficient events
+    assert len(dataset) >= args.nevents
+    if rank==0: print(f"Loaded {len(dataset)} training events")
+
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
+    dataloader = DataLoader(train_dataset,
+                            collate_fn=cat_ME_collate_fn,
+                            batch_size=args.batch_size,
+                            shuffle=False,  # Set to False, as DistributedSampler handles shuffling
+                            num_workers=args.num_workers,
+                            worker_init_fn=worker_init_fn,
+                            drop_last=True,
+                            persistent_workers=True,
+                            prefetch_factor=2,
+                            sampler=sampler)
+    
+    return dataset, dataloader
+
+
+def get_monitoring_dataloaders(args, rank, world_size):
+
+    ## Get a default "no augmentation" set to crop to the right size image
+    nom_transform = get_transform(args.out_image_size,
+                                  "no_aug")
+    
+    ## Get the full dataset for monitoring...
+    dataset_full = single_2d_dataset_ME(args.data_dir, 
+                                        transform=nom_transform, 
+                                        max_events=args.nevents + args.nbank + args.nquery)
+
+    ## Make sure we have enough events available
+    assert len(dataset_full) > args.nevents + args.nbank + args.nquery
+    
+    ## ... and drop the events used for training
+    bank_indices = list(range(args.nevents, args.nevents + args.nbank))
+    query_indices = list(range(args.nevents + args.nbank, args.nevents + args.nbank + args.nquery))
+
+    test_dataset = Subset(test_dataset_full, test_indices)
+
+    if rank==0: print(f"Loaded {args.nbank} bank and {args.nquery} events for monitoring")
+
+    ## Get the concrete dataset
+    bank_dataset = Subset(dataset_full, bank_indices)
+    query_dataset = Subset(dataset_full, query_indices)
+
+    bank_sampler = DistributedSampler(bank_dataset, num_replicas=world_size, rank=rank, shuffle=False)
+    query_sampler = DistributedSampler(bank_dataset, num_replicas=world_size, rank=rank, shuffle=False)
+    
+    ## Slightly hacky way to manipulate the labels
+    collate_fn = partial(solo_labelled_collate_fn,
+                         label_clamp=LABEL_CLAMP,
+                         derived_labels=DERIVED_LABELS)
+    
+    bank_dataloader = DataLoader(bank_dataset,
+                                 collate_fn=collate_fn,
+                                 batch_size=args.batch_size,
+                                 shuffle=False,
+                                 num_workers=args.num_workers,
+                                 worker_init_fn=worker_init_fn,
+                                 drop_last=True,
+                                 persistent_workers=True,
+                                 prefetch_factor=2,
+                                 sampler=bank_sampler)
+    query_dataloader = DataLoader(query_dataset,
+                                  collate_fn=collate_fn,
+                                  batch_size=args.batch_size,
+                                  shuffle=False,
+                                  num_workers=args.num_workers,
+                                  worker_init_fn=worker_init_fn,
+                                  drop_last=True,
+                                  persistent_workers=True,
+                                  prefetch_factor=2,
+                                  sampler=query_sampler)
+    return bank_dataloader, query_dataloader
+
     
 def load_pretrained(encoder, heads, file_name):
     checkpoint = torch.load(file_name, map_location='cpu')
@@ -142,22 +221,6 @@ def save_checkpoint(encoder, heads, optimizer, scheduler, state_file_name, itera
     torch.save(state_dict, state_file_name)
 
 
-## Function to deal with all of the dataset handling
-def get_dataset(args, rank=0):
-
-    ## Get the augmentation from the argument name
-    aug_transform = get_transform(args.out_image_size, args.aug_type, args.aug_prob, getattr(args, "aug_val", None))
-    
-    ## Get the concrete dataset
-    data_dataset = paired_2d_dataset_ME(args.data_dir, \
-                                        nom_transform=DoNothing(), \
-                                        aug_transform=aug_transform, \
-                                        max_events=args.nevents)
-    if rank==0: print("Training with", args.nevents, "data events!")
-    
-    return data_dataset
-
-
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
 
@@ -203,7 +266,7 @@ def run_training(rank, local_rank, world_size, args):
     ## Set up head and loss for projection space
     proj_head = get_projhead(encoder_nchan_instance, args)
     proj_head = nn.SyncBatchNorm.convert_sync_batchnorm(proj_head)
-    proj_head.to(device)
+    proj_head .to(device)
     proj_head = DDP(proj_head, device_ids=[local_rank])
     heads["proj"] = proj_head
     loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
@@ -222,8 +285,8 @@ def run_training(rank, local_rank, world_size, args):
             loss_fns["clust"] = SharpenedClusterLoss(args.clust_temp, 0.05, args.entropy_scale)
         
     ## Set up the distributed dataset
-    train_dataset = get_dataset(args, rank)
-    train_loader = get_dataloader(rank, world_size, train_dataset, args.batch_size, args.num_workers)
+    train_dataset, train_loader = get_training_dataloader(args, rank, world_size)
+    bank_loader, query_loader = get_monitoring_dataloaders(args, rank, world_size)
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -246,6 +309,11 @@ def run_training(rank, local_rank, world_size, args):
     
     ## Set up metrics
     metrics = defaultdict(list)
+
+    ## Setup kNN monitoring
+    knn_metrics = ClassificationMetrics(
+    {n: {'n_classes': c, 'weight': 1.0} for n, c in MONITOR_LABELS.items()},
+    device=device)
     
     ## Load the checkpoint if one has been given
     start_iteration = 0
@@ -415,7 +483,24 @@ def run_training(rank, local_rank, world_size, args):
         ## Other geometry calculations
         enc_geom = simclr_geometry_metrics(buffer_enc, device, norm_encoder)
         proj_geom = simclr_geometry_metrics(buffer_proj, device, True)
-        
+
+        ## kNN monitoring
+        knn_results = None
+        if iteration % args.knn_every == 0:
+            knn_tstart = time.time()
+            bank_f, bank_l = extract_features(encoder, bank_loader,  device, MONITOR_LABELS)
+            qry_f,  qry_l  = extract_features(encoder, query_loader, device, MONITOR_LABELS)
+            
+            knn_metrics.reset()
+            votes = {n: knn_votes(qry_f, bank_f, bank_l[n], c,
+                                  k=args.knn_k, T=args.knn_T)
+                     for n, c in MONITOR_LABELS.items()}
+            knn_metrics.update(votes, qry_l)
+            ## NB: no .reduce() -- every rank holds the full gathered bank and query,
+            ## so the result is already global. Reducing would multiply counts by world_size.
+            knn_results = knn_metrics.compute()
+            print(f"kNN time taken: {(time.time()-knn_tstart):.2f}")
+            
         ## Reporting, but only for rank 0
         if rank==0:
             metrics["iteration"].append(iteration)
@@ -479,6 +564,13 @@ def run_training(rank, local_rank, world_size, args):
                 log_grad_rms(heads["clust"].module, "clust", writer, iteration)
                 log_grad_over_wgt(heads["clust"].module, "clust", writer, iteration)
                 log_weight_norm(heads["clust"].module, "clust", writer, iteration)
+
+            if knn_results is not None:
+                for name, m in knn_results.items():
+                    log_scalar(writer, metrics, f'knn/{name}_accuracy',           m['accuracy'],           iteration)
+                    log_scalar(writer, metrics, f'knn/{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
+                    log_scalar(writer, metrics, f'knn/{name}_mae',                m['mae'],                iteration)
+                    log_scalar(writer, metrics, f'knn/{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
                 
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
@@ -616,6 +708,13 @@ if __name__ == '__main__':
     parser.add_argument('--latent', type=int, default=128)
     parser.add_argument('--nhidden', type=int, default=512)
 
+    ## kNN monitoring options
+    parser.add_argument('--n_bank',    type=int, default=50000)
+    parser.add_argument('--n_query',   type=int, default=10000)
+    parser.add_argument('--knn_every', type=int, default=1)
+    parser.add_argument('--knn_k',     type=int, default=20)
+    parser.add_argument('--knn_T',     type=float, default=0.1)
+    
     ## Restart option
     parser.add_argument('--restart', action='store_true')
 
