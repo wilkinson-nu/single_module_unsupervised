@@ -257,6 +257,14 @@ def get_transform(image_size=256, aug_type=None, aug_prob=1, aug_val=None):
     x_orig=512
     y_orig=512
 
+    ## This crops to the expected size, but without any uncertainty
+    if aug_type == "no_aug":
+       return transforms.Compose([
+           LogAlphaCharge(5),
+           ApplyThreshold(0.3),
+           RandomCenterCrop([y_orig,x_orig], [y_max,x_max], [256, 192], 0)
+       ]) 
+    
     ## This is the minimum augmentation possible
     if aug_type == "minaug":
         return transforms.Compose([
