@@ -21,7 +21,6 @@ def uniformity(z, t=2):
     masked_sum = (vals * mask).sum()
     masked_cnt = mask.sum()
     return torch.log(masked_sum / masked_cnt)
-# return torch.log(torch.exp(-t * sq_pdist)[mask].mean())
     
 @torch.no_grad()
 def argmax_consistency(c_cat):
@@ -36,7 +35,7 @@ def argmax_consistency(c_cat):
 
 
 @torch.no_grad()
-def simclr_geometry_metrics(buffer, device):
+def geometry_metrics(buffer, device, normalize=True, sim_stats=True):
 
     '''
     Each element in buffer is the concatenation of the two views in a batch
@@ -44,109 +43,100 @@ def simclr_geometry_metrics(buffer, device):
     '''
 
     dim = buffer[0].shape[1]
+    ssum = torch.zeros(dim, dtype=torch.float64, device=device)
+    smat = torch.zeros(dim, dim, dtype=torch.float64, device=device)
     cov = torch.zeros(dim, dim, device=device)
     n = 0
     
     ## Keep track of values
     pos_buffer = []
     neg_buffer = []
-    
+    negmean_buffer = []
+
+    ## For gathering
+    world = dist.get_world_size()
+
     ## loop over buffer
     for emb_cat_cpu in buffer:
 
-        emb_cat = emb_cat_cpu.to(device)
+        z_cat = emb_cat_cpu.to(device)
         
-        batch_size = emb_cat.shape[0]//2
-        z_cat = emb_cat / (emb_cat.norm(dim=1, keepdim=True) + 1e-8)
-        z_i, z_j = z_cat[:batch_size], z_cat[batch_size:]
+        B = z_cat.shape[0]//2
 
-        z_i_all = torch.cat(GatherLayer.apply(z_i), dim=0)
-        z_j_all = torch.cat(GatherLayer.apply(z_j), dim=0)
-        total_batch = z_i_all.shape[0]
+        ## Optionally normalize
+        if normalize: z_cat = z_cat / (z_cat.norm(dim=1, keepdim=True) + 1e-8)
+
+        ## Gather from all GPUs
+        gi = [torch.zeros_like(z[:B]) for _ in range(world)]
+        gj = [torch.zeros_like(z[B:]) for _ in range(world)]
+        dist.all_gather(gi, z[:B].contiguous())
+        dist.all_gather(gj, z[B:].contiguous())
+        z_i_all, z_j_all = torch.cat(gi), torch.cat(gj)
+        N = z_i_all.shape[0]
         z_all = torch.cat([z_i_all, z_j_all], dim=0)
         
         #######################
         ### Geometry metrics ##
         #######################
 
-        sim = torch.mm(z_all, z_all.t())
-        mask = torch.eye(2*total_batch, device=z_all.device, dtype=torch.bool)
-        sim.masked_fill_(mask, -float("inf"))
-
-        idx = torch.arange(2*total_batch, device=z_all.device)
-        pos_idx = (idx + total_batch) % (2*total_batch)
-        pos_buffer .append(sim[idx, pos_idx])
-
-        ## Now modify sim for calculating hard negatives
-        sim[idx, pos_idx] = -float("inf")
-        neg_buffer .append(sim.max(dim=1).values)
-
+        if sim_stats:
+            sim = z_all @ z_all.t()
+            idx = torch.arange(2*N, device=device)
+            pos_idx = (idx + N) % (2*N)
+            pos_buffer .append(sim[idx, pos_idx].clone())
+            
+            ## Now modify sim for calculating hard negatives
+            sim.fill_diagonal_(-float("inf"))
+            sim[idx, pos_idx] = -float("inf")
+            neg_buffer .append(sim.max(dim=1).values)
+            finite = sim[sim > -float("inf")]
+            negmean_buffer.append(finite.mean())
+            del sim
+        
         #######################
         # Effective dimension #
         #######################
-        
-        z_all = z_all - z_all.mean(dim=0, keepdim=True)
-        cov += z_all.T @ z_all
-        n += z_all.shape[0]
 
+        zd = z_all.double()
+        ssum += zd.sum(0)
+        smat += zd.T @ zd
+        n += zd.shape[0]
+        
     ## Now calculate the covariance info
-    cov = cov / (n - 1)
+    mu = ssum / n
+    cov = (smat - n * torch.outer(mu, mu)) / (n - 1)
     eigvals = torch.linalg.eigvalsh(cov)
     deff = (eigvals.sum() ** 2) / (eigvals.pow(2).sum())
-    lambda1_ratio = eigvals.max() / eigvals.sum()
+    l1_ratio = eigvals.max() / eigvals.sum()
 
-    ## Calculate the SimCLR geometry values
-    all_pos = torch.cat(pos_buffer, dim=0)
-    all_neg = torch.cat(neg_buffer, dim=0)        
-    gap = all_pos - all_neg
-    pos_mean = all_pos.mean()
-    neg_mean = all_neg.mean()
-    gap_mean = gap.mean()
-    gap_std  = gap.std(unbiased=False)
+    ## RankMe
+    s = eig.sqrt()
+    p = s / s.sum() + 1e-7
+    rankme = torch.exp(-(p * p.log()).sum())
 
-    return {"pos": pos_mean.item(),
-            "hard_neg": neg_mean.item(),
-            "gap": gap_mean.item(),
-            "gap_std": gap_std.item(),
-            "deff": deff.item(),
-            "l1_ratio": lambda1_ratio.item(),
-            "eigvals": eigvals.flip(0)[:10].cpu()
-            }
+    ## Return without sim_stats
+    out = {"deff": deff.item(),
+           "rankme": rankme.item(),
+           "l1_ratio": (eig.max() / eig.sum()).item(),
+           "eigvals": eig.flip(0)[:10].cpu()}
 
+    if sim_stats:
+        ## Calculate the SimCLR geometry values
+        all_pos = torch.cat(pos_buffer, dim=0)
+        all_neg = torch.cat(neg_buffer, dim=0)
+        all_meanneg = torch.cat(negmean_buffer, dim=0)
+        gap = all_pos - all_neg
 
-@torch.no_grad()
-def basic_geometry_metrics(buffer, device):
-    dim = buffer[0].shape[1]
+        out.update({"pos": all_pos.mean().item(),
+                    "hard_neg": all_neg.mean().item(),
+                    "mean_neg": all_meanneg.mean().item()
+                    "gap": gap.mean().item(),
+                    "gap_std": gap.std(unbiased=False).item(),
+                    })
+    return out
 
-    emb_all = torch.cat(buffer, dim=0).to(device, non_blocking=True)
-    z = emb_all / (emb_all.norm(dim=1, keepdim=True) + 1e-8)   # normalize once
+def simclr_geometry_metrics(buffer, device, normalize=True):
+    return geometry_metrics(buffer, device, normalize, sim_stats=True)
 
-    # global mean across all samples and GPUs
-    sum_z = z.sum(dim=0)
-    n = z.shape[0]
-    if dist.is_initialized():
-        dist.all_reduce(sum_z, op=dist.ReduceOp.SUM)
-        n_tensor = torch.zeros((), device=device, dtype=torch.float32)
-        n_tensor += n
-        dist.all_reduce(n_tensor, op=dist.ReduceOp.SUM)
-        n = n_tensor.item()   # one unavoidable sync, fine — runs once
-
-    global_mean = sum_z / n
-
-    # covariance
-    zc = z - global_mean
-    cov = zc.T @ zc
-    if dist.is_initialized():
-        dist.all_reduce(cov, op=dist.ReduceOp.SUM)
-    cov = cov / (n - 1)
-
-    eigvals = torch.linalg.eigvalsh(cov)   # on GPU
-
-    deff = (eigvals.sum()**2) / (eigvals.pow(2).sum())
-    lambda1_ratio = eigvals.max() / eigvals.sum()
-
-    return {
-        "deff": deff.item(),
-        "l1_ratio": lambda1_ratio.item(),
-        "eigvals": eigvals.flip(0)[:10].cpu(),
-    }
+def basic_geometry_metrics(buffer, device, normalize=True):
+    return geometry_metrics(buffer, device, normalize, sim_stats=False)
