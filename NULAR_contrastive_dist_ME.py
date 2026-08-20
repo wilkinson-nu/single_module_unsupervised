@@ -80,6 +80,8 @@ def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=8):
                                              sampler=sampler)
     return dataloader
 
+def get_training_and_monitoring_dataloaders(args, rank, world_size):
+    return
     
 def load_pretrained(encoder, heads, file_name):
     checkpoint = torch.load(file_name, map_location='cpu')
@@ -410,8 +412,8 @@ def run_training(rank, local_rank, world_size, args):
         av_clust_align = total_clust_align_tensor.item() / (nbatches * world_size)
 
         ## Other geometry calculations
-        enc_geom = simclr_geometry_metrics(buffer_enc, device)
-        proj_geom = simclr_geometry_metrics(buffer_proj, device)
+        enc_geom = simclr_geometry_metrics(buffer_enc, device, norm_encoder)
+        proj_geom = simclr_geometry_metrics(buffer_proj, device, True)
         
         ## Reporting, but only for rank 0
         if rank==0:
@@ -439,6 +441,9 @@ def run_training(rank, local_rank, world_size, args):
             ## Eigenvalue debugging
             log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
             log_scalar(writer, metrics, "eigen/proj_deff", proj_geom["deff"], iteration)
+
+            log_scalar(writer, metrics, "eigen/enc_rankme", enc_geom["rankme"], iteration)
+            log_scalar(writer, metrics, "eigen/proj_rankme", proj_geom["rankme"], iteration)            
             
             log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_geom["l1_ratio"], iteration)
             log_scalar(writer, metrics, "eigen/proj_l1_ratio", proj_geom["l1_ratio"], iteration)
@@ -450,11 +455,13 @@ def run_training(rank, local_rank, world_size, args):
 
             log_scalar(writer, metrics, 'monitor/enc_pos', enc_geom["pos"], iteration)
             log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_geom["hard_neg"], iteration)
+            log_scalar(writer, metrics, 'monitor/enc_mean_neg', enc_geom["mean_neg"], iteration)
             log_scalar(writer, metrics, 'monitor/enc_gap', enc_geom["gap"], iteration)
             log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_geom["gap_std"], iteration)
             
             log_scalar(writer, metrics, 'monitor/proj_pos', proj_geom["pos"], iteration)
             log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_geom["hard_neg"], iteration)
+            log_scalar(writer, metrics, 'monitor/proj_mean_neg', proj_geom["hard_neg"], iteration)            
             log_scalar(writer, metrics, 'monitor/proj_gap', proj_geom["gap"], iteration)
             log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_geom["gap_std"], iteration)
                 
