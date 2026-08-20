@@ -5,6 +5,7 @@ import MinkowskiEngine as ME
 import torch
 import time
 import math
+import random
 from collections import defaultdict
 from functools import partial
 
@@ -423,7 +424,7 @@ def run_training(rank, local_rank, world_size, args):
 
         ## Other geometry calculations
         with torch.no_grad():
-            enc_geom = basic_geometry_metrics(buffer_enc, device)
+            enc_geom = basic_geometry_metrics(buffer_enc, device, norm_encoder)
 
         ## Sort out the metrics (needs to be on all ranks due to collective ops)
         clf_metrics.reduce()
@@ -474,6 +475,7 @@ def run_training(rank, local_rank, world_size, args):
 
             ## Eigenvalue debugging
             log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
+            log_scalar(writer, metrics, "eigen/rankme_deff", enc_geom["rankme"], iteration)
             log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_geom["l1_ratio"], iteration)
             
             for i,val in enumerate(enc_geom["eigvals"]):
