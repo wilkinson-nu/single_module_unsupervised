@@ -6,6 +6,7 @@ import torch
 import time
 import datetime
 import math
+import random
 from collections import defaultdict
 
 ## The parallelisation libraries

@@ -67,10 +67,10 @@ def geometry_metrics(buffer, device, normalize=True, sim_stats=True):
         if normalize: z_cat = z_cat / (z_cat.norm(dim=1, keepdim=True) + 1e-8)
 
         ## Gather from all GPUs
-        gi = [torch.zeros_like(z[:B]) for _ in range(world)]
-        gj = [torch.zeros_like(z[B:]) for _ in range(world)]
-        dist.all_gather(gi, z[:B].contiguous())
-        dist.all_gather(gj, z[B:].contiguous())
+        gi = [torch.zeros_like(z_cat[:B]) for _ in range(world)]
+        gj = [torch.zeros_like(z_cat[B:]) for _ in range(world)]
+        dist.all_gather(gi, z_cat[:B].contiguous())
+        dist.all_gather(gj, z_cat[B:].contiguous())
         z_i_all, z_j_all = torch.cat(gi), torch.cat(gj)
         N = z_i_all.shape[0]
         z_all = torch.cat([z_i_all, z_j_all], dim=0)
@@ -110,26 +110,26 @@ def geometry_metrics(buffer, device, normalize=True, sim_stats=True):
     l1_ratio = eigvals.max() / eigvals.sum()
 
     ## RankMe
-    s = eig.sqrt()
+    s = eigvals.sqrt()
     p = s / s.sum() + 1e-7
     rankme = torch.exp(-(p * p.log()).sum())
 
     ## Return without sim_stats
     out = {"deff": deff.item(),
            "rankme": rankme.item(),
-           "l1_ratio": (eig.max() / eig.sum()).item(),
-           "eigvals": eig.flip(0)[:10].cpu()}
+           "l1_ratio": (eigvals.max() / eigvals.sum()).item(),
+           "eigvals": eigvals.flip(0)[:10].cpu()}
 
     if sim_stats:
         ## Calculate the SimCLR geometry values
         all_pos = torch.cat(pos_buffer, dim=0)
         all_neg = torch.cat(neg_buffer, dim=0)
-        all_meanneg = torch.cat(negmean_buffer, dim=0)
+        all_meanneg = torch.stack(negmean_buffer)
         gap = all_pos - all_neg
 
         out.update({"pos": all_pos.mean().item(),
                     "hard_neg": all_neg.mean().item(),
-                    "mean_neg": all_meanneg.mean().item()
+                    "mean_neg": all_meanneg.mean().item(),
                     "gap": gap.mean().item(),
                     "gap_std": gap.std(unbiased=False).item(),
                     })
