@@ -41,6 +41,7 @@ from datasets.nularbox.augmentations_2d import get_transform
 
 ## Import dataset
 from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
+from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 
 ## Supervised for kNN monitoring
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
@@ -92,7 +93,7 @@ def get_training_dataloader(args, rank, world_size):
     if rank==0: print(f"Loaded {len(dataset)} training events")
 
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
-    dataloader = DataLoader(train_dataset,
+    dataloader = DataLoader(dataset,
                             collate_fn=cat_ME_collate_fn,
                             batch_size=args.batch_size,
                             shuffle=False,  # Set to False, as DistributedSampler handles shuffling
@@ -111,29 +112,31 @@ def get_monitoring_dataloaders(args, rank, world_size):
     ## Get a default "no augmentation" set to crop to the right size image
     nom_transform = get_transform(args.out_image_size,
                                   "no_aug")
+
+    ## Rounding to make sure everything is cleanly divisible into the number of ranks
+    nbank = (args.knn_nbank // world_size) * world_size
+    nquery = (args.knn_nquery // world_size) * world_size
     
     ## Get the full dataset for monitoring...
     dataset_full = single_2d_dataset_ME(args.data_dir, 
                                         transform=nom_transform, 
-                                        max_events=args.nevents + args.nbank + args.nquery)
+                                        max_events=args.nevents + nbank + nquery)
 
     ## Make sure we have enough events available
-    assert len(dataset_full) > args.nevents + args.nbank + args.nquery
+    assert len(dataset_full) >= args.nevents + nbank + nquery
     
     ## ... and drop the events used for training
-    bank_indices = list(range(args.nevents, args.nevents + args.nbank))
-    query_indices = list(range(args.nevents + args.nbank, args.nevents + args.nbank + args.nquery))
+    bank_indices = list(range(args.nevents, args.nevents + nbank))
+    query_indices = list(range(args.nevents + nbank, args.nevents + nbank + nquery))
 
-    test_dataset = Subset(test_dataset_full, test_indices)
-
-    if rank==0: print(f"Loaded {args.nbank} bank and {args.nquery} events for monitoring")
+    if rank==0: print(f"Loaded {nbank} bank and {nquery} events for monitoring")
 
     ## Get the concrete dataset
     bank_dataset = Subset(dataset_full, bank_indices)
     query_dataset = Subset(dataset_full, query_indices)
 
     bank_sampler = DistributedSampler(bank_dataset, num_replicas=world_size, rank=rank, shuffle=False)
-    query_sampler = DistributedSampler(bank_dataset, num_replicas=world_size, rank=rank, shuffle=False)
+    query_sampler = DistributedSampler(query_dataset, num_replicas=world_size, rank=rank, shuffle=False)
     
     ## Slightly hacky way to manipulate the labels
     collate_fn = partial(solo_labelled_collate_fn,
@@ -144,9 +147,9 @@ def get_monitoring_dataloaders(args, rank, world_size):
                                  collate_fn=collate_fn,
                                  batch_size=args.batch_size,
                                  shuffle=False,
-                                 num_workers=args.num_workers,
+                                 num_workers=2,
                                  worker_init_fn=worker_init_fn,
-                                 drop_last=True,
+                                 drop_last=False,
                                  persistent_workers=True,
                                  prefetch_factor=2,
                                  sampler=bank_sampler)
@@ -154,9 +157,9 @@ def get_monitoring_dataloaders(args, rank, world_size):
                                   collate_fn=collate_fn,
                                   batch_size=args.batch_size,
                                   shuffle=False,
-                                  num_workers=args.num_workers,
+                                  num_workers=2,
                                   worker_init_fn=worker_init_fn,
-                                  drop_last=True,
+                                  drop_last=False,
                                   persistent_workers=True,
                                   prefetch_factor=2,
                                   sampler=query_sampler)
@@ -709,8 +712,8 @@ if __name__ == '__main__':
     parser.add_argument('--nhidden', type=int, default=512)
 
     ## kNN monitoring options
-    parser.add_argument('--n_bank',    type=int, default=50000)
-    parser.add_argument('--n_query',   type=int, default=10000)
+    parser.add_argument('--knn_nbank',    type=int, default=50000)
+    parser.add_argument('--knn_nquery',   type=int, default=10000)
     parser.add_argument('--knn_every', type=int, default=1)
     parser.add_argument('--knn_k',     type=int, default=20)
     parser.add_argument('--knn_T',     type=float, default=0.1)
