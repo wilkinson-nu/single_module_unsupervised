@@ -502,7 +502,7 @@ def run_training(rank, local_rank, world_size, args):
             ## NB: no .reduce() -- every rank holds the full gathered bank and query,
             ## so the result is already global. Reducing would multiply counts by world_size.
             knn_results = knn_metrics.compute()
-            print(f"kNN time taken: {(time.time()-knn_tstart):.2f}")
+            # print(f"kNN time taken: {(time.time()-knn_tstart):.2f}")
             
         ## Reporting, but only for rank 0
         if rank==0:
