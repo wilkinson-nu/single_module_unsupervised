@@ -707,6 +707,7 @@ if __name__ == '__main__':
     
     ## Projection head
     parser.add_argument('--proj_arch', type=str, default="two")
+    parser.add_argument('--proj_init_bn', type=int, choices=[0,1], default=0)
     parser.add_argument('--proj_temp', type=float, default=0.5)
     parser.add_argument('--latent', type=int, default=128)
     parser.add_argument('--nhidden', type=int, default=512)
