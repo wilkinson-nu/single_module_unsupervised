@@ -102,15 +102,22 @@ class ResNetBase(nn.Module):
         ## Option of having a pooling layer or an extra downsampling convolution
         if self.stem_pool == 'max':
             stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
+            self.stem_out_channels = self.stem_channels
         elif self.stem_pool == 'avg':
-            stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)            
-        else:
+            stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)
+            self.stem_out_channels = self.stem_channels
+        elif self.stem_pool == "none":
             stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.INIT_DIM, kernel_size=3, stride=self.final_stem_stride, dimension=self.D)
 
+            self.stem_out_channels = self.INIT_DIM
+            
             ## Allow for v1 style
             if self.BLOCK in (Bottleneck, BasicBlock):
                 stem['act2'] = self.act_fn
 
+        else:
+            raise ValueError(f"Unknown stem_pool: {self.stem_pool}")
+        
         return nn.Sequential(stem)
         
     def make_deep_stem(self):
@@ -134,15 +141,19 @@ class ResNetBase(nn.Module):
         ## Option of having a pooling layer or an extra downsampling convolution
         if self.stem_pool == "max":
             stem['pool'] = ME.MinkowskiMaxPooling(kernel_size=3, stride=2, dimension=self.D)
+            self.stem_out_channels = self.stem_channels
         elif self.stem_pool == "avg":
-            stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)            
-        else:
+            stem['pool'] = ME.MinkowskiAvgPooling(kernel_size=3, stride=2, dimension=self.D)
+            self.stem_out_channels = self.stem_channels
+        elif self.stem_pool == "none":
             stem['conv4'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.INIT_DIM, kernel_size=3, stride=self.final_stem_stride, dimension=self.D)
-
+            self.stem_out_channels = self.INIT_DIM
             ## Allow for v1 blocks later
             if self.BLOCK in (Bottleneck, BasicBlock):
                 stem['act4'] =	self.act_fn
-
+        else:
+            raise ValueError(f"Unknown stem_pool: {self.stem_pool}")
+        
         return nn.Sequential(stem)
 
     
@@ -154,7 +165,7 @@ class ResNetBase(nn.Module):
             self.stem = self.make_shallow_stem()
 
         ## Input to the ResNet blocks set from the number of channels the stem produces
-        self.inplanes = self.stem_channels
+        self.inplanes = self.stem_out_channels
             
         ## In the original ME implementation, layer 1 has stride 2, which is nonstandard
         self.layer1 = self._make_layer(
@@ -187,7 +198,8 @@ class ResNetBase(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-            # For v1, go back and zero out BN weights for the residual bit
+        # For v1, go back and zero out BN weights for the residual bit
+        for m in self.modules():
             if isinstance(m, BasicBlock) and m.norm2 is not None:
                 nn.init.zeros_(m.norm2.bn.weight)
             
