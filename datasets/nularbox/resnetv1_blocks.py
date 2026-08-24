@@ -47,7 +47,9 @@ class BasicBlock(nn.Module):
             self.act_fn = ME.MinkowskiGELU()
         if self.enc_act in ["silu", "swish"]:
             self.act_fn = ME.MinkowskiSiLU()
-
+        else:
+            raise ValueError(f"Unknown activation: {enc_act}")
+        
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
             res = OrderedDict()
@@ -56,7 +58,8 @@ class BasicBlock(nn.Module):
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
+            if self.apply_norm:
+                res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes, momentum=bn_momentum)
             self.shortcut = nn.Sequential(res)
         else:
             self.shortcut = None
@@ -124,6 +127,8 @@ class Bottleneck(nn.Module):
             self.act_fn = ME.MinkowskiGELU()
         if self.enc_act in ["silu", "swish"]:
             self.act_fn = ME.MinkowskiSiLU()
+        else:
+            raise ValueError(f"Unknown activation: {enc_act}")
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
@@ -133,7 +138,7 @@ class Bottleneck(nn.Module):
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes)
+            if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes, momentum=bn_momentum)
             self.shortcut = nn.Sequential(res)
         else:
             self.shortcut = None

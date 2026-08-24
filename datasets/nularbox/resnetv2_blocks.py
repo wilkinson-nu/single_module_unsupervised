@@ -39,14 +39,16 @@ class PreActBasicBlock(nn.Module):
             planes, planes, kernel_size=3, stride=1, dilation=dilation, dimension=dimension)
 
         if self.enc_act == "relu":
-            self.act_fn = ME.MinkowskiReLU(inplace=True)
+            self.act_fn = ME.MinkowskiReLU()
         if self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
         if self.enc_act == "gelu":
             self.act_fn = ME.MinkowskiGELU()
         if self.enc_act in ["silu", "swish"]:
             self.act_fn = ME.MinkowskiSiLU()
-
+        else:
+            raise ValueError(f"Unknown activation: {enc_act}")
+        
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:
             res = OrderedDict()
@@ -113,13 +115,15 @@ class PreActBottleneck(nn.Module):
             planes, planes * self.expansion, kernel_size=1, dimension=dimension)
 
         if self.enc_act == "relu":
-            self.act_fn = ME.MinkowskiReLU(inplace=True)
+            self.act_fn = ME.MinkowskiReLU()
         if self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
         if self.enc_act == "gelu":
             self.act_fn = ME.MinkowskiGELU()
         if self.enc_act in ["silu", "swish"]:
             self.act_fn = ME.MinkowskiSiLU()
+        else:
+            raise ValueError(f"Unknown activation: {enc_act}")
 
         ## Support a few options for the residual connection
         if stride != 1 or inplanes != self.expansion*planes:

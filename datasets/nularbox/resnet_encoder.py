@@ -95,7 +95,8 @@ class ResNetBase(nn.Module):
             
         stem = OrderedDict()
         stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.stem_channels, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
-        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(self.INIT_DIM)
+        if self.stem_norm:
+            stem['norm1'] = ME.MinkowskiInstanceNorm(self.stem_channels)
         stem['act1'] = self.act_fn
 
         ## Option of having a pooling layer or an extra downsampling convolution
@@ -147,13 +148,14 @@ class ResNetBase(nn.Module):
     
     def network_initialization(self, D):
 
-        self.inplanes = self.INIT_DIM
-
         if self.stem_deep:
             self.stem = self.make_deep_stem()
         else:
             self.stem = self.make_shallow_stem()
 
+        ## Input to the ResNet blocks set from the number of channels the stem produces
+        self.inplanes = self.stem_channels
+            
         ## In the original ME implementation, layer 1 has stride 2, which is nonstandard
         self.layer1 = self._make_layer(
             self.BLOCK, self.PLANES[0], self.LAYERS[0], stride=1
@@ -182,6 +184,15 @@ class ResNetBase(nn.Module):
             
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+            # For v1, go back and zero out BN weights for the residual bit
+            if isinstance(m, BasicBlock) and m.norm2 is not None:
+                nn.init.zeros_(m.norm2.bn.weight)
+            
+            elif isinstance(m, Bottleneck) and m.norm3 is not None:
+                nn.init.zeros_(m.norm3.bn.weight)
 
 
     def _make_layer(self, block, planes, num_blocks, stride, dilation=1):
@@ -194,8 +205,16 @@ class ResNetBase(nn.Module):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
         for stride in strides:
-            layers.append(block(self.inplanes, planes, stride=stride, dilation=dilation,
-                                res_pool=self.res_pool, apply_norm=apply_bn, dimension=self.D))
+            layers.append(block(
+                self.inplanes,
+                planes,
+                stride=stride,
+                dilation=dilation,
+                res_pool=self.res_pool,
+                apply_norm=apply_bn,
+                enc_act=self.enc_act,
+                dimension=self.D
+            ))
             self.inplanes = planes * block.expansion
         return nn.Sequential(*layers)
     
