@@ -27,17 +27,16 @@ class ProjectionHeadTwoLayer(nn.Module):
     def __init__(self,
                  nchan : int,
                  nlatent: int,
-                 nhidden: int = -1,
+                 nhidden: int,
                  hidden_act_fn : object = nn.ReLU,
                  apply_bn : bool = False,
                  init_bn : bool = False,
                  final_bn : bool = True):
         super().__init__()
 
-        ## Slightly dodgy to retain previous default behaviour
         self.nchan = nchan
         self.nlatent = nlatent
-        self.nhidden = nhidden if nhidden != -1 else nchan//4
+        self.nhidden = nhidden
         self.apply_bn = apply_bn
         self.init_bn = init_bn
         self.final_bn = final_bn
@@ -47,8 +46,6 @@ class ProjectionHeadTwoLayer(nn.Module):
         self.initialize_weights()
 
     def make_network(self):
-        ## BN: h -> BN(affine=True) -> Linear(bias=False) -> BN(affine=True)  -> ReLU -> Linear(bias=False) -> BN(affine=False) -> z
-        ## No BN: h -> BN(affine=True) -> Linear(bias=True) -> ReLU -> Linear(bias=False) -> z
         proj = OrderedDict()
         if self.init_bn:
             proj['norm0'] = nn.BatchNorm1d(self.nchan, affine=True)
@@ -102,7 +99,7 @@ class ProjectionHeadThreeLayer(nn.Module):
     def __init__(self,
                  nchan : int,
                  nlatent: int,
-                 nhidden: int = -1,
+                 nhidden: int,
                  hidden_act_fn : object = nn.ReLU,
                  apply_bn : bool = False,
                  init_bn : bool = False,
@@ -112,8 +109,7 @@ class ProjectionHeadThreeLayer(nn.Module):
 
         self.nchan = nchan
         self.nlatent = nlatent
-        ## Slightly dodgy to retain previous default behaviour
-        self.nhidden = nhidden if nhidden != -1 else nchan//4
+        self.nhidden = nhidden
         self.apply_bn = apply_bn
         self.init_bn = init_bn
         self.final_bn = final_bn
@@ -185,17 +181,17 @@ def get_projhead(nchan, args):
     hidden_act_fn = get_act_from_string(args.enc_act)
     
     if args.proj_arch in ["logits", "two"]:
-        proj_head = ProjectionHeadTwoLayer(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn,
-                                           apply_bn=False, init_bn=getattr(args, "proj_init_bn", False), final_bn=getattr(args, "proj_final_bn", False))
+        proj_head = ProjectionHeadTwoLayer(nchan, args.latent, args.nhidden, hidden_act_fn,
+                                           apply_bn=False, init_bn=args.proj_init_bn, final_bn=args.proj_final_bn)
     elif args.proj_arch in ["logitsbn", "twobn"]:
-        proj_head = ProjectionHeadTwoLayer(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn,
-                                           apply_bn=True, init_bn=getattr(args, "proj_init_bn", False), final_bn=getattr(args, "proj_final_bn", False))
+        proj_head = ProjectionHeadTwoLayer(nchan, args.latent, args.nhidden, hidden_act_fn,
+                                           apply_bn=True, init_bn=args.proj_init_bn, final_bn=args.proj_final_bn)
     elif args.proj_arch == "three":
-        proj_head = ProjectionHeadThreeLayer(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn,
-                                             apply_bn=False, init_bn=getattr(args, "proj_init_bn", False), final_bn=getattr(args, "proj_final_bn", False))
+        proj_head = ProjectionHeadThreeLayer(nchan, args.latent, args.nhidden, hidden_act_fn,
+                                             apply_bn=False, init_bn=args.proj_init_bn, final_bn=args.proj_final_bn)
     elif args.proj_arch == "threebn":
-        proj_head = ProjectionHeadThreeLayer(nchan, args.latent, getattr(args, "nhidden", -1), hidden_act_fn,
-                                             apply_bn=True, init_bn=getattr(args, "proj_init_bn", False), final_bn=getattr(args, "proj_final_bn", False))
+        proj_head = ProjectionHeadThreeLayer(nchan, args.latent, args.nhidden, hidden_act_fn,
+                                             apply_bn=True, init_bn=args.proj_init_bn, final_bn=args.proj_final_bn)
     elif args.proj_arch == "one":
         proj_head = ProjectionHeadOneLayer(nchan, args.latent)
     return proj_head
