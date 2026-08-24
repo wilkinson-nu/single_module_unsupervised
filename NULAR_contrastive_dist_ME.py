@@ -73,7 +73,7 @@ def worker_init_fn(worker_id):
     seed = torch.initial_seed() % 2**32
     np.random.seed(seed)
     random.seed(seed)
-    
+
 def get_training_dataloader(args, rank, world_size):
 
     ## Get the augmentation from the argument name
@@ -255,6 +255,7 @@ def run_training(rank, local_rank, world_size, args):
     ## Setup the encoder
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
+    
     encoder_nchan_instance = encoder.get_nchan()
     encoder_nchan_cluster = encoder.get_nchan()
     encoder .to(device)
@@ -401,6 +402,18 @@ def run_training(rank, local_rank, world_size, args):
             ## Now do the forward passes
             encoded_batch = encoder(cat_batch, this_batch_size)
 
+            if global_iter % args.extra_log_rate == 0:
+                with torch.no_grad():
+                    hn = encoded_batch.detach().float().norm(dim=1)
+                    gathered = [torch.zeros_like(hn) for _ in range(world_size)]
+                    dist.all_gather(gathered, hn.contiguous())
+                    allhn = torch.cat(gathered)
+                    if rank == 0:
+                        q = torch.quantile(allhn, torch.tensor([0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0], device=allhn.device))
+                        for name, v in zip(['min', 'p1', 'p10', 'p50', 'p90', 'p99', 'max'], q.cpu()):
+                            log_scalar(writer, metrics, f'hnorm/{name}', v.item(), global_iter)
+
+            
             ## L2 norm the encoder
             if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
 
@@ -451,6 +464,67 @@ def run_training(rank, local_rank, world_size, args):
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
+
+            ## Extra logging
+            if global_iter % args.extra_log_rate == 0 and rank == 0:
+
+                W_MIN = 1e-6   # ignore params still at (or near) zero init -- their
+                               # relative step is 0/0 noise and dominates any ranking
+
+                ## if rank == 0:
+                ##     print(f"\nLARS diagnostics at step {global_iter}")
+                ##     for gi, g in enumerate(optimizer.param_groups):
+                ##         print(f"  group {gi} lr = {g['lr']:.4e}")
+
+                for gi, stats in optimizer.last_stats.items():
+                    if not stats:
+                        continue
+
+                    # One host transfer per group rather than three per parameter.
+                    packed = torch.tensor(
+                        [[s['relative_step'], s['trust_ratio'], s['weight_norm'], s['grad_norm']]
+                         for s in stats], dtype=torch.float32)
+                    rel, tru, wn, gn = packed.unbind(dim=1)
+                    names = [s['name'] for s in stats]
+
+                    keep = wn > W_MIN
+                    n_drop = int((~keep).sum())
+                    if keep.sum() == 0:
+                        continue
+
+                    rel_k, tru_k = rel[keep], tru[keep]
+
+                    if rank == 0:
+                        log_scalar(writer, metrics, f'lars/g{gi}_lr',
+                                   optimizer.param_groups[gi]['lr'], global_iter)
+                        log_scalar(writer, metrics, f'lars/g{gi}_rel_median',
+                                   rel_k.median().item(), global_iter)
+                        log_scalar(writer, metrics, f'lars/g{gi}_rel_min',
+                                   rel_k.min().item(), global_iter)
+                        log_scalar(writer, metrics, f'lars/g{gi}_rel_max',
+                                   rel_k.max().item(), global_iter)
+                        log_scalar(writer, metrics, f'lars/g{gi}_n_excluded',
+                                   n_drop, global_iter)
+
+                        # log10 so the ~3 decades of spread are visible; clamp kills -inf
+                        writer.add_histogram(f'lars/g{gi}_log10_rel_step',
+                                             rel_k.clamp(min=1e-12).log10(), global_iter)
+                        writer.add_histogram(f'lars/g{gi}_log10_trust',
+                                             tru_k.clamp(min=1e-12).log10(), global_iter)
+
+                        ## med = rel_k.median().item()
+                        ## print(f"Group {gi}: rel step min={rel_k.min():.2e} "
+                        ##       f"median={med:.2e} max={rel_k.max():.2e}; "
+                        ##       f"trust min={tru_k.min():.2e} max={tru_k.max():.2e} "
+                        ##       f"({n_drop} params below ||w||={W_MIN:g} omitted)")
+                        ## 
+                        ## order = torch.argsort(rel_k, descending=True)[:5]
+                        ## kept_idx = torch.nonzero(keep).squeeze(1)
+                        ## print("Largest:")
+                        ## for j in order:
+                        ##     i = kept_idx[j].item()
+                        ##     print(f"  {names[i]:50s} ||w||={wn[i]:.3e} ||g||={gn[i]:.3e} "
+                        ##           f"trust={tru[i]:.3e} rel_step={rel[i]:.3e}")
 
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
@@ -708,6 +782,7 @@ if __name__ == '__main__':
     ## Projection head
     parser.add_argument('--proj_arch', type=str, default="two")
     parser.add_argument('--proj_init_bn', type=int, choices=[0,1], default=0)
+    parser.add_argument('--proj_final_bn', type=int, choices=[0,1], default=0)
     parser.add_argument('--proj_temp', type=float, default=0.5)
     parser.add_argument('--latent', type=int, default=128)
     parser.add_argument('--nhidden', type=int, default=512)
@@ -724,7 +799,7 @@ if __name__ == '__main__':
 
     ## Optional profiler
     parser.add_argument('--run_profiler', type=int, choices=[0,1], default=0)
-
+    parser.add_argument('--extra_log_rate', type=int, default=10000000)
     # Parse arguments from command line
     args = parser.parse_args()
 
