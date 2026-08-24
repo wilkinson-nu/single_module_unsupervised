@@ -27,6 +27,7 @@ from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
+from core.training.lars import log_lars_diagnostics
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat, print_affinity
 import psutil, os
@@ -457,6 +458,16 @@ def run_training(rank, local_rank, world_size, args):
             
             ## Update optimizer and scheduler
             optimizer.step()
+
+            if global_iter % args.extra_log_rate == 0 and rank == 0:
+                log_lars_diagnostics(
+                    optimizer=optimizer,
+                    writer=writer,
+                    metrics=metrics,
+                    global_iter=global_iter,
+                )
+            
+            ## ...after all that logging, finally update the scheduler...
             if scheduler: scheduler.step()
 
             ## Increment global_iter
@@ -464,67 +475,6 @@ def run_training(rank, local_rank, world_size, args):
             
             ## keep track of losses
             tot_loss_tensor += tot_loss.detach()
-
-            ## Extra logging
-            if global_iter % args.extra_log_rate == 0 and rank == 0:
-
-                W_MIN = 1e-6   # ignore params still at (or near) zero init -- their
-                               # relative step is 0/0 noise and dominates any ranking
-
-                ## if rank == 0:
-                ##     print(f"\nLARS diagnostics at step {global_iter}")
-                ##     for gi, g in enumerate(optimizer.param_groups):
-                ##         print(f"  group {gi} lr = {g['lr']:.4e}")
-
-                for gi, stats in optimizer.last_stats.items():
-                    if not stats:
-                        continue
-
-                    # One host transfer per group rather than three per parameter.
-                    packed = torch.tensor(
-                        [[s['relative_step'], s['trust_ratio'], s['weight_norm'], s['grad_norm']]
-                         for s in stats], dtype=torch.float32)
-                    rel, tru, wn, gn = packed.unbind(dim=1)
-                    names = [s['name'] for s in stats]
-
-                    keep = wn > W_MIN
-                    n_drop = int((~keep).sum())
-                    if keep.sum() == 0:
-                        continue
-
-                    rel_k, tru_k = rel[keep], tru[keep]
-
-                    if rank == 0:
-                        log_scalar(writer, metrics, f'lars/g{gi}_lr',
-                                   optimizer.param_groups[gi]['lr'], global_iter)
-                        log_scalar(writer, metrics, f'lars/g{gi}_rel_median',
-                                   rel_k.median().item(), global_iter)
-                        log_scalar(writer, metrics, f'lars/g{gi}_rel_min',
-                                   rel_k.min().item(), global_iter)
-                        log_scalar(writer, metrics, f'lars/g{gi}_rel_max',
-                                   rel_k.max().item(), global_iter)
-                        log_scalar(writer, metrics, f'lars/g{gi}_n_excluded',
-                                   n_drop, global_iter)
-
-                        # log10 so the ~3 decades of spread are visible; clamp kills -inf
-                        writer.add_histogram(f'lars/g{gi}_log10_rel_step',
-                                             rel_k.clamp(min=1e-12).log10(), global_iter)
-                        writer.add_histogram(f'lars/g{gi}_log10_trust',
-                                             tru_k.clamp(min=1e-12).log10(), global_iter)
-
-                        ## med = rel_k.median().item()
-                        ## print(f"Group {gi}: rel step min={rel_k.min():.2e} "
-                        ##       f"median={med:.2e} max={rel_k.max():.2e}; "
-                        ##       f"trust min={tru_k.min():.2e} max={tru_k.max():.2e} "
-                        ##       f"({n_drop} params below ||w||={W_MIN:g} omitted)")
-                        ## 
-                        ## order = torch.argsort(rel_k, descending=True)[:5]
-                        ## kept_idx = torch.nonzero(keep).squeeze(1)
-                        ## print("Largest:")
-                        ## for j in order:
-                        ##     i = kept_idx[j].item()
-                        ##     print(f"  {names[i]:50s} ||w||={wn[i]:.3e} ||g||={gn[i]:.3e} "
-                        ##           f"trust={tru[i]:.3e} rel_step={rel[i]:.3e}")
 
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
@@ -747,6 +697,7 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
     parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
+    parser.add_argument('--non_lars_lr_scale', type=float, default=1.0)
     
     ## Image size and augmentations
     parser.add_argument('--out_image_size', type=int, default=256)
