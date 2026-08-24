@@ -3,7 +3,7 @@ import math
 from torch import optim
 from core.training.lars import LARS, LARS_LRScheduler
 
-def get_opt_and_sched(args, encoder, heads, total_steps, world_size):
+def get_opt_and_sched(args, encoder, heads, total_steps, world_size, print_debug=False):
 
     lr_scheduler = None
     wd_scheduler = None
@@ -14,11 +14,12 @@ def get_opt_and_sched(args, encoder, heads, total_steps, world_size):
                                       heads,
                                       args.weight_decay,
                                       args.weight_decay_final,
-                                      bool(args.weight_decay_head))
+                                      bool(args.weight_decay_head),
+                                      print_debug)
     
     ## Sort out the optimizer (one for each GPU...)
     if args.optimizer == 'lars':
-        print("Optimizer = LARS; LR =", args.lr, "(", args.lr * (args.batch_size*world_size / 256), "); trust =", args.lars_trust_coeff, "; mom =", args.lars_momentum)
+        if print_debug: print("Optimizer = LARS; LR =", args.lr, "(", args.lr * (args.batch_size*world_size / 256), "); trust =", args.lars_trust_coeff, "; mom =", args.lars_momentum)
         corr_lr = args.lr * (args.batch_size*world_size / 256)
         optimizer = LARS(
             param_groups,
@@ -59,7 +60,8 @@ def build_param_groups(encoder,
                        heads,
                        weight_decay,
                        weight_decay_final=-1,
-                       weight_decay_head=False):
+                       weight_decay_head=False,
+                       print_debug=False):
     """
     This works for both Adam and LARS.
     """
@@ -68,15 +70,21 @@ def build_param_groups(encoder,
     omit_params = []
     head_params = []
 
+    enc_names  = []
+    omit_names = []
+    head_names = []
+    
     for name, param in encoder.named_parameters():
         if not param.requires_grad:
             continue
         
         if param.ndim == 1 or name.endswith(".bias"):
             omit_params.append(param)
+            omit_names.append(name)
         else:
             enc_params .append(param)
-
+            enc_names .append(name)
+            
     for module in list(heads.values()):
         for name, param in module.named_parameters():
             if not param.requires_grad:
@@ -84,20 +92,56 @@ def build_param_groups(encoder,
 
             if param.ndim == 1 or name.endswith(".bias"):
                 omit_params.append(param)
+                omit_names.append(name)
             else:
                 head_params.append(param)
-
+                head_names.append(name)
+                
     ## sort out weight scheduler logic
     weight_sched = weight_decay_final > 0
     head_weight_decay = weight_decay if weight_decay_head else 0.0
 
-    print("Parameter groups:")
-    print(f"enc: {len(enc_params)}, omit: {len(omit_params)}, head: {len(head_params)}")
+    if print_debug:
+        print("Parameter groups:")
+        print(f"ENCODER ({len(enc_params)} parameters):")
+        for name, param in zip(enc_names, enc_params):
+            print(f"  LARS + WD:       {name:60s} {tuple(param.shape)}")
+
+        print(f"OMITTED ({len(omit_params)} parameters):")
+        for name, param in zip(omit_names, omit_params):
+            print(f"  NO LARS / NO WD:  {name:60s} {tuple(param.shape)}")
+
+        print(f"HEAD ({len(head_params)} parameters):")
+        for name, param in zip(head_names, head_params):
+            print(
+                f"  LARS + "
+                f"{'WD' if weight_decay_head else 'NO WD':<6}:    "
+                f"{name:60s} {tuple(param.shape)}"
+            )
     
     return [
-        {"params": enc_params,  "weight_decay": weight_decay,      "weight_sched": weight_sched},
-        {"params": omit_params, "weight_decay": 0.0,               "weight_sched": False, "lars_exclude": True},
-        {"params": head_params, "weight_decay": head_weight_decay, "weight_sched": weight_sched and weight_decay_head},
+        {
+            "params": enc_params,
+            "names": enc_names,
+            "weight_decay": weight_decay,
+            "weight_sched": weight_sched,
+            "lars_exclude": False
+        },
+        {
+            "params": omit_params,
+            "names": omit_names,
+            "weight_decay": 0.0,
+            "weight_sched": False,
+            "lars_exclude": True,
+            "lr_scale": 1.0
+        },
+        {
+            "params": head_params,
+            "names": head_names,
+            "weight_decay": head_weight_decay,
+            "weight_sched": weight_sched and weight_decay_head,
+            "lars_exclude": False
+        },
     ]
 
 ## This is essentially redundant code used by the DINO implementation, remove at some point to use a consistent scheduler
