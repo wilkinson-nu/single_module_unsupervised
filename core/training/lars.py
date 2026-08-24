@@ -1,144 +1,147 @@
 import torch
 from math import cos, pi
 
+import math
+import torch
+
+
 class LARS(torch.optim.Optimizer):
-    def __init__(self,
-                 params,
-                 lr,
-                 momentum=0.9,
-                 weight_decay=0,
-                 trust_coef=0.001,
-                 eps=1e-8):
-        defaults = dict(lr=lr,
-                        momentum=momentum,
-                        weight_decay=weight_decay,
-                        trust_coef=trust_coef,
-                        eps=eps,
-                        lars_exclude=False)
+    def __init__(
+        self,
+        params,
+        lr,
+        momentum=0.9,
+        weight_decay=0.0,
+        trust_coef=0.001,
+        eps=1e-8,
+    ):
+        defaults = dict(
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            trust_coef=trust_coef,
+            eps=eps,
+            lars_exclude=False,
+        )
         super().__init__(params, defaults)
 
-        # This will hold the diagnostics from the most recent optimizer step.
-        #
-        # We store simple Python floats here rather than tensors so that
-        # they don't remain attached to the computation graph or GPU memory.
+        # Diagnostics from the most recent step.
         self.last_stats = {}
-        
+
     @torch.no_grad()
     def step(self):
-
-        # Clear statistics from the previous optimizer step.
-        self.last_stats = {}
         
+        # Clear statistics from the previous step
+        self.last_stats = {}
+
         for group_idx, group in enumerate(self.param_groups):
-            lr = group['lr']
-            momentum = group['momentum']
-            weight_decay = group['weight_decay']
-            trust_coef = group['trust_coef']
-            eps = group['eps']
-            lars_exclude = group.get('lars_exclude', False)
-            names = group.get('names', None)
-            
-            # We will keep statistics for this parameter group separately.
+            lr = group["lr"]
+            momentum = group["momentum"]
+            weight_decay = group["weight_decay"]
+            trust_coef = group["trust_coef"]
+            eps = group["eps"]
+            lars_exclude = group.get("lars_exclude", False)
+            names = group.get("names")
+
+            ## Statistics for each parameter group
             group_stats = []
-            
-            for param_idx, p in enumerate(group['params']):
+
+            for param_idx, p in enumerate(group["params"]):
                 if p.grad is None:
                     continue
 
-                grad = p.grad
-
-                # ---------------------------------------------------------
-                # Basic norms
-                # ---------------------------------------------------------
-
-                weight_norm = torch.norm(p)
-                grad_norm = torch.norm(grad)
-
-                # Start with the raw gradient.
-                
                 update = p.grad
+                name = (
+                    names[param_idx]
+                    if names is not None
+                    else f"group{group_idx}_param{param_idx}"
+                )
 
-                ## Only apply to layers where LARS is appropriate
+                # Pre-update diagnostics
+                weight_norm = torch.norm(p)
+                grad_norm = torch.norm(update)
+                grad_rms = grad_norm / math.sqrt(p.numel())
+
+                ## Only apply to LARS scaling to requested layers
+                trust_ratio = torch.ones_like(weight_norm)
                 if not lars_exclude:
-
-                    ## Only apply WD to layers where LARS is applied
-                    if weight_decay != 0:
+                    
+                    # Coupled weight decay, included before LARS adaptation.
+                    if weight_decay != 0.0:
                         update = update.add(p, alpha=weight_decay)
 
-                    ## More logging
-                    update_norm_before_lars = torch.norm(update)
-                        
-                    p_norm = torch.norm(p)
-                    u_norm = torch.norm(update)
-                    ones = torch.ones_like(p_norm)
+                    update_norm = torch.norm(update)
 
-                    if p_norm > 0 and u_norm > 0:
-                        q = trust_coef * p_norm / (u_norm + eps)
+                    # A trust ratio of one is the fallback for zero-norm
+                    # weights or updates, allowing zero-initialized tensors
+                    # to begin learning.
+                    if weight_norm > 0 and update_norm > 0:
+                        trust_ratio = (
+                            trust_coef
+                            * weight_norm
+                            / (update_norm + eps)
+                        )
+                        update = update.mul(trust_ratio)
 
-                        ## Logging
-                        trust_ratio = q
-                        update = update.mul(q)
+                # Norm of the current update after LARS, but before momentum
+                adapted_update_norm = torch.norm(update)
 
-                else:
-                    # BN parameters / biases:
-                    # no weight decay and no LARS trust-ratio scaling.
-                    trust_ratio = torch.tensor(
-                        1.0,
-                        device=p.device,
-                        dtype=p.dtype,
-                    )
-
-                # Norm AFTER LARS scaling.
-                lars_update_norm = torch.norm(update)
-    
+                # Momentum.
                 state = self.state[p]
-                if 'momentum_buffer' not in state:
-                    buf = state['momentum_buffer'] = torch.clone(update).detach()
+
+                if "momentum_buffer" not in state:
+                    buf = state["momentum_buffer"] = update.detach().clone()
                 else:
-                    buf = state['momentum_buffer']
+                    buf = state["momentum_buffer"]
                     buf.mul_(momentum).add_(update)
 
-                p.add_(buf, alpha=-lr)
+                buf_norm = torch.norm(buf)
 
-                ## More logging:
-                # p <- p - lr * momentum_buffer
-                step_norm = lr * torch.norm(buf)
+                # Actual parameter change for this optimizer step
+                step_norm = lr * buf_norm
+                step_rms = step_norm / math.sqrt(p.numel())
 
-                # Fractional change in this parameter tensor:
-                #
-                #     ||delta w|| / ||w||
-                #
-                # This is probably the single most useful diagnostic
-                # for determining whether LARS is making excessively
-                # large updates.
                 if weight_norm > 0:
                     relative_step = step_norm / weight_norm
                 else:
-                    relative_step = torch.tensor(
-                        0.0,
-                        device=p.device,
-                        dtype=p.dtype,
+                    relative_step = torch.full_like(
+                        step_norm, float("nan")
                     )
 
-                # ---------------------------------------------------------
-                # Save diagnostics
-                # ---------------------------------------------------------
-                if names is not None:
-                    name = names[param_idx]
+                if adapted_update_norm > 0:
+                    momentum_amplification = (
+                        buf_norm / adapted_update_norm
+                    )
                 else:
-                    name = f"group{group_idx}_param{param_idx}"
-                    
+                    momentum_amplification = torch.full_like(
+                        buf_norm, float("nan")
+                    )
+
+                # Apply update
+                p.add_(buf, alpha=-lr)
+
+                # Post-update diagnostics
+                post_weight_rms = (
+                    torch.norm(p)
+                    / math.sqrt(p.numel())
+                )
+                post_abs_max = p.abs().max()
+
                 group_stats.append({
-                    'name': name,
-                    'weight_norm': weight_norm.item(),
-                    'grad_norm': grad_norm.item(),
-                    'trust_ratio': trust_ratio.item(),
-                    'lars_update_norm': lars_update_norm.item(),
-                    'step_norm': step_norm.item(),
-                    'relative_step': relative_step.item(),
+                    "name": name,
+                    "weight_norm": weight_norm.item(),
+                    "grad_rms": grad_rms.item(),
+                    "trust_ratio": trust_ratio.item(),
+                    "step_rms": step_rms.item(),
+                    "relative_step": relative_step.item(),
+                    "momentum_amplification":
+                        momentum_amplification.item(),
+                    "post_weight_rms": post_weight_rms.item(),
+                    "post_abs_max": post_abs_max.item(),
                 })
 
             self.last_stats[group_idx] = group_stats
+            
 
 class LARS_LRScheduler:
     """Linear warmup from ~0 to lr_max over warmup_steps, then cosine decay
@@ -174,7 +177,6 @@ class LARS_LRScheduler:
                 group['lr'] = lr * group.get('lr_scale', 1.0)
             else:
                 group['lr'] = lr
-        #group['lr'] = lr
 
     def step(self):
         self.step_count += 1
@@ -190,51 +192,167 @@ class LARS_LRScheduler:
         self.step_count = sd['step_count']
         self._set_lr(self._lr_at(self.step_count))
 
-                
 
-## class LARS_LRScheduler:
-##     def __init__(self,
-##                  optimizer,
-##                  warmup_steps,
-##                  total_steps,
-##                  lr_max,
-##                  lr_min=0.0):
-##         self.optimizer = optimizer
-##         self.warmup_steps = warmup_steps
-##         self.total_steps = total_steps
-##         self.lr_max = lr_max
-##         self.lr_min = lr_min
-##         self.step_count = 0
-## 
-##         ## Ensure we start with a sensible value
-##         initial_lr = self.lr_min + (self.lr_max - self.lr_min) * (1. / self.warmup_steps)
-##         for g in optimizer.param_groups:
-##             g['lr'] = initial_lr
-##         
-##         self._last_lr = [group['lr'] for group in optimizer.param_groups]
-## 
-##         
-##         
-##     def step(self):
-##         self.step_count += 1
-## 
-##         # linear warmup
-##         if self.step_count <= self.warmup_steps:
-##             lr_factor = self.step_count / self.warmup_steps
-##         else:
-##             # cosine decay after warmup
-##             progress = min(1.0,
-##                            (self.step_count - self.warmup_steps) / max(1, self.total_steps - self.warmup_steps)
-##                            )
-##             lr_factor = 0.5 * (1 + cos(pi * progress))
-## 
-##         lr = self.lr_min + (self.lr_max - self.lr_min) * lr_factor
-## 
-##         # update global LR in all param groups
-##         for group in self.optimizer.param_groups:
-##             group['lr'] = lr
-## 
-##         self._last_lr = [lr] * len(self.optimizer.param_groups)
-## 
-##     def get_last_lr(self):
-##         return self._last_lr            
+def log_lars_diagnostics(
+    optimizer,
+    writer,
+    metrics,
+    global_iter,
+    weight_norm_min=1e-6,
+):
+    """
+    Log diagnostics stored by the most recent LARS.step().
+
+    Call immediately after optimizer.step() and before scheduler.step(),
+    on rank 0 only.
+    """
+    print(f"\nLARS diagnostics at step {global_iter}")
+
+    for group_idx, stats in optimizer.last_stats.items():
+        if not stats:
+            continue
+
+        group = optimizer.param_groups[group_idx]
+        group_name = group.get("group_name", f"group{group_idx}")
+        prefix = f"lars/{group_name}"
+
+        lr = group["lr"]
+        lars_exclude = group.get("lars_exclude", False)
+
+        values = torch.tensor(
+            [
+                [
+                    s["weight_norm"],
+                    s["grad_rms"],
+                    s["trust_ratio"],
+                    s["step_rms"],
+                    s["relative_step"],
+                    s["momentum_amplification"],
+                    s["post_weight_rms"],
+                    s["post_abs_max"],
+                ]
+                for s in stats
+            ],
+            dtype=torch.float32,
+        )
+
+        (
+            weight_norm,
+            grad_rms,
+            trust_ratio,
+            step_rms,
+            relative_step,
+            momentum_amp,
+            post_weight_rms,
+            post_abs_max,
+        ) = values.unbind(dim=1)
+
+        # Metrics useful for every group.
+        log_scalar(
+            writer, metrics, f"{prefix}/lr",
+            lr, global_iter,
+        )
+        log_scalar(
+            writer, metrics, f"{prefix}/grad_rms_median",
+            grad_rms.median().item(), global_iter,
+        )
+        log_scalar(
+            writer, metrics, f"{prefix}/grad_rms_max",
+            grad_rms.max().item(), global_iter,
+        )
+        log_scalar(
+            writer, metrics, f"{prefix}/step_rms_median",
+            step_rms.median().item(), global_iter,
+        )
+        log_scalar(
+            writer, metrics, f"{prefix}/step_rms_max",
+            step_rms.max().item(), global_iter,
+        )
+        log_scalar(
+            writer, metrics, f"{prefix}/post_weight_rms_max",
+            post_weight_rms.max().item(), global_iter,
+        )
+        log_scalar(
+            writer, metrics, f"{prefix}/post_abs_max",
+            post_abs_max.max().item(), global_iter,
+        )
+
+        writer.add_histogram(
+            f"{prefix}/log10_step_rms",
+            step_rms.clamp_min(1e-12).log10(),
+            global_iter,
+        )
+
+        # Relative step is undefined for zero-initialized parameters.
+        valid_relative = (
+            (weight_norm > weight_norm_min)
+            & torch.isfinite(relative_step)
+        )
+
+        if valid_relative.any():
+            relative = relative_step[valid_relative]
+
+            log_scalar(
+                writer, metrics, f"{prefix}/relative_step_median",
+                relative.median().item(), global_iter,
+            )
+            log_scalar(
+                writer, metrics, f"{prefix}/relative_step_max",
+                relative.max().item(), global_iter,
+            )
+
+            writer.add_histogram(
+                f"{prefix}/log10_relative_step",
+                relative.clamp_min(1e-12).log10(),
+                global_iter,
+            )
+
+        # Trust ratio is meaningful only for LARS-managed groups.
+        if not lars_exclude:
+            valid_trust = torch.isfinite(trust_ratio)
+
+            if valid_trust.any():
+                trust = trust_ratio[valid_trust]
+
+                log_scalar(
+                    writer, metrics, f"{prefix}/trust_median",
+                    trust.median().item(), global_iter,
+                )
+                log_scalar(
+                    writer, metrics, f"{prefix}/trust_min",
+                    trust.min().item(), global_iter,
+                )
+                log_scalar(
+                    writer, metrics, f"{prefix}/trust_max",
+                    trust.max().item(), global_iter,
+                )
+
+                writer.add_histogram(
+                    f"{prefix}/log10_trust",
+                    trust.clamp_min(1e-12).log10(),
+                    global_iter,
+                )
+
+        valid_amp = torch.isfinite(momentum_amp)
+
+        if valid_amp.any():
+            amp = momentum_amp[valid_amp]
+
+            log_scalar(
+                writer, metrics, f"{prefix}/momentum_amp_median",
+                amp.median().item(), global_iter,
+            )
+            log_scalar(
+                writer, metrics, f"{prefix}/momentum_amp_max",
+                amp.max().item(), global_iter,
+            )
+
+        largest_idx = step_rms.argmax().item()
+        largest = stats[largest_idx]
+
+        print(
+            f"  {group_name}: "
+            f"lr={lr:.4e}, "
+            f"step_rms_max={largest['step_rms']:.4e}, "
+            f"parameter={largest['name']}"
+        )
