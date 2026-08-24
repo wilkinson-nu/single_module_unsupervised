@@ -40,11 +40,11 @@ class PreActBasicBlock(nn.Module):
 
         if self.enc_act == "relu":
             self.act_fn = ME.MinkowskiReLU()
-        if self.enc_act == "leakyrelu":
+        elif self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
-        if self.enc_act == "gelu":
+        elif self.enc_act == "gelu":
             self.act_fn = ME.MinkowskiGELU()
-        if self.enc_act in ["silu", "swish"]:
+        elif self.enc_act in ["silu", "swish"]:
             self.act_fn = ME.MinkowskiSiLU()
         else:
             raise ValueError(f"Unknown activation: {enc_act}")
@@ -116,11 +116,11 @@ class PreActBottleneck(nn.Module):
 
         if self.enc_act == "relu":
             self.act_fn = ME.MinkowskiReLU()
-        if self.enc_act == "leakyrelu":
+        elif self.enc_act == "leakyrelu":
             self.act_fn =  ME.MinkowskiLeakyReLU()
-        if self.enc_act == "gelu":
+        elif self.enc_act == "gelu":
             self.act_fn = ME.MinkowskiGELU()
-        if self.enc_act in ["silu", "swish"]:
+        elif self.enc_act in ["silu", "swish"]:
             self.act_fn = ME.MinkowskiSiLU()
         else:
             raise ValueError(f"Unknown activation: {enc_act}")
