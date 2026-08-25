@@ -261,6 +261,11 @@ def run_training(rank, local_rank, world_size, args):
     encoder .to(device)
     encoder = DDP(encoder, device_ids=[local_rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
+    ## Temporary sanity check for SyncBN
+    n_sync = sum(isinstance(m, ME.MinkowskiSyncBatchNorm) for m in encoder.modules())
+    n_bn   = sum(isinstance(m, ME.MinkowskiBatchNorm) for m in encoder.modules())
+    print(f"encoder BN: {n_sync} sync / {n_bn} total")
+    
     ## Dictionary of heads
     heads = {}
     
