@@ -341,7 +341,7 @@ def run_training(rank, local_rank, world_size, args):
         
         prof = torch.profiler.profile(
             activities=[
-                torch.profiler.ProfilerActivity.CPU,s
+                torch.profiler.ProfilerActivity.CPU,
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             record_shapes=True,
@@ -451,9 +451,15 @@ def run_training(rank, local_rank, world_size, args):
             optimizer.zero_grad(set_to_none=True)
             tot_loss .backward()
 
+            ## Decide whether to collect LARS stats
+            collect_lars_stats = (
+                global_iter % args.extra_log_rate == 0
+                and rank == 0
+            )
+            optimizer.collect_stats = collect_lars_stats
+
             ## Update optimizer and scheduler
             optimizer.step()
-
             if global_iter % args.extra_log_rate == 0 and rank == 0:
                 log_lars_diagnostics(
                     optimizer=optimizer,
