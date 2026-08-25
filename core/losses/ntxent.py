@@ -26,7 +26,7 @@ class NTXentMerged(nn.Module):
         
         loss = self.cross_entropy(sim, positives)
         
-        return loss
+        return loss, {}
 
 
 class NTXentMergedMultiGPU(nn.Module):
@@ -49,5 +49,5 @@ class NTXentMergedMultiGPU(nn.Module):
         ])
         sim = z_all[idx] @ z_all.t() / self.temperature       # 2B x 2N
         sim[torch.arange(2 * batch_size, device=z.device), idx] = -float("inf")
-        return F.cross_entropy(sim, (idx + N) % (2 * N))
+        return F.cross_entropy(sim, (idx + N) % (2 * N)), {}
         
