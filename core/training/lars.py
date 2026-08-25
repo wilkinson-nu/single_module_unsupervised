@@ -3,7 +3,7 @@ from math import cos, pi
 
 import math
 import torch
-
+from core.training.logging import log_scalar
 
 class LARS(torch.optim.Optimizer):
     def __init__(
@@ -32,6 +32,7 @@ class LARS(torch.optim.Optimizer):
     def step(self):
         
         # Clear statistics from the previous step
+        collect_stats = getattr(self, "collect_stats", False)
         self.last_stats = {}
 
         for group_idx, group in enumerate(self.param_groups):
@@ -51,17 +52,9 @@ class LARS(torch.optim.Optimizer):
                     continue
 
                 update = p.grad
-                name = (
-                    names[param_idx]
-                    if names is not None
-                    else f"group{group_idx}_param{param_idx}"
-                )
-
-                # Pre-update diagnostics
+                update_norm = torch.norm(update)
                 weight_norm = torch.norm(p)
-                grad_norm = torch.norm(update)
-                grad_rms = grad_norm / math.sqrt(p.numel())
-
+                
                 ## Only apply to LARS scaling to requested layers
                 trust_ratio = torch.ones_like(weight_norm)
                 if not lars_exclude:
@@ -69,8 +62,6 @@ class LARS(torch.optim.Optimizer):
                     # Coupled weight decay, included before LARS adaptation.
                     if weight_decay != 0.0:
                         update = update.add(p, alpha=weight_decay)
-
-                    update_norm = torch.norm(update)
 
                     # A trust ratio of one is the fallback for zero-norm
                     # weights or updates, allowing zero-initialized tensors
@@ -83,9 +74,6 @@ class LARS(torch.optim.Optimizer):
                         )
                         update = update.mul(trust_ratio)
 
-                # Norm of the current update after LARS, but before momentum
-                adapted_update_norm = torch.norm(update)
-
                 # Momentum.
                 state = self.state[p]
 
@@ -95,50 +83,55 @@ class LARS(torch.optim.Optimizer):
                     buf = state["momentum_buffer"]
                     buf.mul_(momentum).add_(update)
 
-                buf_norm = torch.norm(buf)
-
-                # Actual parameter change for this optimizer step
-                step_norm = lr * buf_norm
-                step_rms = step_norm / math.sqrt(p.numel())
-
-                if weight_norm > 0:
-                    relative_step = step_norm / weight_norm
-                else:
-                    relative_step = torch.full_like(
-                        step_norm, float("nan")
-                    )
-
-                if adapted_update_norm > 0:
-                    momentum_amplification = (
-                        buf_norm / adapted_update_norm
-                    )
-                else:
-                    momentum_amplification = torch.full_like(
-                        buf_norm, float("nan")
-                    )
-
                 # Apply update
                 p.add_(buf, alpha=-lr)
 
-                # Post-update diagnostics
-                post_weight_rms = (
-                    torch.norm(p)
-                    / math.sqrt(p.numel())
-                )
-                post_abs_max = p.abs().max()
+                if collect_stats:
 
-                group_stats.append({
-                    "name": name,
-                    "weight_norm": weight_norm.item(),
-                    "grad_rms": grad_rms.item(),
-                    "trust_ratio": trust_ratio.item(),
-                    "step_rms": step_rms.item(),
-                    "relative_step": relative_step.item(),
-                    "momentum_amplification":
-                        momentum_amplification.item(),
-                    "post_weight_rms": post_weight_rms.item(),
-                    "post_abs_max": post_abs_max.item(),
-                })
+                    name = (
+                        names[param_idx]
+                        if names is not None
+                        else f"group{group_idx}_param{param_idx}"
+                    )
+                    
+                    # Pre-update diagnostics
+                    grad_norm = torch.norm(update)
+                    grad_rms = grad_norm / math.sqrt(p.numel())
+
+                    buf_norm = torch.norm(buf)
+
+                    # Actual parameter change for this optimizer step
+                    step_norm = lr * buf_norm
+                    step_rms = step_norm / math.sqrt(p.numel())
+
+                    if weight_norm > 0:
+                        relative_step = step_norm / weight_norm
+                    else:
+                        relative_step = torch.full_like(step_norm, float("nan"))
+                        
+                    if update_norm > 0:
+                        momentum_amplification = buf_norm / update_norm
+                    else:
+                        momentum_amplification = torch.full_like(buf_norm, float("nan"))
+                        
+                    # Post-update diagnostics
+                    post_weight_rms = (
+                        torch.norm(p)
+                        / math.sqrt(p.numel())
+                    )
+                    post_abs_max = p.abs().max()
+                    
+                    group_stats.append({
+                        "name": name,
+                        "weight_norm": weight_norm.item(),
+                        "grad_rms": grad_rms.item(),
+                        "trust_ratio": trust_ratio.item(),
+                        "step_rms": step_rms.item(),
+                        "relative_step": relative_step.item(),
+                        "momentum_amplification": momentum_amplification.item(),
+                        "post_weight_rms": post_weight_rms.item(),
+                        "post_abs_max": post_abs_max.item(),
+                    })
 
             self.last_stats[group_idx] = group_stats
             
