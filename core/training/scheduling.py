@@ -122,7 +122,7 @@ def build_param_groups(encoder,
 
         print(f"RES GAMMA ({len(residual_gamma_params)} parameters):")
         for name, param in zip(residual_gamma_names, residual_gamma_params):
-            print(f"  LARS + WD:       {name:60s} {tuple(param.shape)}")        
+            print(f"  NO LARS / NO WD:  {name:60s} {tuple(param.shape)}")        
             
         print(f"OMITTED ({len(omit_params)} parameters):")
         for name, param in zip(omit_names, omit_params):
