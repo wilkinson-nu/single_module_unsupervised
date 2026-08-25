@@ -38,7 +38,12 @@ def extract_features(encoder, loader, device, label_names):
 
 @torch.no_grad()
 def knn_votes(q, bank, bank_lab, n_classes, k=20, T=0.1, chunk=2048):
-    qn, bn = F.normalize(q, dim=1), F.normalize(bank, dim=1)
+
+    ## Center the features
+    center = bank.mean(dim=0, keepdim=True)
+
+    qn, bn = F.normalize(q - center, dim=1), F.normalize(bank - center, dim=1)
+    
     out = []
     for i in range(0, qn.shape[0], chunk):
         sim    = qn[i:i + chunk] @ bn.t()
