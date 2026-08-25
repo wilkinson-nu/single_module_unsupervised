@@ -64,6 +64,10 @@ class BasicBlock(nn.Module):
         else:
             self.shortcut = None
 
+        ## Avoid duplicating these parameters in the sum
+        res['res_norm'].bn.bias.requires_grad_(False)
+
+        
     def forward(self, x):
         residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
@@ -142,7 +146,10 @@ class Bottleneck(nn.Module):
             self.shortcut = nn.Sequential(res)
         else:
             self.shortcut = None
-                
+
+        ## Avoid duplicating these parameters in the sum
+        res['res_norm'].bn.bias.requires_grad_(False)
+        
     def forward(self, x):
         residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
