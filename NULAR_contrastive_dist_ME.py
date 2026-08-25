@@ -19,6 +19,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
+from core.losses.vicreg import VICRegLossDistributed
 from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
@@ -278,7 +279,22 @@ def run_training(rank, local_rank, world_size, args):
     proj_head .to(device)
     proj_head = DDP(proj_head, device_ids=[local_rank])
     heads["proj"] = proj_head
-    loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
+
+    ## TODO add some protection here in case arguments are missing
+    if proj_loss == "simclr":
+        print(f"LOSS: SimCLR")
+        print(f"      temp = {args.proj_temp}")
+        loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
+    elif proj_loss == "vicreg":
+        print(f"LOSS: VICReg")
+        print(f"      sim_coeff = {args.vicreg_sim_coeff}")
+        print(f"      std_coeff = {args.vicreg_std_coeff}")
+        print(f"      cov_coeff = {args.vicreg_cov_coeff}")        
+        loss_fns["proj"] = VICRegLossDistributed(args.vicreg_sim_coeff,
+                                                 args.vicreg_std_coeff,
+                                                 args.vicreg_cov_coeff)
+    else:
+        raise ValueError(f"Unknown projection head loss: {proj_loss}")
         
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
@@ -316,8 +332,8 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Setup kNN monitoring
     knn_metrics = ClassificationMetrics(
-    {n: {'n_classes': c, 'weight': 1.0} for n, c in MONITOR_LABELS.items()},
-    device=device)
+        {n: {'n_classes': c, 'weight': 1.0} for n, c in MONITOR_LABELS.items()},
+        device=device)
     
     ## Load the checkpoint if one has been given
     start_iteration = 0
@@ -360,6 +376,9 @@ def run_training(rank, local_rank, world_size, args):
         tot_loss_tensor = torch.tensor(0.0, device=device)  
         losses_tensor = {name: torch.tensor(0.0, device=device) for name in heads.keys()}       
         entropy_tensor = torch.tensor(0.0, device=device)
+
+        ## This is only used by VICReg for now
+        proj_part_sums = None
         
         ## For monitoring
         total_acc_tensor = torch.tensor(0.0, device=device)
@@ -412,24 +431,34 @@ def run_training(rank, local_rank, world_size, args):
                         q = torch.quantile(allhn, torch.tensor([0, 0.01, 0.1, 0.5, 0.9, 0.99, 1.0], device=allhn.device))
                         for name, v in zip(['min', 'p1', 'p10', 'p50', 'p90', 'p99', 'max'], q.cpu()):
                             log_scalar(writer, metrics, f'hnorm/{name}', v.item(), global_iter)
-
             
             ## L2 norm the encoder
             if norm_encoder: encoded_batch = torch.nn.functional.normalize(encoded_batch, p=2, dim=1)
 
             ## Deal with the projection loss
             proj_batch = heads["proj"](encoded_batch)
-            proj_loss = loss_fns["proj"](proj_batch)*instance_scale
+            proj_loss, proj_loss_parts = loss_fns["proj"](proj_batch)*instance_scale
                 
             tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
 
+            ## This is for VICReg for now
+            if len(proj_loss_parts) > 0:
+                if proj_part_sums is None:
+                    proj_part_sums = {
+                        name: torch.zeros((), device=device, dtype=torch.float64)
+                        for name in proj_loss_parts
+                    }
+                for name, value in proj_loss_parts.items():
+                    # These diagnostics should be scalar tensors.
+                    proj_part_sums[name] += value.detach().double()
+            
             ## Add to metrics
             total_enc_align_tensor += alignment(encoded_batch)
             total_enc_unif_tensor += uniformity(encoded_batch)
             total_proj_align_tensor += alignment(proj_batch)
             total_proj_unif_tensor += uniformity(proj_batch)
-
+            
             ## Get a few batches for calculating the running deff
             if len(buffer_enc) < nbuffer:
                 with torch.no_grad():
@@ -508,6 +537,18 @@ def run_training(rank, local_rank, world_size, args):
         av_clust_unif = total_clust_unif_tensor.item() / (nbatches * world_size)
         av_clust_align = total_clust_align_tensor.item() / (nbatches * world_size)
 
+        ## Deal with VICReg components
+        if proj_part_sums is not None:
+            proj_part_names = list(proj_part_sums.keys())
+            
+            packed = torch.stack([proj_part_sums[name] for name in proj_part_names])    
+            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+        
+            av_proj_loss_parts = {
+                name: packed[i].item() /  (nbatches * world_size)
+                for i, name in enumerate(proj_part_names)
+            }
+        
         ## Other geometry calculations
         enc_geom = simclr_geometry_metrics(buffer_enc, device, norm_encoder)
         proj_geom = simclr_geometry_metrics(buffer_proj, device, True)
@@ -593,6 +634,16 @@ def run_training(rank, local_rank, world_size, args):
                 log_grad_over_wgt(heads["clust"].module, "clust", writer, iteration)
                 log_weight_norm(heads["clust"].module, "clust", writer, iteration)
 
+            if proj_loss_parts is not None:
+                for name, value in av_proj_loss_parts.items():
+                    log_scalar(
+                        writer,
+                        metrics,
+                        f"vicreg/{name}",
+                        value,
+                        iteration,
+                    )
+                
             if knn_results is not None:
                 for name, m in knn_results.items():
                     log_scalar(writer, metrics, f'knn/{name}_accuracy',           m['accuracy'],           iteration)
@@ -727,14 +778,21 @@ if __name__ == '__main__':
     parser.add_argument('--softmax_temp', type=float, default=1.0)
     parser.add_argument('--instance_scale', type=float, default=1.0)
 
-    ## Projection head
+    ## Projection head architecture
     parser.add_argument('--proj_arch', type=str, default="two")
     parser.add_argument('--proj_init_bn', type=int, choices=[0,1], default=0)
     parser.add_argument('--proj_final_bn', type=int, choices=[0,1], default=0)
-    parser.add_argument('--proj_temp', type=float, default=0.5)
     parser.add_argument('--latent', type=int, default=128)
     parser.add_argument('--nhidden', type=int, default=512)
 
+    ## Projection head loss
+    parser.add_argument('--proj_loss', type=str, default="simclr")    
+    ## TODO: rename to simlar_temp
+    parser.add_argument('--proj_temp', type=float, default=0.5)
+    parser.add_argument('--vicreg_sim_coeff', type=float, default=25.0)
+    parser.add_argument('--vicreg_std_coeff', type=float, default=25.0)
+    parser.add_argument('--vicreg_cov_coeff', type=float, default=1.0)   
+    
     ## kNN monitoring options
     parser.add_argument('--knn_nbank',    type=int, default=50000)
     parser.add_argument('--knn_nquery',   type=int, default=10000)
