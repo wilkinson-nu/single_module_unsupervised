@@ -15,12 +15,11 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
-from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
-from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU, SharpenedClusterLoss
+from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
 from datasets.nularbox.encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
@@ -282,12 +281,8 @@ def run_training(rank, local_rank, world_size, args):
         clust_head = nn.SyncBatchNorm.convert_sync_batchnorm(clust_head)
         clust_head .to(device)
         clust_head = DDP(clust_head, device_ids=[local_rank])
-        heads["clust"] = clust_head
-    
-        if args.sharpened_cluster_loss == 0:
-            loss_fns["clust"] = ClusteringLossMergedMultiGPU(args.clust_temp, args.entropy_scale)
-        else:
-            loss_fns["clust"] = SharpenedClusterLoss(args.clust_temp, 0.05, args.entropy_scale)
+        heads["clust"] = clust_head    
+        loss_fns["clust"] = ClusteringLossMergedMultiGPU(args.clust_temp, args.entropy_scale)
         
     ## Set up the distributed dataset
     train_dataset, train_loader = get_training_dataloader(args, rank, world_size)
@@ -298,7 +293,6 @@ def run_training(rank, local_rank, world_size, args):
     num_iterations = args.nepoch
     log_dir = args.log
     instance_scale = args.instance_scale
-    clip_gradients = bool(args.clip_gradients)
     norm_encoder = bool(args.norm_encoder)
     weight_decay = args.weight_decay
     weight_decay_final = args.weight_decay_final
@@ -342,7 +336,7 @@ def run_training(rank, local_rank, world_size, args):
         
         prof = torch.profiler.profile(
             activities=[
-                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CPU,s
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             record_shapes=True,
@@ -452,10 +446,6 @@ def run_training(rank, local_rank, world_size, args):
             optimizer.zero_grad(set_to_none=True)
             tot_loss .backward()
 
-            if clip_gradients:
-                torch.nn.utils.clip_grad_norm_(encoder.parameters(), max_norm=1.0)
-                for h in heads.values(): torch.nn.utils.clip_grad_norm_(h.parameters(), max_norm=1.0)
-            
             ## Update optimizer and scheduler
             optimizer.step()
 
@@ -695,7 +685,6 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', type=float, default=0)
     parser.add_argument('--weight_decay_final', type=float, default=-1)
     parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
-    parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
     parser.add_argument('--non_lars_lr_scale', type=float, default=1.0)
     
@@ -727,9 +716,6 @@ if __name__ == '__main__':
     parser.add_argument('--softmax_temp', type=float, default=1.0)
     parser.add_argument('--instance_scale', type=float, default=1.0)
 
-    ## A quick test option
-    parser.add_argument('--sharpened_cluster_loss', type=int, choices=[0,1], default=0)
-    
     ## Projection head
     parser.add_argument('--proj_arch', type=str, default="two")
     parser.add_argument('--proj_init_bn', type=int, choices=[0,1], default=0)
