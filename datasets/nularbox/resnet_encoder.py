@@ -26,6 +26,7 @@ class ResNetBase(nn.Module):
                  pool="avg",
                  bottleneck_dim=-1,
                  stem_channels=-1,
+                 bn_momentum=0.1,
                  D=2):
         nn.Module.__init__(self)
         self.D = D
@@ -42,6 +43,7 @@ class ResNetBase(nn.Module):
         self.pool = pool
         self.bottleneck_dim = bottleneck_dim
         self.stem_channels = stem_channels
+        self.bn_momentum = bn_momentum
         
         print("Loading an encoder with:",
               "stem_pool =", stem_pool,
@@ -96,7 +98,7 @@ class ResNetBase(nn.Module):
         stem = OrderedDict()
         stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.stem_channels, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
         if self.stem_norm:
-            stem['norm1'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+            stem['norm1'] = ME.MinkowskiBatchNorm(self.stem_channels, momentum=self.bn_momentum)
         stem['act1'] = self.act_fn
 
         ## Option of having a pooling layer or an extra downsampling convolution
@@ -129,13 +131,13 @@ class ResNetBase(nn.Module):
         
         ## As is common for ResNet implementations, use 3 3x3 convoutions instead of an initial 7x7 one
         stem['conv1'] = ME.MinkowskiConvolution(in_channels=1, out_channels=self.stem_channels, kernel_size=3, stride=self.init_stem_stride, dimension=self.D)
-        if self.stem_norm: stem['norm1'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+        if self.stem_norm: stem['norm1'] = ME.MinkowskiBatchNorm(self.stem_channels, momentum=self.bn_momentum)
         stem['act1'] = self.act_fn
         stem['conv2'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.stem_channels, kernel_size=3, stride=1, dimension=self.D)
-        if self.stem_norm: stem['norm2'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+        if self.stem_norm: stem['norm2'] = ME.MinkowskiBatchNorm(self.stem_channels, momentum=self.bn_momentum)
         stem['act2'] = self.act_fn
         stem['conv3'] = ME.MinkowskiConvolution(in_channels=self.stem_channels, out_channels=self.stem_channels, kernel_size=3, stride=1, dimension=self.D)
-        if self.stem_norm: stem['norm3'] = ME.MinkowskiInstanceNorm(self.stem_channels)
+        if self.stem_norm: stem['norm3'] = ME.MinkowskiBatchNorm(self.stem_channels, momentum=self.bn_momentum)
         stem['act3'] = self.act_fn
         
         ## Option of having a pooling layer or an extra downsampling convolution
@@ -225,6 +227,7 @@ class ResNetBase(nn.Module):
                 res_pool=self.res_pool,
                 apply_norm=apply_bn,
                 enc_act=self.enc_act,
+                bn_momentum = self.bn_momentum,
                 dimension=self.D
             ))
             self.inplanes = planes * block.expansion
