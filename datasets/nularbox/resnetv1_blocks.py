@@ -60,12 +60,11 @@ class BasicBlock(nn.Module):
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
             if self.apply_norm:
                 res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes, momentum=bn_momentum)
+                ## Avoid duplicating these parameters in the sum
+                res['res_norm'].bn.bias.requires_grad_(False)
             self.shortcut = nn.Sequential(res)
         else:
             self.shortcut = None
-
-        ## Avoid duplicating these parameters in the sum
-        res['res_norm'].bn.bias.requires_grad_(False)
 
         
     def forward(self, x):
@@ -142,14 +141,15 @@ class Bottleneck(nn.Module):
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=1, dimension=dimension)
             else:
                 res['res_conv'] = ME.MinkowskiConvolution(inplanes, self.expansion*planes, kernel_size=1, stride=stride, dimension=dimension)
-            if self.apply_norm: res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes, momentum=bn_momentum)
+            if self.apply_norm:
+                res['res_norm'] = ME.MinkowskiBatchNorm(self.expansion*planes, momentum=bn_momentum)
+                ## Avoid duplicating these parameters in the sum
+                res['res_norm'].bn.bias.requires_grad_(False)
             self.shortcut = nn.Sequential(res)
         else:
             self.shortcut = None
 
-        ## Avoid duplicating these parameters in the sum
-        res['res_norm'].bn.bias.requires_grad_(False)
-        
+
     def forward(self, x):
         residual = self.shortcut(x) if self.shortcut is not None else x
         out = self.conv1(x)
