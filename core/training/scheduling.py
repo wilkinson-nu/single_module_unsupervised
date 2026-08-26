@@ -2,20 +2,22 @@ import torch
 import math
 from torch import optim
 from core.training.lars import LARS, LARS_LRScheduler
+from datasets.nularbox.resnetv1_blocks import Bottleneck, BasicBlock
 
 def get_final_residual_gamma_ids(encoder):
-    residual_gamma_ids = set()
+    enc = encoder.module if hasattr(encoder, "module") else encoder
+    ids = set()
 
-    for module in encoder.modules():
+    for module in enc.modules():
         if isinstance(module, Bottleneck):
             if module.norm3 is not None:
-                residual_gamma_ids.add(id(module.norm3.bn.weight))
+                ids.add(id(module.norm3.bn.weight))
 
         elif isinstance(module, BasicBlock):
             if module.norm2 is not None:
-                residual_gamma_ids.add(id(module.norm2.bn.weight))
+                ids.add(id(module.norm2.bn.weight))
 
-    return residual_gamma_ids
+    return ids
 
 def get_opt_and_sched(args, encoder, heads, total_steps, world_size, print_debug=False):
 
@@ -98,7 +100,7 @@ def build_param_groups(encoder,
         if not param.requires_grad:
             continue
 
-        if if(param) in residual_gamma_ids:
+        if id(param) in residual_gamma_ids:
             residual_gamma_params.append(param)
             residual_gamma_names.append(name)
         elif param.ndim == 1 or name.endswith(".bias"):
