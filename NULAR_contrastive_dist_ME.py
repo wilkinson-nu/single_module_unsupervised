@@ -281,11 +281,11 @@ def run_training(rank, local_rank, world_size, args):
     heads["proj"] = proj_head
 
     ## TODO add some protection here in case arguments are missing
-    if proj_loss == "simclr":
+    if args.proj_loss == "simclr":
         print(f"LOSS: SimCLR")
         print(f"      temp = {args.proj_temp}")
         loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
-    elif proj_loss == "vicreg":
+    elif args.proj_loss == "vicreg":
         print(f"LOSS: VICReg")
         print(f"      sim_coeff = {args.vicreg_sim_coeff}")
         print(f"      std_coeff = {args.vicreg_std_coeff}")
@@ -294,7 +294,7 @@ def run_training(rank, local_rank, world_size, args):
                                                  args.vicreg_std_coeff,
                                                  args.vicreg_cov_coeff)
     else:
-        raise ValueError(f"Unknown projection head loss: {proj_loss}")
+        raise ValueError(f"Unknown projection head loss: {args.proj_loss}")
         
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
@@ -437,7 +437,8 @@ def run_training(rank, local_rank, world_size, args):
 
             ## Deal with the projection loss
             proj_batch = heads["proj"](encoded_batch)
-            proj_loss, proj_loss_parts = loss_fns["proj"](proj_batch)*instance_scale
+            proj_loss, proj_loss_parts = loss_fns["proj"](proj_batch)
+            proj_loss *= instance_scale
                 
             tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
