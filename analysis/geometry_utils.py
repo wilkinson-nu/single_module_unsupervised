@@ -2,28 +2,35 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import normalize
 
 def preprocess_embeddings(
         X,
         pca=None,
+        center=False,
+        normalize_before_pca=True,
+        normalize_after_pca=False,
         drop_first_pca=False,
+        random_state=0,
         whiten=False,
-        spherical=False,
 ):
 
     X = X.astype(np.float32)
 
-    norms = np.linalg.norm(X, axis=1, keepdims=True)
-    X /= (norms + 1e-10)
-    print("L2-normalized embeddings")  
+    ## Initial L2 normalization
+    if normalize_before_pca: X = normalize(X, norm="l2", axis=1)
     
     # Center
-    X = X - X.mean(axis=0)
-    print("Centered embeddings:", X.shape)
+    if center: X = X - X.mean(axis=0)
+    #print("Centered embeddings:", X.shape)
 
     # PCA
     if pca is not None:
-        pca_model = PCA(n_components=pca, whiten=False)
+        pca_model = PCA(n_components=pca,
+                        whiten=whiten,
+                        svd_solver="randomized",
+                        random_state=random_state
+                        )
         X = pca_model.fit_transform(X)
         print(f"PCA reduced to {pca} components")
 
@@ -32,22 +39,10 @@ def preprocess_embeddings(
             X = X[:, 1:]
             print(f"Dropped first PCA component, new shape {X.shape}")
 
-        # Whitening (only for Euclidean metrics)
-        if whiten and not spherical:
-            if drop_first_pca:
-                ev = pca_model.explained_variance_[1:]
-            else:
-                ev = pca_model.explained_variance_
-            X /= np.sqrt(ev + 1e-10)
-            print("Whitened PCA components")
+    ## Optionally normalize at the end
+    if normalize_after_pca: X = normalize(X, norm="l2", axis=1)
 
-    # Spherical normalization for cosine / spherical metrics
-    if spherical:
-        norms = np.linalg.norm(X, axis=1, keepdims=True)
-        X /= (norms + 1e-10)
-        print("L2-normalized embeddings")
-
-    return X
+    return X.astype(np.float32) #, pca_model
 
 def cosine_similarity_distribution(A, B, centering=True):
     A = A.copy()
