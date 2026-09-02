@@ -29,14 +29,14 @@ def setup_distributed_runtime(
     )
 
     ## Seeding on each rank
-    seed = args.seed + rank
+    seed = seed + rank
     torch.manual_seed(seed)
     np.random.seed(seed % (2**32))
     random.seed(seed)
 
     ## DataLoader workers get one thread, so reserve the remaining CPUs for the main process
     cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
-    main_threads = max(1, min(8, cpus - args.num_workers))
+    main_threads = max(1, min(8, cpus - num_workers))
 
     torch.set_num_threads(main_threads)
     torch.set_num_interop_threads(1)
@@ -44,7 +44,7 @@ def setup_distributed_runtime(
     print0(
         f"Distributed setup: world_size={world_size}, "
         f"main_threads={main_threads}, "
-        f"workers={args.num_workers}"
+        f"workers={num_workers}"
     )
 
     if print_cpu_affinity:
