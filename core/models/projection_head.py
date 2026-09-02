@@ -49,7 +49,8 @@ class ProjectionHeadTwoLayer(nn.Module):
         proj = OrderedDict()
         if self.init_bn:
             proj['norm0'] = nn.BatchNorm1d(self.nchan, affine=True)
-
+            proj['act0'] = self.hidden_act_fn()
+            
         proj['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=not self.apply_bn)
         if self.apply_bn:
             proj['norm1'] = nn.BatchNorm1d(self.nhidden, affine=True)
@@ -77,9 +78,10 @@ class ProjectionHeadTwoLayer(nn.Module):
 
     def forward(self, x, return_hidden=False):
 
-        ## Separate execution so hidden layers can be returned                                                                                                                                                     
+        ## Separate execution so hidden layers can be returned
         if self.init_bn:
             x = self.proj.norm0(x)
+            x = self.proj.act0(x)
 
         h1 = self.proj.lin1(x)
         if self.apply_bn: h1 = self.proj.norm1(h1)
@@ -122,6 +124,7 @@ class ProjectionHeadThreeLayer(nn.Module):
         proj = OrderedDict()
         if self.init_bn:
             proj['norm0'] = nn.BatchNorm1d(self.nchan, affine=True)
+            proj['act0'] = self.hidden_act_fn()
                 
         proj['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=not self.apply_bn)
         if self.apply_bn:
@@ -158,6 +161,7 @@ class ProjectionHeadThreeLayer(nn.Module):
         ## Separate execution so hidden layers can be returned
         if self.init_bn:
             x = self.proj.norm0(x)
+            x = self.proj.act0(x)
 
         h1 = self.proj.lin1(x)
         if self.apply_bn: h1 = self.proj.norm1(h1)
