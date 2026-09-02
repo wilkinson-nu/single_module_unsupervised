@@ -11,8 +11,14 @@ from collections import OrderedDict
 
 class paired_2d_dataset_ME(Dataset):
 
-    def __init__(self, infile_dir, nom_transform, aug_transform=None,
-                 max_events=None, projection="xz", max_open=9999):
+    def __init__(self,
+                 infile_dir,
+                 nom_transform=None,
+                 aug_transform=None,
+                 max_events=None,
+                 projection="xz",
+                 max_open=9999
+                 ):
         self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
         self.file_indices = []
         self.nom_transform = nom_transform
@@ -35,6 +41,12 @@ class paired_2d_dataset_ME(Dataset):
         ## Apply some limitation to the size
         if self.max_events and max_events < self.length:
             self.length = self.max_events
+
+    @staticmethod
+    def _apply_transform(transform, coords, feats):
+        if transform is None:
+            return coords, feats
+        return transform(coords, feats)
             
     def create_file_indices(self):
         cumulative_size = 0
@@ -97,19 +109,20 @@ class paired_2d_dataset_ME(Dataset):
             row = d[f'{self.proj}_row'][s:e]
             col = d[f'{self.proj}_col'][s:e]
             raw_coords = np.vstack((row, col)).T
-        
+
+        ## Apply a nom_transform if it exists
+        nom_coords, nom_feats = self._apply_transform(self.nom_transform, raw_coords, raw_feats)
+
         ## Apply transforms to augment the data
         if not self.aug_transform:
-            raw_coords, raw_feats = self.nom_transform(raw_coords, raw_feats)
             aug1_coords,aug1_feats = raw_coords,raw_feats
             aug2_coords,aug2_feats = raw_coords,raw_feats
         else:
             ## Make sure the images aren't empty...            
             aug1_coords, aug1_feats = self.apply_aug_with_retry(raw_coords, raw_feats)
             aug2_coords, aug2_feats = self.apply_aug_with_retry(raw_coords, raw_feats)
-            raw_coords, raw_feats   = self.nom_transform(raw_coords, raw_feats)
 
-        return aug1_coords, aug1_feats, aug2_coords, aug2_feats, raw_coords, raw_feats
+        return aug1_coords, aug1_feats, aug2_coords, aug2_feats, nom_coords, nom_feats
 
     
 def triple_ME_collate_fn(batch):
