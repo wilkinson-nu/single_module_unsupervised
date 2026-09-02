@@ -43,7 +43,11 @@ from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
 from core.supervised import SupervisedHead, supervised_loss, ClassificationMetrics
 
-from core.dist_utils import setup_dist
+## Utilities for multi-rank training
+from core.dist_utils import setup_distributed_runtime, print0
+
+## Checkpointing
+from core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
 
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
@@ -101,57 +105,6 @@ def get_supervised_dataloaders(args, rank, world_size):
                                                  prefetch_factor=4,
                                                  sampler=val_sampler)
     return train_dataset, train_dataloader, val_dataset, val_dataloader
-
-    
-def load_pretrained(encoder, heads, file_name):
-    checkpoint = torch.load(file_name, map_location='cpu')
-    encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
-
-    ## Load heads as requested
-    for name, head in heads.items():
-        key = f'{name}_head_state_dict'
-        if key in checkpoint:
-            head.module.load_state_dict(checkpoint[key])
-    return
-
-def load_checkpoint(encoder, heads, optimizer, state_file_name):
-    checkpoint = torch.load(state_file_name, map_location='cpu')
-    encoder.module.load_state_dict(checkpoint['encoder_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    torch.set_rng_state(checkpoint['rng_state'].cpu())
-    torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
-
-    ## Load heads as requested
-    for	name, head in heads.items():
-        key = f'{name}_head_state_dict'
-        if key in checkpoint:
-            head.module.load_state_dict(checkpoint[key])
-
-    ## Load metrics
-    metrics = defaultdict(list, checkpoint.get("metrics", {}))
-    
-    start_epoch = checkpoint['epoch'] + 1
-
-    return start_epoch, metrics
-
-def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metrics, args):
-
-    state_dict = {
-        'epoch': iteration,
-        'encoder_state_dict': encoder.module.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'rng_state': torch.get_rng_state(),
-        'cuda_rng_state': torch.cuda.get_rng_state_all(),
-        'metrics': dict(metrics),
-        'args':vars(args)
-    }
-
-    ## Save heads as needed:
-    for name, head in heads.items():
-        state_dict[f'{name}_head_state_dict'] = head.module.state_dict()
-
-    torch.save(state_dict, state_file_name)
-    
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
@@ -225,7 +178,7 @@ def run_training(rank, local_rank, world_size, args):
         if not args.state_file:
             if rank==0: print("Restart requested, but no state file provided, aborting")
             sys.exit()
-        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, args.state_file)
+        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, scheduler, args.state_file)
         if rank==0: print("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
@@ -483,7 +436,7 @@ def run_training(rank, local_rank, world_size, args):
         ## For checkpointing
 
         #if rank==0 and iteration%25 == 0 and iteration != 0:
-        #    save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
+        #    save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file+".check"+str(iteration), iteration, metrics, args)
 
         ## Add per GPU logging
         allocated_gb = torch.tensor(torch.cuda.memory_allocated() / 1e9, device=device)
@@ -522,7 +475,7 @@ def run_training(rank, local_rank, world_size, args):
             
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, heads, optimizer, args.state_file, iteration, metrics, args)
+        save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file, iteration, metrics, args)
         if log_dir: writer.close()
 
     ## Report profiler if requested
