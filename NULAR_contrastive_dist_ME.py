@@ -4,7 +4,6 @@ import sys
 import MinkowskiEngine as ME
 import torch
 import time
-import datetime
 import math
 import random
 from collections import defaultdict
@@ -48,18 +47,7 @@ from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
 from core.supervised import ClassificationMetrics
 from core.analysis.knn_monitoring import MONITOR_LABELS, extract_features, knn_votes
-
-## For parallelising things
-def setup_dist(rank, local_rank, world_size):
-    torch.cuda.set_device(local_rank)    
-    dist.init_process_group(
-        backend='nccl',
-        init_method='env://',
-        world_size=world_size,
-        rank=rank,
-        timeout=datetime.timedelta(minutes=30),
-        device_id=torch.device(f"cuda:{local_rank}"),
-    )
+from core.dist_utils import setup_dist, print0
 
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
@@ -83,7 +71,7 @@ def get_training_dataloader(args, rank, world_size):
 
     ## Make sure we have sufficient events
     assert len(dataset) >= args.nevents
-    if rank==0: print(f"Loaded {len(dataset)} training events")
+    print0(f"Loaded {len(dataset)} training events")
 
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
     dataloader = DataLoader(dataset,
@@ -122,7 +110,7 @@ def get_monitoring_dataloaders(args, rank, world_size):
     bank_indices = list(range(args.nevents, args.nevents + nbank))
     query_indices = list(range(args.nevents + nbank, args.nevents + nbank + nquery))
 
-    if rank==0: print(f"Loaded {nbank} bank and {nquery} events for monitoring")
+    print0(f"Loaded {nbank} bank and {nquery} events for monitoring")
 
     ## Get the concrete dataset
     bank_dataset = Subset(dataset_full, bank_indices)
@@ -229,7 +217,7 @@ def run_training(rank, local_rank, world_size, args):
 
     cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
     main_threads = max(1, min(8, cpus - args.num_workers))
-    if rank==0: print("Torch has", main_threads, "threads/task")
+    print0("Torch has", main_threads, "threads/task")
     torch.set_num_threads(main_threads)
     torch.set_num_interop_threads(1)
 
@@ -254,11 +242,6 @@ def run_training(rank, local_rank, world_size, args):
     encoder .to(device)
     encoder = DDP(encoder, device_ids=[local_rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
-    ## Temporary sanity check for SyncBN
-    n_sync = sum(isinstance(m, ME.MinkowskiSyncBatchNorm) for m in encoder.modules())
-    n_bn   = sum(isinstance(m, ME.MinkowskiBatchNorm) for m in encoder.modules())
-    print(f"encoder BN: {n_sync} sync / {n_bn} total")
-    
     ## Dictionary of heads
     heads = {}
     
@@ -274,21 +257,21 @@ def run_training(rank, local_rank, world_size, args):
 
     ## TODO add some protection here in case arguments are missing
     if args.proj_loss == "simclr":
-        print(f"LOSS: SimCLR")
-        print(f"      temp = {args.proj_temp}")
+        print0(f"LOSS: SimCLR")
+        print0(f"      temp = {args.proj_temp}")
         loss_fns["proj"] = NTXentMergedMultiGPU(args.proj_temp)
     elif args.proj_loss == "vicreg":
-        print(f"LOSS: VICReg")
-        print(f"      sim_coeff = {args.vicreg_sim_coeff}")
-        print(f"      std_coeff = {args.vicreg_std_coeff}")
-        print(f"      cov_coeff = {args.vicreg_cov_coeff}")        
+        print0(f"LOSS: VICReg")
+        print0(f"      sim_coeff = {args.vicreg_sim_coeff}")
+        print0(f"      std_coeff = {args.vicreg_std_coeff}")
+        print0(f"      cov_coeff = {args.vicreg_cov_coeff}")        
         loss_fns["proj"] = VICRegLossDistributed(args.vicreg_sim_coeff,
                                                  args.vicreg_std_coeff,
                                                  args.vicreg_cov_coeff)
     else:
         raise ValueError(f"Unknown projection head loss: {args.proj_loss}")
 
-    print("Set up loss")
+    print0("Set up loss")
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
         clust_head = get_clusthead(encoder_nchan_cluster, args)
@@ -311,9 +294,9 @@ def run_training(rank, local_rank, world_size, args):
     weight_decay = args.weight_decay
     weight_decay_final = args.weight_decay_final
     
+    print0("Training with", num_iterations, "iterations")
     writer = None
     if rank==0 and log_dir is not None:
-        print("Training with", num_iterations, "iterations")
         writer = SummaryWriter(log_dir=log_dir)
 
     ## Sort out the optimizer (one for each GPU...)
@@ -332,16 +315,16 @@ def run_training(rank, local_rank, world_size, args):
     start_iteration = 0
     if args.restart:
         if not args.state_file:
-            if rank==0: print("Restart requested, but no state file provided, aborting")
+            print0("Restart requested, but no state file provided, aborting")
             sys.exit()
         start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, scheduler, args.state_file)
         global_iter = start_iteration*nbatches
-        if rank==0: print("Restarting from iteration", start_iteration)
+        print0("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
     if args.pretrained:
         if args.restart:
-            if rank==0: print("Restart requested along with a pretraining file, abort!")
+            print0("Restart requested along with a pretraining file, abort!")
             sys.exit()
         load_pretrained(encoder, heads, args.pretrained)
 
@@ -363,7 +346,7 @@ def run_training(rank, local_rank, world_size, args):
     global_iter = 0
     for iteration in range(start_iteration, start_iteration+num_iterations):
 
-        print(f"Start of iteration {iteration}")
+        print0(f"Start of iteration {iteration}")
         # Ensure shuffling with the sampler each epoch
         train_loader.sampler.set_epoch(iteration)
         
@@ -656,8 +639,8 @@ def run_training(rank, local_rank, world_size, args):
             
             if "clust" in heads:
                 iter_string += f" ({av_losses['proj']:.4f} + {av_losses['clust']:.4f} + {av_entropy:.4f}); acc = {av_acc:.4f}"
-            print(iter_string)
-            print(f"Time taken: {(time.time()-tstart):.2f}")
+            print0(iter_string)
+            print0(f"Time taken: {(time.time()-tstart):.2f}")
             
         ## For checkpointing
         #if rank==0 and iteration%25 == 0 and iteration != 0:
@@ -810,9 +793,8 @@ if __name__ == '__main__':
     local_rank = int(os.environ["SLURM_LOCALID"])
     world_size = int(os.environ["SLURM_NTASKS"])
     
-    ## Report arguments (but only rank 0)
-    if rank==0:
-        for arg in vars(args): print(arg, getattr(args, arg))
+    ## Report arguments
+    for arg in vars(args): print0(arg, getattr(args, arg))
 
     ## Removed mp.spawn, now requires srun
     run_training(rank, local_rank, world_size, args)
