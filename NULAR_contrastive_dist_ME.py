@@ -12,7 +12,6 @@ from functools import partial
 ## The parallelisation libraries
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
 from torch.profiler import profile, record_function, ProfilerActivity
 
@@ -28,20 +27,16 @@ from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_g
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 from core.training.lars import log_lars_diagnostics
 
+from core.data.dataloaders import build_paired_training_data, build_knn_monitoring_data
+
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
-from threadpoolctl import threadpool_limits
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
 
 ## Import transformations
-from core.data.augmentations_2d import DoNothing
 from datasets.nularbox.augmentations_2d import get_transform
-
-## Import dataset
-from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
-from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 
 ## Supervised for kNN monitoring
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
@@ -53,104 +48,6 @@ from core.dist_utils import setup_distributed_runtime, print0
 
 ## Checkpointing
 from core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
-
-def worker_init_fn(worker_id):
-    threadpool_limits(limits=1)
-    seed = torch.initial_seed() % 2**32
-    np.random.seed(seed)
-    random.seed(seed)
-
-def get_training_dataloader(args, rank, world_size):
-
-    ## Get the augmentation from the argument name
-    aug_transform = get_transform(args.out_image_size,
-                                  args.aug_type,
-                                  args.aug_prob,
-                                  getattr(args, "aug_val", None))
-    
-    ## Get the concrete dataset
-    dataset = paired_2d_dataset_ME(args.data_dir, 
-                                   nom_transform=DoNothing(),
-                                   aug_transform=aug_transform,
-                                   max_events=args.nevents)
-
-    ## Make sure we have sufficient events
-    assert len(dataset) >= args.nevents
-    print0(f"Loaded {len(dataset)} training events")
-
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
-    dataloader = DataLoader(dataset,
-                            collate_fn=cat_ME_collate_fn,
-                            batch_size=args.batch_size,
-                            shuffle=False,  # Set to False, as DistributedSampler handles shuffling
-                            num_workers=args.num_workers,
-                            worker_init_fn=worker_init_fn,
-                            drop_last=True,
-                            persistent_workers=True,
-                            prefetch_factor=2,
-                            sampler=sampler)
-    
-    return dataset, dataloader
-
-
-def get_monitoring_dataloaders(args, rank, world_size):
-
-    ## Get a default "no augmentation" set to crop to the right size image
-    nom_transform = get_transform(args.out_image_size,
-                                  "no_aug")
-
-    ## Rounding to make sure everything is cleanly divisible into the number of ranks
-    nbank = (args.knn_nbank // world_size) * world_size
-    nquery = (args.knn_nquery // world_size) * world_size
-    
-    ## Get the full dataset for monitoring...
-    dataset_full = single_2d_dataset_ME(args.data_dir, 
-                                        transform=nom_transform, 
-                                        max_events=args.nevents + nbank + nquery)
-
-    ## Make sure we have enough events available
-    assert len(dataset_full) >= args.nevents + nbank + nquery
-    
-    ## ... and drop the events used for training
-    bank_indices = list(range(args.nevents, args.nevents + nbank))
-    query_indices = list(range(args.nevents + nbank, args.nevents + nbank + nquery))
-
-    print0(f"Loaded {nbank} bank and {nquery} events for monitoring")
-
-    ## Get the concrete dataset
-    bank_dataset = Subset(dataset_full, bank_indices)
-    query_dataset = Subset(dataset_full, query_indices)
-
-    bank_sampler = DistributedSampler(bank_dataset, num_replicas=world_size, rank=rank, shuffle=False)
-    query_sampler = DistributedSampler(query_dataset, num_replicas=world_size, rank=rank, shuffle=False)
-    
-    ## Slightly hacky way to manipulate the labels
-    collate_fn = partial(solo_labelled_collate_fn,
-                         label_clamp=LABEL_CLAMP,
-                         derived_labels=DERIVED_LABELS)
-    
-    bank_dataloader = DataLoader(bank_dataset,
-                                 collate_fn=collate_fn,
-                                 batch_size=args.batch_size,
-                                 shuffle=False,
-                                 num_workers=2,
-                                 worker_init_fn=worker_init_fn,
-                                 drop_last=False,
-                                 persistent_workers=True,
-                                 prefetch_factor=2,
-                                 sampler=bank_sampler)
-    query_dataloader = DataLoader(query_dataset,
-                                  collate_fn=collate_fn,
-                                  batch_size=args.batch_size,
-                                  shuffle=False,
-                                  num_workers=2,
-                                  worker_init_fn=worker_init_fn,
-                                  drop_last=False,
-                                  persistent_workers=True,
-                                  prefetch_factor=2,
-                                  sampler=query_sampler)
-    return bank_dataloader, query_dataloader
-
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
@@ -211,7 +108,7 @@ def run_training(rank, local_rank, world_size, args):
     else:
         raise ValueError(f"Unknown projection head loss: {args.proj_loss}")
 
-    print0("Set up loss")
+
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
         clust_head = get_clusthead(encoder_nchan_cluster, args)
@@ -221,10 +118,51 @@ def run_training(rank, local_rank, world_size, args):
         heads["clust"] = clust_head    
         loss_fns["clust"] = ClusteringLossMergedMultiGPU(args.clust_temp, args.entropy_scale)
         
-    ## Set up the distributed dataset
-    train_dataset, train_loader = get_training_dataloader(args, rank, world_size)
-    bank_loader, query_loader = get_monitoring_dataloaders(args, rank, world_size)
+    ## Set up the training dataset
+    train_transform = get_transform(
+        args.out_image_size,
+        args.aug_type,
+        args.aug_prob,
+        args.aug_val,
+    )
+    
+    train_dataset, train_loader = build_paired_training_data(
+        data_dir=args.data_dir,
+        nevents=args.nevents,
+        transform=train_transform,
+        rank=rank,
+        world_size=world_size,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        seed=args.seed,
+    )
     nbatches   = len(train_loader)
+
+    ## Setup the kNN dataset
+    knn_transform = get_transform(
+        args.out_image_size,
+        "no_aug",
+    )
+    
+    knn_collate = partial(
+        solo_labelled_collate_fn,
+        label_clamp=LABEL_CLAMP,
+        derived_labels=DERIVED_LABELS,
+    )
+    
+    bank_loader, query_loader = build_knn_monitoring_data(
+        data_dir=args.data_dir,
+        train_events=args.nevents,
+        nbank=args.knn_nbank,
+        nquery=args.knn_nquery,
+        transform=knn_transform,
+        collate_fn=knn_collate,
+        rank=rank,
+        world_size=world_size,
+        batch_size=args.batch_size,
+        num_workers=min(2, args.num_workers),
+        seed=args.seed,
+    )
     
     ## So we don't constantly ask args
     num_iterations = args.nepoch
