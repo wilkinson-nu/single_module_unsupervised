@@ -295,7 +295,8 @@ def run_training(rank, local_rank, world_size, args):
                                                  args.vicreg_cov_coeff)
     else:
         raise ValueError(f"Unknown projection head loss: {args.proj_loss}")
-        
+
+    print("Set up loss")
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
         clust_head = get_clusthead(encoder_nchan_cluster, args)
@@ -370,6 +371,7 @@ def run_training(rank, local_rank, world_size, args):
     global_iter = 0
     for iteration in range(start_iteration, start_iteration+num_iterations):
 
+        print(f"Start of iteration {iteration}")
         # Ensure shuffling with the sampler each epoch
         train_loader.sampler.set_epoch(iteration)
         
@@ -379,6 +381,7 @@ def run_training(rank, local_rank, world_size, args):
 
         ## This is only used by VICReg for now
         proj_part_sums = None
+        proj_part_names = None
         
         ## For monitoring
         total_acc_tensor = torch.tensor(0.0, device=device)
@@ -444,16 +447,19 @@ def run_training(rank, local_rank, world_size, args):
             losses_tensor["proj"] += proj_loss.detach()
 
             ## This is for VICReg for now
-            if len(proj_loss_parts) > 0:
-                if proj_part_sums is None:
-                    proj_part_sums = {
-                        name: torch.zeros((), device=device, dtype=torch.float64)
-                        for name in proj_loss_parts
-                    }
-                for name, value in proj_loss_parts.items():
-                    # These diagnostics should be scalar tensors.
-                    proj_part_sums[name] += value.detach().double()
-            
+            if proj_loss_parts:
+                if proj_part_names is None:
+                    proj_part_names = tuple(sorted(proj_loss_parts))
+                    proj_part_sums = torch.zeros(
+                        len(proj_part_names),
+                        device=device,
+                        dtype=torch.float64,
+                    )
+                proj_part_sums += torch.stack([
+                    proj_loss_parts[name].detach()
+                    for name in proj_part_names
+                ])
+                    
             ## Add to metrics
             total_enc_align_tensor += alignment(encoded_batch)
             total_enc_unif_tensor += uniformity(encoded_batch)
@@ -540,13 +546,10 @@ def run_training(rank, local_rank, world_size, args):
 
         ## Deal with VICReg components
         if proj_part_sums is not None:
-            proj_part_names = list(proj_part_sums.keys())
-            
-            packed = torch.stack([proj_part_sums[name] for name in proj_part_names])    
-            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+            dist.all_reduce(proj_part_sums, op=dist.ReduceOp.SUM)
         
             av_proj_loss_parts = {
-                name: packed[i].item() /  (nbatches * world_size)
+                name: proj_part_sums[i].item() /  (nbatches * world_size)
                 for i, name in enumerate(proj_part_names)
             }
         
