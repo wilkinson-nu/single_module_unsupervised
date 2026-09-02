@@ -77,8 +77,7 @@ def run_training(rank, local_rank, world_size, args):
     encoder = get_encoder(args)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)
     
-    encoder_nchan_instance = encoder.get_nchan()
-    encoder_nchan_cluster = encoder.get_nchan()
+    encoder_nchan = encoder.get_nchan()
     encoder .to(device)
     encoder = DDP(encoder, device_ids=[local_rank])  ## Sort out parallel models (e.g., one is sent to each GPU)
 
@@ -89,7 +88,7 @@ def run_training(rank, local_rank, world_size, args):
     loss_fns = {}
 
     ## Set up head and loss for projection space
-    proj_head = get_projhead(encoder_nchan_instance, args)
+    proj_head = get_projhead(encoder_nchan, args)
     proj_head = nn.SyncBatchNorm.convert_sync_batchnorm(proj_head)
     proj_head .to(device)
     proj_head = DDP(proj_head, device_ids=[local_rank])
@@ -114,7 +113,7 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Optionally include the head and loss for the clustering space
     if args.clust_arch != "none":
-        clust_head = get_clusthead(encoder_nchan_cluster, args)
+        clust_head = get_clusthead(encoder_nchan, args)
         clust_head = nn.SyncBatchNorm.convert_sync_batchnorm(clust_head)
         clust_head .to(device)
         clust_head = DDP(clust_head, device_ids=[local_rank])
