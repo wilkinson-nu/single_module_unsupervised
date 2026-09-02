@@ -1,7 +1,6 @@
 import torch
 import torch.distributed as dist
 import datetime
-import builtins
 import numpy as np
 import random
 import os
@@ -52,16 +51,6 @@ def setup_distributed_runtime(
 
     return device
 
-
-def print0(*args, **kwargs):
-    """Print only from rank 0, or normally if distributed is not initialized."""
-    if (
-        not dist.is_available()
-        or not dist.is_initialized()
-        or dist.get_rank() == 0
-    ):
-        kwargs.setdefault("flush", True)
-        builtins.print(*args, **kwargs)
 
 def print_affinity(rank, local_rank, world_size):
 
