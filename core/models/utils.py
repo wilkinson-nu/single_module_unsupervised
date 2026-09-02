@@ -35,3 +35,10 @@ def get_act_from_string(act_name):
         return nn.Softsign
     return None
 
+def print_model_summary(model):
+    total_params = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Layer: {name} | Size: {param.size()} | Number of parameters: {param.numel()}")
+            total_params += param.numel()
+    print("Total parameters =", total_params)

@@ -52,14 +52,6 @@ def setup(rank, world_size):
         rank=rank
     )
 
-def print_model_summary(model):
-    total_params = 0
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"Layer: {name} | Size: {param.size()} | Number of parameters: {param.numel()}")
-            total_params += param.numel()
-    print("Total parameters =", total_params)
-
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
     seed = torch.initial_seed() % 2**32
