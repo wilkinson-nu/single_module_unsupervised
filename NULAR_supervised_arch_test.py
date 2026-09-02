@@ -492,6 +492,7 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
     parser.add_argument('--clip_gradients', type=int, choices=[0,1], default=0)
     parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
+    parser.add_argument('--non_lars_lr_scale', type=float, default=1.0)
 
     ## Image size and augmentations
     parser.add_argument('--out_image_size', type=int, default=256)
