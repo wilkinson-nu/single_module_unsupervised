@@ -25,7 +25,7 @@ from core.analysis.metrics import uniformity, alignment, basic_geometry_metrics
 from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
-from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat, print_affinity
+from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
 from threadpoolctl import threadpool_limits
 
@@ -43,14 +43,7 @@ from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
 from core.supervised import SupervisedHead, supervised_loss, ClassificationMetrics
 
-## For parallelising things
-def setup(rank, world_size):
-    dist.init_process_group(
-        backend='nccl',
-        init_method='env://',
-        world_size=world_size,
-        rank=rank
-    )
+from core.dist_utils import setup_dist
 
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
@@ -164,24 +157,14 @@ def save_checkpoint(encoder, heads, optimizer, state_file_name, iteration, metri
 def run_training(rank, local_rank, world_size, args):
 
     ## For parallel work
-    setup(rank, world_size)
-    torch.manual_seed(args.seed + rank)
-    np.random.seed(args.seed + rank)
-    random.seed(args.seed + rank)
-    
-    ## Need a local device (allowing multiple nodes)
-    torch.cuda.set_device(local_rank)
-    device = torch.device(f'cuda:{local_rank}')
-
-    cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
-    main_threads = max(1, min(8, cpus - args.num_workers))
-    if rank==0: print("Torch has", main_threads, "threads/task")
-    torch.set_num_threads(main_threads)
-    torch.set_num_interop_threads(1)
-    
-    ## A debugging test
-    print_affinity(rank, local_rank, world_size)
-    dist.barrier()
+    device = setup_distributed_runtime(
+        rank,
+        local_rank,
+        world_size,
+        seed=args.seed,
+        num_workers=args.num_workers,
+        print_cpu_affinity=True,
+    )
 
     if bool(args.run_profiler) and rank==0:
         torch.cuda.set_sync_debug_mode("warn")

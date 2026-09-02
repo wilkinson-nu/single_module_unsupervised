@@ -28,7 +28,7 @@ from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_g
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 from core.training.lars import log_lars_diagnostics
 
-from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat, print_affinity
+from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
 from threadpoolctl import threadpool_limits
 
@@ -47,7 +47,7 @@ from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
 from core.supervised import ClassificationMetrics
 from core.analysis.knn_monitoring import MONITOR_LABELS, extract_features, knn_votes
-from core.dist_utils import setup_dist, print0
+from core.dist_utils import setup_distributed_runtime, print0
 
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
@@ -209,21 +209,14 @@ def save_checkpoint(encoder, heads, optimizer, scheduler, state_file_name, itera
 def run_training(rank, local_rank, world_size, args):
 
     ## For parallel work
-    setup_dist(rank, local_rank, world_size)
-    torch.manual_seed(args.seed + rank)
-    np.random.seed(args.seed + rank)
-    random.seed(args.seed + rank)
-    device = torch.device(f'cuda:{local_rank}')
-
-    cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
-    main_threads = max(1, min(8, cpus - args.num_workers))
-    print0("Torch has", main_threads, "threads/task")
-    torch.set_num_threads(main_threads)
-    torch.set_num_interop_threads(1)
-
-    ## A debugging test
-    print_affinity(rank, local_rank, world_size)
-    dist.barrier()
+    device = setup_distributed_runtime(
+        rank,
+        local_rank,
+        world_size,
+        seed=args.seed,
+        num_workers=args.num_workers,
+        print_cpu_affinity=True,
+    )
 
     if bool(args.run_profiler) and rank==0:
         torch.cuda.set_sync_debug_mode("warn")
