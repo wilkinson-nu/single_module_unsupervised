@@ -12,7 +12,6 @@ from functools import partial
 ## The parallelisation libraries
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler, Subset
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -33,11 +32,11 @@ from threadpoolctl import threadpool_limits
 from torch.utils.tensorboard import SummaryWriter
 
 ## Import transformations
-from core.data.augmentations_2d import DoNothing
 from datasets.nularbox.augmentations_2d import get_transform
 
 ## Import dataset
-from core.data.datasets import single_2d_dataset_ME, solo_labelled_collate_fn
+from core.data.datasets import solo_labelled_collate_fn
+from core.data.dataloaders import build_supervised_dataloaders
 
 ## Supervised learning specific
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
@@ -48,63 +47,6 @@ from core.dist_utils import setup_distributed_runtime, print0
 
 ## Checkpointing
 from core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
-
-def worker_init_fn(worker_id):
-    threadpool_limits(limits=1)
-    seed = torch.initial_seed() % 2**32
-    np.random.seed(seed)
-    random.seed(seed)
-
-def get_supervised_dataloaders(args, rank, world_size):
-
-    ## Get the augmentation from the argument name
-    aug_transform = get_transform(args.out_image_size, args.aug_type, args.aug_prob, getattr(args, "aug_val", None))
-    
-    ## Get the concrete dataset
-    full_dataset = single_2d_dataset_ME(args.data_dir, \
-                                   transform=aug_transform, \
-                                   max_events=args.nevents)
-    if rank==0:
-        print(f"Loaded {len(full_dataset)} events, "
-              f"training with {args.nevents}, validating with {args.nval}")
-
-    ## Split indices -- no shuffle needed since data is already randomly ordered
-    train_indices = list(range(args.nevents))
-    val_indices = list(range(args.nevents, args.nevents + args.nval))
-
-    train_dataset = Subset(full_dataset, train_indices)
-    val_dataset = Subset(full_dataset, val_indices)
-    
-    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False)
-    
-    ## Slightly hacky way to manipulate the labels
-    this_collate_fn = partial(solo_labelled_collate_fn,
-                              label_clamp=LABEL_CLAMP,
-                              derived_labels=DERIVED_LABELS)
-    
-    train_dataloader = torch.utils.data.DataLoader(train_dataset,
-                                                   collate_fn=this_collate_fn,
-                                                   batch_size=args.batch_size,
-                                                   shuffle=False,
-                                                   num_workers=args.num_workers,
-                                                   worker_init_fn=worker_init_fn,
-                                                   drop_last=True,
-                                                   persistent_workers=True,
-                                                   prefetch_factor=4,
-                                                   sampler=train_sampler)
-    
-    val_dataloader = torch.utils.data.DataLoader(val_dataset,
-                                                 collate_fn=this_collate_fn,
-                                                 batch_size=args.batch_size,
-                                                 shuffle=False,
-                                                 num_workers=args.num_workers,
-                                                 worker_init_fn=worker_init_fn,
-                                                 drop_last=True,
-                                                 persistent_workers=True,
-                                                 prefetch_factor=4,
-                                                 sampler=val_sampler)
-    return train_dataset, train_dataloader, val_dataset, val_dataloader
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
@@ -149,7 +91,37 @@ def run_training(rank, local_rank, world_size, args):
     loss_fns["sup"] = supervised_loss
     
     ## Set up the distributed dataset
-    train_dataset, train_loader, val_dataset, val_loader = get_supervised_dataloaders(args, rank, world_size)
+    train_transform = get_transform(
+        args.out_image_size,
+        args.aug_type,
+        args.aug_prob,
+        args.aug_val,
+    )
+    
+    val_transform = get_transform(
+        args.out_image_size,
+        "no_aug",
+    )
+    
+    labelled_collate = partial(
+        solo_labelled_collate_fn,
+        label_clamp=LABEL_CLAMP,
+        derived_labels=DERIVED_LABELS,
+    )
+    
+    train_dataset, train_loader, val_dataset, val_loader = build_supervised_dataloaders(
+        data_dir=args.data_dir,
+        ntrain=args.nevents,
+        nval=args.nval,
+        train_transform=train_transform,
+        val_transform=val_transform,
+        rank=rank,
+        world_size=world_size,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        collate_fn=labelled_collate,
+        seed=args.seed,
+    )
     nbatches   = len(train_loader)
     
     ## So we don't constantly ask args
@@ -159,10 +131,11 @@ def run_training(rank, local_rank, world_size, args):
     norm_encoder = bool(args.norm_encoder)
     weight_decay = args.weight_decay
     weight_decay_final = args.weight_decay_final
+
+    print0("Training with", num_iterations, "iterations")
     
     writer = None
     if rank==0 and log_dir is not None:
-        print("Training with", num_iterations, "iterations")
         writer = SummaryWriter(log_dir=log_dir)
 
     ## Sort out the optimizer (one for each GPU...)
@@ -176,15 +149,15 @@ def run_training(rank, local_rank, world_size, args):
     start_iteration = 0
     if args.restart:
         if not args.state_file:
-            if rank==0: print("Restart requested, but no state file provided, aborting")
+            print0("Restart requested, but no state file provided, aborting")
             sys.exit()
         start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, scheduler, args.state_file)
-        if rank==0: print("Restarting from iteration", start_iteration)
+        print0("Restarting from iteration", start_iteration)
 
     ## Load the pretrained model if given
     if args.pretrained:
         if args.restart:
-            if rank==0: print("Restart requested along with a pretraining file, abort!")
+            print0("Restart requested along with a pretraining file, abort!")
             sys.exit()
         load_pretrained(encoder, heads, args.pretrained)
 
@@ -415,8 +388,8 @@ def run_training(rank, local_rank, world_size, args):
 
             ## Build a string to report the outcome
             iter_string = f"Processed {iteration} / {start_iteration + num_iterations}; loss = {av_tot_loss:.4f} (val loss = {av_val_tot_loss:.4f})"
-            print(iter_string)
-            print(f"Time taken: {(time.time()-tstart):.2f}")
+            print0(iter_string)
+            print0(f"Time taken: {(time.time()-tstart):.2f}")
 
         ## Log validation now:
         if rank == 0:
@@ -555,8 +528,7 @@ if __name__ == '__main__':
     world_size = int(os.environ["SLURM_NTASKS"])
 
     ## Report arguments (but only rank 0)
-    if rank==0:
-        for arg in vars(args): print(arg, getattr(args, arg))
+    for arg in vars(args): print0(arg, getattr(args, arg))
     
     ## Removed mp.spawn, now requires srun
     run_training(rank, local_rank, world_size, args)

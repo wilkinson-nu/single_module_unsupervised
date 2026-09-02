@@ -166,3 +166,78 @@ def build_knn_monitoring_data(
 
     print0(f"Loaded {nbank} bank and {nquery} query events for monitoring")
     return bank_loader, query_loader
+
+
+def build_supervised_dataloaders(
+    *,
+    data_dir,
+    ntrain,
+    nval,
+    train_transform,
+    val_transform,
+    rank,
+    world_size,
+    batch_size,
+    num_workers,
+    collate_fn,
+    seed,
+):
+    required_events = ntrain + nval
+
+    train_full = single_2d_dataset_ME(
+        data_dir,
+        transform=train_transform,
+        max_events=required_events,
+    )
+    val_full = single_2d_dataset_ME(
+        data_dir,
+        transform=val_transform,
+        max_events=required_events,
+    )
+
+    if len(train_full) < required_events:
+        raise ValueError(
+            f"Requested {required_events} total events "
+            f"({ntrain} train + {nval} validation), but only "
+            f"{len(train_full)} are available"
+        )
+
+    train_dataset = Subset(
+        train_full,
+        range(0, ntrain),
+    )
+    val_dataset = Subset(
+        val_full,
+        range(ntrain, required_events),
+    )
+
+    train_loader = make_distributed_dataloader(
+        train_dataset,
+        rank=rank,
+        world_size=world_size,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        shuffle=True,
+        drop_last=True,
+        seed=seed,
+    )
+
+    val_loader = make_distributed_dataloader(
+        val_dataset,
+        rank=rank,
+        world_size=world_size,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
+        num_workers=num_workers,
+        shuffle=False,
+        drop_last=False,
+        seed=seed,
+    )
+
+    print0(
+        f"Loaded {required_events} events: "
+        f"{ntrain} training and {nval} validation"
+    )
+
+    return train_dataset, train_loader, val_dataset, val_loader
