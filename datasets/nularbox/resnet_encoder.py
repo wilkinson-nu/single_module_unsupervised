@@ -82,7 +82,7 @@ class ResNetBase(nn.Module):
             
         ## Add the option for a bottleneck layer
         if self.bottleneck_dim > 0:
-            self.bottleneck = nn.Linear(self.get_pool_nchan(), bottleneck_dim, bias=False)
+            self.bottleneck = nn.Linear(self.get_pool_nchan(), bottleneck_dim, bias=True)
         else:
             self.bottleneck = None
 
