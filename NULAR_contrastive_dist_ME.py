@@ -27,6 +27,8 @@ from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_g
 from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 from core.training.lars import log_lars_diagnostics
 
+## Import datasets
+from core.data.datasets import solo_labelled_collate_fn
 from core.data.dataloaders import build_paired_training_data, build_knn_monitoring_data
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
@@ -44,7 +46,8 @@ from core.supervised import ClassificationMetrics
 from core.analysis.knn_monitoring import MONITOR_LABELS, extract_features, knn_votes
 
 ## Utilities for multi-rank training
-from core.dist_utils import setup_distributed_runtime, print0
+from core.dist_utils import setup_distributed_runtime
+from core.utils import print0
 
 ## Checkpointing
 from core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint

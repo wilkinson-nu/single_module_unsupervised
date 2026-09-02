@@ -5,6 +5,7 @@ import numpy as np
 import random
 import os
 import subprocess
+from core.utils import print0
 
 def setup_distributed_runtime(
     rank,
