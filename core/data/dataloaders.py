@@ -100,7 +100,7 @@ def build_paired_training_data(
     return dataset, loader
 
 
-def build_knn_monitoring_data(
+def build_monitoring_data(
     *,
     data_dir,
     train_events,

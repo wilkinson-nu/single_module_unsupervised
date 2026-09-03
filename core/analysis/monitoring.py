@@ -2,9 +2,7 @@ import torch
 import MinkowskiEngine as ME
 import torch.distributed as dist
 import torch.nn.functional as F
-
-MONITOR_LABELS = {'nproton': 4, 'npipm': 3, 'npi0': 3,
-                  'nem': 3, 'ncluster': 4, 'ncharged': 6}
+from core.supervised import ClassificationMetrics
 
 @torch.no_grad()
 def extract_features(encoder, loader, device, label_names):
@@ -52,3 +50,178 @@ def knn_votes(q, bank, bank_lab, n_classes, k=20, T=0.1, chunk=2048):
         oh     = F.one_hot(bank_lab[ik], n_classes).float()
         out.append((oh * w.unsqueeze(-1)).sum(1))
     return torch.cat(out)
+
+
+def evaluate_knn(
+        bank_features,
+        bank_labels,
+        query_features,
+        query_labels,
+        *,
+        classifier_config,
+        device,
+        k,
+        temperature,
+):
+    metrics = ClassificationMetrics(
+        classifier_config,
+        device=device,
+    )
+    
+    votes = {
+        name: knn_votes(
+            query_features,
+            bank_features,
+            bank_labels[name],
+            cfg["n_classes"],
+            k=k,
+            T=temperature,
+        )
+        for name, cfg in classifier_config.items()
+    }
+
+    metrics.update(votes, query_labels)
+
+    # No reduce: features and labels are already globally gathered,
+    # and this calculation runs on rank 0.
+    return metrics.compute()
+
+def fit_linear_probe(
+    bank_features,
+    bank_labels,
+    query_features,
+    query_labels,
+    *,
+    classifier_config,
+    device,
+    epochs=20,
+    batch_size=1024,
+    lr=1e-2,
+    seed=12345,
+):
+    # Keep the extracted feature dataset on CPU.
+    bank_features = bank_features.detach().float().cpu()
+    query_features = query_features.detach().float().cpu()
+
+    bank_labels = {
+        name: labels.detach().long().cpu()
+        for name, labels in bank_labels.items()
+        if name in classifier_config
+    }
+    query_labels = {
+        name: labels.detach().long().cpu()
+        for name, labels in query_labels.items()
+        if name in classifier_config
+    }
+
+    # Fit feature preprocessing using the bank only.
+    mean = bank_features.mean(dim=0, keepdim=True)
+    std = bank_features.std(
+        dim=0,
+        unbiased=False,
+        keepdim=True,
+    ).clamp_min(1e-6)
+
+    bank_features = (bank_features - mean) / std
+    query_features = (query_features - mean) / std
+
+    # Avoid probe initialization/training changing the main training RNG.
+    cuda_devices = (
+        [device.index]
+        if device.type == "cuda"
+        else []
+    )
+
+    with torch.random.fork_rng(devices=cuda_devices):
+        torch.manual_seed(seed)
+
+        probe = SupervisedHead(
+            encoder_dim=bank_features.shape[1],
+            classifier_config=classifier_config,
+        ).to(device)
+
+        optimizer = torch.optim.AdamW(
+            probe.parameters(),
+            lr=lr,
+            weight_decay=0.0,
+        )
+
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+
+        probe.train()
+
+        for _ in range(epochs):
+            permutation = torch.randperm(
+                bank_features.shape[0],
+                generator=generator,
+            )
+
+            for start in range(
+                0,
+                bank_features.shape[0],
+                batch_size,
+            ):
+                indices = permutation[start:start + batch_size]
+
+                features = bank_features[indices].to(
+                    device,
+                    non_blocking=True,
+                )
+                labels = {
+                    name: values[indices].to(
+                        device,
+                        non_blocking=True,
+                    )
+                    for name, values in bank_labels.items()
+                }
+
+                outputs = probe(features)
+
+                loss, _ = supervised_loss(
+                    outputs,
+                    labels,
+                    classifier_config,
+                )
+
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+
+        # Evaluate on the query split.
+        probe.eval()
+
+        probe_metrics = ClassificationMetrics(
+            classifier_config,
+            device=device,
+        )
+
+        with torch.no_grad():
+            for start in range(
+                0,
+                query_features.shape[0],
+                batch_size,
+            ):
+                end = start + batch_size
+
+                features = query_features[start:end].to(
+                    device,
+                    non_blocking=True,
+                )
+                labels = {
+                    name: values[start:end].to(
+                        device,
+                        non_blocking=True,
+                    )
+                    for name, values in query_labels.items()
+                }
+
+                outputs = probe(features)
+                probe_metrics.update(outputs, labels)
+
+        # Do not call reduce(): this probe runs on rank 0 using globally
+        # gathered bank and query features.
+        results = probe_metrics.compute()
+
+    del probe, optimizer
+    return results

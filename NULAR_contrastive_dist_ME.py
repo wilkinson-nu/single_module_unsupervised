@@ -29,7 +29,7 @@ from core.training.lars import log_lars_diagnostics
 
 ## Import datasets
 from core.data.datasets import solo_labelled_collate_fn
-from core.data.dataloaders import build_paired_training_data, build_knn_monitoring_data
+from core.data.dataloaders import build_paired_training_data, build_monitoring_data
 
 from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
@@ -42,8 +42,7 @@ from datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
-from core.supervised import ClassificationMetrics
-from core.analysis.knn_monitoring import MONITOR_LABELS, extract_features, knn_votes
+from core.analysis.monitoring import extract_features, knn_votes
 
 ## Utilities for multi-rank training
 from core.dist_utils import setup_distributed_runtime
@@ -140,25 +139,26 @@ def run_training(rank, local_rank, world_size, args):
     )
     nbatches   = len(train_loader)
 
-    ## Setup the kNN dataset
-    knn_transform = get_transform(
+    ## Setup the monitoring dataset
+    monitor_transform = get_transform(
         args.out_image_size,
         "no_aug",
     )
     
-    knn_collate = partial(
+    monitor_collate = partial(
         solo_labelled_collate_fn,
         label_clamp=LABEL_CLAMP,
         derived_labels=DERIVED_LABELS,
     )
+    MONITOR_CONFIG = DEFAULT_CLASSIFIER_CONFIG
     
-    bank_loader, query_loader = build_knn_monitoring_data(
+    bank_loader, query_loader = build_monitoring_data(
         data_dir=args.data_dir,
         train_events=args.nevents,
-        nbank=args.knn_nbank,
-        nquery=args.knn_nquery,
-        transform=knn_transform,
-        collate_fn=knn_collate,
+        nbank=args.monitor_nbank,
+        nquery=args.monitor_nquery,
+        transform=monitor_transform,
+        collate_fn=monitor_collate,
         rank=rank,
         world_size=world_size,
         batch_size=args.batch_size,
@@ -186,11 +186,6 @@ def run_training(rank, local_rank, world_size, args):
     ## Set up metrics
     metrics = defaultdict(list)
 
-    ## Setup kNN monitoring
-    knn_metrics = ClassificationMetrics(
-        {n: {'n_classes': c, 'weight': 1.0} for n, c in MONITOR_LABELS.items()},
-        device=device)
-    
     ## Load the checkpoint if one has been given
     start_iteration = 0
     global_iter = 0
@@ -411,23 +406,48 @@ def run_training(rank, local_rank, world_size, args):
         enc_geom = simclr_geometry_metrics(buffer_enc, device, norm_encoder)
         proj_geom = simclr_geometry_metrics(buffer_proj, device, True)
 
-        ## kNN monitoring
+        ## kNN and linear probe monitoring
+        run_knn = (args.knn_every > 0 and iteration % args.knn_every == 0)
+        run_linear = (args.linear_every > 0 and iteration % args.linear_every == 0)
+        run_feature_monitoring = run_knn or run_linear
+
         knn_results = None
-        if iteration % args.knn_every == 0:
-            knn_tstart = time.time()
-            bank_f, bank_l = extract_features(encoder, bank_loader,  device, MONITOR_LABELS)
-            qry_f,  qry_l  = extract_features(encoder, query_loader, device, MONITOR_LABELS)
-            
-            knn_metrics.reset()
-            votes = {n: knn_votes(qry_f, bank_f, bank_l[n], c,
-                                  k=args.knn_k, T=args.knn_T)
-                     for n, c in MONITOR_LABELS.items()}
-            knn_metrics.update(votes, qry_l)
-            ## NB: no .reduce() -- every rank holds the full gathered bank and query,
-            ## so the result is already global. Reducing would multiply counts by world_size.
-            knn_results = knn_metrics.compute()
-            # print(f"kNN time taken: {(time.time()-knn_tstart):.2f}")
-            
+        linear_results = None
+        
+        if run_feature_monitoring and rank == 0:
+            monitor_tstart = time.time()
+            bank_f, bank_l = extract_features(encoder, bank_loader,  device, MONITOR_CONFIG.keys())
+            qry_f,  qry_l  = extract_features(encoder, query_loader, device, MONITOR_CONFIG.keys())
+
+            if run_knn:
+                knn_results = evaluate_knn(
+                    bank_f,
+                    bank_l,
+                    qry_f,
+                    qry_l,
+                    classifier_config=MONITOR_CONFIG,
+                    device=device,
+                    k=args.knn_k,
+                    temperature=args.knn_T,
+                )
+
+            if run_linear:
+                probe_results = fit_linear_probe(
+                    bank_f,
+                    bank_l,
+                    qry_f,
+                    qry_l,
+                    classifier_config=MONITOR_CONFIG,
+                    device=device,
+                    epochs=args.linear_epochs,
+                    batch_size=args.linear_batch_size,
+                    lr=args.linear_lr,
+                    seed=args.seed + iteration,
+                )
+                ## Stop all ranks from moving on before the linear probe is finished
+                dist.barrier()
+            print0(f"Monitoring time taken: {(time.time()-monitor_tstart):.2f}")
+
         ## Reporting, but only for rank 0
         if rank==0:
             metrics["iteration"].append(iteration)
@@ -508,7 +528,13 @@ def run_training(rank, local_rank, world_size, args):
                     log_scalar(writer, metrics, f'knn/{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
                     log_scalar(writer, metrics, f'knn/{name}_mae',                m['mae'],                iteration)
                     log_scalar(writer, metrics, f'knn/{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
-                
+            if linear_results is not None:
+                for name, result in probe_results.items():
+                    log_scalar(writer, metrics, f"linear_probe/{name}_accuracy", result["accuracy"], iteration)
+                    log_scalar(writer, metrics, f"linear_probe/{name}_mean_per_class_acc", result["mean_per_class_acc"], iteration)
+                    log_scalar(writer, metrics, f"linear_probe/{name}_mae", result["mae"], iteration)
+                    log_scalar(writer, metrics, f"linear_probe/{name}_recall_nonzero", result["recall_nonzero"], iteration)
+                    
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
             log_scalar(writer, metrics, 'train/weight_decay', this_wd, iteration)
@@ -523,7 +549,7 @@ def run_training(rank, local_rank, world_size, args):
             
         ## For checkpointing
         #if rank==0 and iteration%25 == 0 and iteration != 0:
-        #    save_checkpoint(encoder, heads, optimizer, args.state_file+".check"+str(iteration), iteration, metrics, args)
+        #    save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file+".check"+str(iteration), iteration, metrics, args)
 
         ## Add per GPU logging
         allocated_gb = torch.tensor(torch.cuda.memory_allocated() / 1e9, device=device)
@@ -651,12 +677,16 @@ if __name__ == '__main__':
     parser.add_argument('--vicreg_std_coeff', type=float, default=25.0)
     parser.add_argument('--vicreg_cov_coeff', type=float, default=1.0)   
     
-    ## kNN monitoring options
-    parser.add_argument('--knn_nbank',    type=int, default=50000)
-    parser.add_argument('--knn_nquery',   type=int, default=10000)
+    ## kNN and linear probe monitoring options
+    parser.add_argument('--monitor_nbank',    type=int, default=50000)
+    parser.add_argument('--monitor_nquery',   type=int, default=10000)
     parser.add_argument('--knn_every', type=int, default=1)
     parser.add_argument('--knn_k',     type=int, default=20)
     parser.add_argument('--knn_T',     type=float, default=0.1)
+    parser.add_argument("--linear_every", type=int, default=5)
+    parser.add_argument("--linear_epochs", type=int, default=20)
+    parser.add_argument("--linear_batch_size", type=int, default=1024)
+    parser.add_argument("--linear_lr", type=float, default=1e-2)
     
     ## Restart option
     parser.add_argument('--restart', action='store_true')
@@ -664,6 +694,7 @@ if __name__ == '__main__':
     ## Optional profiler
     parser.add_argument('--run_profiler', type=int, choices=[0,1], default=0)
     parser.add_argument('--extra_log_rate', type=int, default=10000000)
+
     # Parse arguments from command line
     args = parser.parse_args()
 
