@@ -415,11 +415,16 @@ def run_training(rank, local_rank, world_size, args):
         linear_results = None
         
         if run_feature_monitoring and rank == 0:
+            print0("Running feature monitoring")
             monitor_tstart = time.time()
+            print0("Bank loader...")
             bank_f, bank_l = extract_features(encoder, bank_loader,  device, MONITOR_CONFIG.keys())
+            print0("Query loader...")
             qry_f,  qry_l  = extract_features(encoder, query_loader, device, MONITOR_CONFIG.keys())
-
+            print0("Loaded...")
+            
             if run_knn:
+                print0("Running kNN...")
                 knn_results = evaluate_knn(
                     bank_f,
                     bank_l,
@@ -430,8 +435,10 @@ def run_training(rank, local_rank, world_size, args):
                     k=args.knn_k,
                     temperature=args.knn_T,
                 )
+                print0("...done")
 
             if run_linear:
+                print0("Running linear probe...")
                 probe_results = fit_linear_probe(
                     bank_f,
                     bank_l,
@@ -444,6 +451,7 @@ def run_training(rank, local_rank, world_size, args):
                     lr=args.linear_lr,
                     seed=args.seed + iteration,
                 )
+                print0("...done")
                 ## Stop all ranks from moving on before the linear probe is finished
                 dist.barrier()
             print0(f"Monitoring time taken: {(time.time()-monitor_tstart):.2f}")
