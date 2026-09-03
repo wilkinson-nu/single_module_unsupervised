@@ -176,7 +176,7 @@ def run_training(rank, local_rank, world_size, args):
     
     print0("Training with", num_iterations, "iterations")
     writer = None
-    if rank==0 and log_dir is not None:
+    if rank==0:
         writer = SummaryWriter(log_dir=log_dir)
 
     ## Sort out the optimizer (one for each GPU...)
@@ -193,6 +193,7 @@ def run_training(rank, local_rank, world_size, args):
     
     ## Load the checkpoint if one has been given
     start_iteration = 0
+    global_iter = 0
     if args.restart:
         if not args.state_file:
             print0("Restart requested, but no state file provided, aborting")
@@ -223,8 +224,7 @@ def run_training(rank, local_rank, world_size, args):
         prof.__enter__()
         
     ## Loop over the desired iterations
-    global_iter = 0
-    for iteration in range(start_iteration, start_iteration+num_iterations):
+    for iteration in range(start_iteration, args.nepoch):
 
         print0(f"Start of iteration {iteration}")
         # Ensure shuffling with the sampler each epoch
@@ -296,24 +296,23 @@ def run_training(rank, local_rank, world_size, args):
             ## Deal with the projection loss
             proj_batch = heads["proj"](encoded_batch)
             proj_loss, proj_loss_parts = loss_fns["proj"](proj_batch)
-            proj_loss *= instance_scale
+            proj_loss = instance_scale * proj_loss
                 
             tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
 
             ## This is for VICReg for now
-            if proj_loss_parts:
-                if proj_part_names is None:
-                    proj_part_names = tuple(sorted(proj_loss_parts))
-                    proj_part_sums = torch.zeros(
-                        len(proj_part_names),
-                        device=device,
-                        dtype=torch.float64,
-                    )
-                proj_part_sums += torch.stack([
-                    proj_loss_parts[name].detach()
-                    for name in proj_part_names
-                ])
+            if proj_part_names is None:
+                proj_part_names = tuple(sorted(proj_loss_parts))
+                proj_part_sums = torch.zeros(
+                    len(proj_part_names),
+                    device=device,
+                    dtype=torch.float64,
+                )
+            proj_part_sums += torch.stack([
+                proj_loss_parts[name].detach().double()
+                for name in proj_part_names
+            ])
                     
             ## Add to metrics
             total_enc_align_tensor += alignment(encoded_batch)
@@ -475,7 +474,7 @@ def run_training(rank, local_rank, world_size, args):
             
             log_scalar(writer, metrics, 'monitor/proj_pos', proj_geom["pos"], iteration)
             log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_geom["hard_neg"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_mean_neg', proj_geom["hard_neg"], iteration)            
+            log_scalar(writer, metrics, 'monitor/proj_mean_neg', proj_geom["mean_neg"], iteration)            
             log_scalar(writer, metrics, 'monitor/proj_gap', proj_geom["gap"], iteration)
             log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_geom["gap_std"], iteration)
                 
@@ -564,7 +563,7 @@ def run_training(rank, local_rank, world_size, args):
     ## Final version of the model
     if rank==0:
         save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file, iteration, metrics, args)
-        if log_dir: writer.close()
+        writer.close()
 
     ## Report profiler if requested
     if bool(args.run_profiler) and rank == 0:
@@ -588,7 +587,7 @@ if __name__ == '__main__':
     # Basic job setup
     parser.add_argument('--data_dir', type=str)
     parser.add_argument('--nevents', type=int)
-    parser.add_argument('--log', type=str, default=None)    
+    parser.add_argument('--log', type=str)
     parser.add_argument('--state_file', type=str)
     parser.add_argument('--pretrained', type=str, default=None)
     parser.add_argument('--nepoch', type=int, default=200)
