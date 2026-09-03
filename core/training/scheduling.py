@@ -3,6 +3,7 @@ import math
 from torch import optim
 from core.training.lars import LARS, LARS_LRScheduler
 from datasets.nularbox.resnetv1_blocks import Bottleneck, BasicBlock
+from core.utils import float0
 
 def get_final_residual_gamma_ids(encoder):
     enc = encoder.module if hasattr(encoder, "module") else encoder
@@ -36,7 +37,7 @@ def get_opt_and_sched(args, encoder, heads, total_steps, world_size, print_debug
     
     ## Sort out the optimizer (one for each GPU...)
     if args.optimizer == 'lars':
-        if print_debug: print("Optimizer = LARS; LR =", args.lr, "(", args.lr * (args.batch_size*world_size / 256), "); trust =", args.lars_trust_coeff, "; mom =", args.lars_momentum)
+        if print_debug: print0("Optimizer = LARS; LR =", args.lr, "(", args.lr * (args.batch_size*world_size / 256), "); trust =", args.lars_trust_coeff, "; mom =", args.lars_momentum)
         corr_lr = args.lr * (args.batch_size*world_size / 256)
         optimizer = LARS(
             param_groups,
@@ -127,22 +128,22 @@ def build_param_groups(encoder,
     head_weight_decay = weight_decay if weight_decay_head else 0.0
 
     if print_debug:
-        print("Parameter groups:")
-        print(f"ENCODER ({len(enc_params)} parameters):")
+        print0("Parameter groups:")
+        print0(f"ENCODER ({len(enc_params)} parameters):")
         for name, param in zip(enc_names, enc_params):
-            print(f"  LARS + WD:       {name:60s} {tuple(param.shape)}")
+            print0(f"  LARS + WD:       {name:60s} {tuple(param.shape)}")
 
-        print(f"RES GAMMA ({len(residual_gamma_params)} parameters):")
+        print0(f"RES GAMMA ({len(residual_gamma_params)} parameters):")
         for name, param in zip(residual_gamma_names, residual_gamma_params):
-            print(f"  NO LARS / NO WD:  {name:60s} {tuple(param.shape)}")        
+            print0(f"  NO LARS / NO WD:  {name:60s} {tuple(param.shape)}")        
             
-        print(f"OMITTED ({len(omit_params)} parameters):")
+        print0(f"OMITTED ({len(omit_params)} parameters):")
         for name, param in zip(omit_names, omit_params):
-            print(f"  NO LARS / NO WD:  {name:60s} {tuple(param.shape)}")
+            print0(f"  NO LARS / NO WD:  {name:60s} {tuple(param.shape)}")
 
-        print(f"HEAD ({len(head_params)} parameters):")
+        print0(f"HEAD ({len(head_params)} parameters):")
         for name, param in zip(head_names, head_params):
-            print(
+            print0(
                 f"  LARS + "
                 f"{'WD' if weight_decay_head else 'NO WD':<6}:    "
                 f"{name:60s} {tuple(param.shape)}"

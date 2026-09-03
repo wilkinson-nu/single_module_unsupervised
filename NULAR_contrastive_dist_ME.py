@@ -181,7 +181,7 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Sort out the optimizer (one for each GPU...)
     nstep_total = nbatches*args.nepoch
-    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nstep_total, world_size, print_debug=True)
+    optimizer, scheduler = get_opt_and_sched(args, encoder, heads, nstep_total, world_size, print_debug=False)
     
     ## Set up metrics
     metrics = defaultdict(list)
