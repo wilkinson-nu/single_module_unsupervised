@@ -3,7 +3,7 @@ import math
 from torch import optim
 from core.training.lars import LARS, LARS_LRScheduler
 from datasets.nularbox.resnetv1_blocks import Bottleneck, BasicBlock
-from core.utils import float0
+from core.utils import print0
 
 def get_final_residual_gamma_ids(encoder):
     enc = encoder.module if hasattr(encoder, "module") else encoder
