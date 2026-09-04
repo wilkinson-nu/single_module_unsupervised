@@ -102,8 +102,8 @@ def evaluate_knn(
     )
 
     similarities, indices = knn_neighbors(
-        qry_featurs,
-        bank_featurs,
+        query_features,
+        bank_features,
         k=k,
     )
     
@@ -113,7 +113,7 @@ def evaluate_knn(
             indices,
             bank_labels[name],
             cfg["n_classes"],
-            T=temperature,
+            temperature=temperature,
         )
         for name, cfg in classifier_config.items()
     }
@@ -190,6 +190,10 @@ def fit_linear_probe(
         probe.train()
 
         for i in range(epochs):
+            
+            sum_loss = torch.zeros((), device=device)
+            num_samples = 0
+            
             permutation = torch.randperm(
                 bank_features.shape[0],
                 generator=generator,
@@ -202,31 +206,27 @@ def fit_linear_probe(
             ):
                 indices = permutation[start:start + batch_size]
 
-                features = bank_features[indices].to(
-                    device,
-                    non_blocking=True,
-                )
+                features = bank_features[indices].to(device, non_blocking=True)
                 labels = {
-                    name: values[indices].to(
-                        device,
-                        non_blocking=True,
-                    )
+                    name: values[indices].to(device, non_blocking=True)
                     for name, values in bank_labels.items()
                 }
 
                 outputs = probe(features)
 
-                loss, _ = supervised_loss(
-                    outputs,
-                    labels,
-                    classifier_config,
-                )
+                loss, _ = supervised_loss(outputs, labels, classifier_config)
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
 
-                print0(f"{i}: loss = {loss.item()}")
+                this_batch_size = features.shape[0]
+                sum_loss += loss.detach().double()*this_batch_size
+                num_samples += this_batch_size
+
+            ## Report the average loss for this epoch
+            av_loss = sum_loss/max(num_samples, 1)
+            print0(f"{i}: loss = {av_loss.item()}")
                 
         # Evaluate on the query split.
         probe.eval()
@@ -244,15 +244,9 @@ def fit_linear_probe(
             ):
                 end = start + batch_size
 
-                features = query_features[start:end].to(
-                    device,
-                    non_blocking=True,
-                )
+                features = query_features[start:end].to(device, non_blocking=True)
                 labels = {
-                    name: values[start:end].to(
-                        device,
-                        non_blocking=True,
-                    )
+                    name: values[start:end].to(device, non_blocking=True)
                     for name, values in query_labels.items()
                 }
 
