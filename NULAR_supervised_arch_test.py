@@ -374,14 +374,10 @@ def run_training(rank, local_rank, world_size, args):
             log_grad_rms(heads["sup"].module, "sup", writer, iteration)
             log_grad_over_wgt(heads["sup"].module, "sup", writer, iteration)
 
-            ## Eigenvalue debugging
-            log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
-            log_scalar(writer, metrics, "eigen/rankme_deff", enc_geom["rankme"], iteration)
-            log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_geom["l1_ratio"], iteration)
-            
-            for i,val in enumerate(enc_geom["eigvals"]):
-                log_scalar(writer, metrics, f"eigen/enc_lambda{i}", val, iteration)
-                
+            ## More summary quantities about the encoded space
+            for name, value in enc_geom.items():
+                log_scalar(writer, metrics, f"eigen/enc_{name}", value, iteration)
+                                
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
             log_scalar(writer, metrics, 'train/weight_decay', this_wd, iteration)
