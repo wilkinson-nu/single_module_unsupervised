@@ -274,7 +274,7 @@ def run_training(rank, local_rank, world_size, args):
             ## Now do the forward passes
             encoded_batch = encoder(cat_batch, this_batch_size)
 
-            if global_iter % args.extra_log_rate == 0:
+            if global_iter % args.extra_log_rate == 0 and args.extra_log_rate > 0:
                 with torch.no_grad():
                     hn = encoded_batch.detach().float().norm(dim=1)
                     gathered = [torch.zeros_like(hn) for _ in range(world_size)]
@@ -338,14 +338,15 @@ def run_training(rank, local_rank, world_size, args):
 
             ## Decide whether to collect LARS stats
             collect_lars_stats = (
-                global_iter % args.extra_log_rate == 0
+                args.extra_log_rate > 0
+                and global_iter % args.extra_log_rate == 0
                 and rank == 0
             )
             optimizer.collect_stats = collect_lars_stats
 
             ## Update optimizer and scheduler
             optimizer.step()
-            if global_iter % args.extra_log_rate == 0 and rank == 0:
+            if args.extra_log_rate > 0 and global_iter % args.extra_log_rate == 0 and rank == 0:
                 log_lars_diagnostics(
                     optimizer=optimizer,
                     writer=writer,
@@ -675,7 +676,7 @@ if __name__ == '__main__':
 
     ## Optional profiler
     parser.add_argument('--run_profiler', type=int, choices=[0,1], default=0)
-    parser.add_argument('--extra_log_rate', type=int, default=10000000)
+    parser.add_argument('--extra_log_rate', type=int, default=-1)
 
     # Parse arguments from command line
     args = parser.parse_args()
