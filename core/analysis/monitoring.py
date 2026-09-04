@@ -40,21 +40,49 @@ def extract_features(encoder, loader, device, label_names):
 
 
 @torch.no_grad()
-def knn_votes(q, bank, bank_lab, n_classes, k=20, T=0.1, chunk=2048):
-
-    ## Center the features
+def knn_neighbors(q, bank, k=20, chunk=2048):
     center = bank.mean(dim=0, keepdim=True)
 
-    qn, bn = F.normalize(q - center, dim=1), F.normalize(bank - center, dim=1)
-    
-    out = []
+    qn = F.normalize(q - center, dim=1)
+    bn = F.normalize(bank - center, dim=1)
+
+    similarities = []
+    indices = []
+
+    k = min(k, bn.shape[0])
+
     for i in range(0, qn.shape[0], chunk):
-        sim    = qn[i:i + chunk] @ bn.t()
-        sk, ik = sim.topk(min(k, bn.shape[0]), dim=1)
-        w      = (sk / T).exp()
-        oh     = F.one_hot(bank_lab[ik], n_classes).float()
-        out.append((oh * w.unsqueeze(-1)).sum(1))
-    return torch.cat(out)
+        sim = qn[i:i + chunk] @ bn.t()
+        sk, ik = sim.topk(k, dim=1)
+
+        similarities.append(sk)
+        indices.append(ik)
+
+    return torch.cat(similarities), torch.cat(indices)
+
+
+@torch.no_grad()
+def knn_votes_from_neighbors(
+    similarities,
+    indices,
+    bank_labels,
+    n_classes,
+    temperature=0.1,
+):
+    # Subtracting the row maximum is numerically safer. It does not
+    # change the winning class because it scales every row uniformly.
+    weights = torch.exp(
+        (similarities - similarities[:, :1]) / temperature
+    )
+
+    neighbor_labels = bank_labels[indices]
+
+    one_hot = F.one_hot(
+        neighbor_labels,
+        num_classes=n_classes,
+    ).float()
+
+    return (one_hot * weights.unsqueeze(-1)).sum(dim=1)
 
 
 def evaluate_knn(
@@ -72,14 +100,19 @@ def evaluate_knn(
         classifier_config,
         device=device,
     )
+
+    similarities, indices = knn_neighbors(
+        qry_featurs,
+        bank_featurs,
+        k=k,
+    )
     
     votes = {
-        name: knn_votes(
-            query_features,
-            bank_features,
+        name: knn_votes_from_neighbors(
+            similarities,
+            indices,
             bank_labels[name],
             cfg["n_classes"],
-            k=k,
             T=temperature,
         )
         for name, cfg in classifier_config.items()
@@ -156,7 +189,7 @@ def fit_linear_probe(
 
         probe.train()
 
-        for _ in range(epochs):
+        for i in range(epochs):
             permutation = torch.randperm(
                 bank_features.shape[0],
                 generator=generator,
@@ -193,6 +226,8 @@ def fit_linear_probe(
                 loss.backward()
                 optimizer.step()
 
+                print0(f"{i}: loss = {loss.item()}")
+                
         # Evaluate on the query split.
         probe.eval()
 
