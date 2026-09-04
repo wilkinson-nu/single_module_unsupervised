@@ -42,7 +42,7 @@ from datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
 from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
-from core.analysis.monitoring import extract_features, knn_votes
+from core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training
 from core.dist_utils import setup_distributed_runtime
@@ -162,7 +162,7 @@ def run_training(rank, local_rank, world_size, args):
         rank=rank,
         world_size=world_size,
         batch_size=args.batch_size,
-        num_workers=min(2, args.num_workers),
+        num_workers=args.num_workers,
         seed=args.seed,
     )
     
@@ -414,17 +414,13 @@ def run_training(rank, local_rank, world_size, args):
         knn_results = None
         linear_results = None
         
-        if run_feature_monitoring and rank == 0:
-            print0("Running feature monitoring")
+        if run_feature_monitoring:
             monitor_tstart = time.time()
-            print0("Bank loader...")
             bank_f, bank_l = extract_features(encoder, bank_loader,  device, MONITOR_CONFIG.keys())
-            print0("Query loader...")
             qry_f,  qry_l  = extract_features(encoder, query_loader, device, MONITOR_CONFIG.keys())
-            print0("Loaded...")
             
-            if run_knn:
-                print0("Running kNN...")
+            if rank == 0 and run_knn:
+                print0("Running kNN")
                 knn_results = evaluate_knn(
                     bank_f,
                     bank_l,
@@ -435,11 +431,10 @@ def run_training(rank, local_rank, world_size, args):
                     k=args.knn_k,
                     temperature=args.knn_T,
                 )
-                print0("...done")
 
-            if run_linear:
-                print0("Running linear probe...")
-                probe_results = fit_linear_probe(
+            if rank == 0 and run_linear:
+                print0("Running linear probe")
+                linear_results = fit_linear_probe(
                     bank_f,
                     bank_l,
                     qry_f,
@@ -451,9 +446,9 @@ def run_training(rank, local_rank, world_size, args):
                     lr=args.linear_lr,
                     seed=args.seed + iteration,
                 )
-                print0("...done")
-                ## Stop all ranks from moving on before the linear probe is finished
-                dist.barrier()
+                
+            ## Stop all ranks from moving on before the linear probe is finished
+            dist.barrier()
             print0(f"Monitoring time taken: {(time.time()-monitor_tstart):.2f}")
 
         ## Reporting, but only for rank 0
@@ -537,7 +532,7 @@ def run_training(rank, local_rank, world_size, args):
                     log_scalar(writer, metrics, f'knn/{name}_mae',                m['mae'],                iteration)
                     log_scalar(writer, metrics, f'knn/{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
             if linear_results is not None:
-                for name, result in probe_results.items():
+                for name, result in linear_results.items():
                     log_scalar(writer, metrics, f"linear_probe/{name}_accuracy", result["accuracy"], iteration)
                     log_scalar(writer, metrics, f"linear_probe/{name}_mean_per_class_acc", result["mean_per_class_acc"], iteration)
                     log_scalar(writer, metrics, f"linear_probe/{name}_mae", result["mae"], iteration)
