@@ -403,8 +403,8 @@ def run_training(rank, local_rank, world_size, args):
             }
         
         ## Other geometry calculations
-        enc_geom = simclr_geometry_metrics(buffer_enc, device, norm_encoder)
-        proj_geom = simclr_geometry_metrics(buffer_proj, device, True)
+        enc_geom = simclr_geometry_metrics(buffer_enc, device)
+        proj_geom = simclr_geometry_metrics(buffer_proj, device)
 
         ## kNN and linear probe monitoring
         run_knn = (args.knn_every > 0 and iteration % args.knn_every == 0)
@@ -444,7 +444,7 @@ def run_training(rank, local_rank, world_size, args):
                     epochs=args.linear_epochs,
                     batch_size=args.linear_batch_size,
                     lr=args.linear_lr,
-                    seed=args.seed + iteration,
+                    seed=args.seed, # + iteration,
                 )
                 
             ## Stop all ranks from moving on before the linear probe is finished
@@ -474,32 +474,11 @@ def run_training(rank, local_rank, world_size, args):
             log_grad_over_wgt(heads["proj"].module, "proj", writer, iteration)
             log_weight_norm(heads["proj"].module, "proj", writer, iteration)
             
-            ## Eigenvalue debugging
-            log_scalar(writer, metrics, "eigen/enc_deff", enc_geom["deff"], iteration)
-            log_scalar(writer, metrics, "eigen/proj_deff", proj_geom["deff"], iteration)
-
-            log_scalar(writer, metrics, "eigen/enc_rankme", enc_geom["rankme"], iteration)
-            log_scalar(writer, metrics, "eigen/proj_rankme", proj_geom["rankme"], iteration)            
-            
-            log_scalar(writer, metrics, "eigen/enc_l1_ratio", enc_geom["l1_ratio"], iteration)
-            log_scalar(writer, metrics, "eigen/proj_l1_ratio", proj_geom["l1_ratio"], iteration)
-            
-            for i,val in enumerate(enc_geom["eigvals"]):
-                log_scalar(writer, metrics, f"eigen/enc_lambda{i}", val, iteration)
-            for i,val in enumerate(proj_geom["eigvals"]):
-                log_scalar(writer, metrics, f"eigen/proj_lambda{i}", val, iteration)
-
-            log_scalar(writer, metrics, 'monitor/enc_pos', enc_geom["pos"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_hard_neg', enc_geom["hard_neg"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_mean_neg', enc_geom["mean_neg"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_gap', enc_geom["gap"], iteration)
-            log_scalar(writer, metrics, 'monitor/enc_gap_std', enc_geom["gap_std"], iteration)
-            
-            log_scalar(writer, metrics, 'monitor/proj_pos', proj_geom["pos"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_hard_neg', proj_geom["hard_neg"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_mean_neg', proj_geom["mean_neg"], iteration)            
-            log_scalar(writer, metrics, 'monitor/proj_gap', proj_geom["gap"], iteration)
-            log_scalar(writer, metrics, 'monitor/proj_gap_std', proj_geom["gap_std"], iteration)
+            ## More summary quantities about the encoder and projection spaces
+            for name, value in enc_geom.items():
+                log_scalar(writer, metrics, f"eigen/enc_{name}", value, iteration)
+            for name, value in proj_geom.items():
+                log_scalar(writer, metrics, f"eigen/proj_{name}", value, iteration)                
                 
             if "clust" in heads:
                 log_scalar(writer, metrics, 'loss/clust', av_losses["clust"]+av_entropy, iteration)

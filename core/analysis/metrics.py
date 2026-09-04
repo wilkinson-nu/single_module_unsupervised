@@ -115,10 +115,15 @@ def geometry_metrics(buffer, device, normalize=True, sim_stats=True):
     rankme = torch.exp(-(p * p.log()).sum())
 
     ## Return without sim_stats
-    out = {"deff": deff.item(),
-           "rankme": rankme.item(),
-           "l1_ratio": (eigvals.max() / eigvals.sum()).item(),
-           "eigvals": eigvals.flip(0)[:10].cpu()}
+    out = {
+        "deff": deff.item(),
+        "rankme": rankme.item(),
+        "l1_ratio": (eigvals.max() / eigvals.sum()).item(),
+        **{
+            f"lambda{i}": val.item()
+            for i, val in enumerate(eigvals.flip(0)[:10])
+        },
+    }
 
     if sim_stats:
         ## Calculate the SimCLR geometry values
@@ -127,12 +132,13 @@ def geometry_metrics(buffer, device, normalize=True, sim_stats=True):
         all_meanneg = torch.stack(negmean_buffer)
         gap = all_pos - all_neg
 
-        out.update({"pos": all_pos.mean().item(),
-                    "hard_neg": all_neg.mean().item(),
-                    "mean_neg": all_meanneg.mean().item(),
-                    "gap": gap.mean().item(),
-                    "gap_std": gap.std(unbiased=False).item(),
-                    })
+        out.update({
+            "pos": all_pos.mean().item(),
+            "hard_neg": all_neg.mean().item(),
+            "mean_neg": all_meanneg.mean().item(),
+            "gap": gap.mean().item(),
+            "gap_std": gap.std(unbiased=False).item(),
+        })
     return out
 
 def simclr_geometry_metrics(buffer, device, normalize=True):
