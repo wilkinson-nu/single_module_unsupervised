@@ -352,14 +352,9 @@ def run_training(rank, local_rank, world_size, args):
                 log_scalar(writer, metrics, 'loss/'+name, av_losses[name], iteration)
 
             ## Supervised training metrics
-            for name, m in metric_results.items():
-                log_scalar(writer, metrics, f'acc/{name}_accuracy',           m['accuracy'],           iteration)
-                log_scalar(writer, metrics, f'acc/{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
-                log_scalar(writer, metrics, f'acc/{name}_mae',                m['mae'],                iteration)
-                log_scalar(writer, metrics, f'acc/{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
-                ## for c, val in enumerate(m['per_class_acc']):
-                ##     if not math.isnan(val):
-                ##         log_scalar(writer, metrics, f'acc/{name}_class{c}_acc', val, iteration)
+            for part_name, result in metric_results.items():
+                for metric_name, val in result.items():
+                    log_scalar(writer, metrics, f'acc/{part_name}_{metric_name}', result[metric_name], iteration)
                 
             ## Add metrics for debugging/training diagnostics
             log_scalar(writer, metrics, 'monitor/enc_alignment', av_enc_align, iteration)
@@ -393,14 +388,9 @@ def run_training(rank, local_rank, world_size, args):
             for name in val_losses_tensor.keys():
                 log_scalar(writer, metrics, 'loss/val_'+name, av_val_losses[name], iteration)
                 
-            for name, m in val_metric_results.items():
-                log_scalar(writer, metrics, f'acc/val_{name}_accuracy',           m['accuracy'],           iteration)
-                log_scalar(writer, metrics, f'acc/val_{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
-                log_scalar(writer, metrics, f'acc/val_{name}_mae',                m['mae'],                iteration)
-                log_scalar(writer, metrics, f'acc/val_{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
-                for c, val in enumerate(m['per_class_acc']):
-                    if not math.isnan(val):
-                        log_scalar(writer, metrics, f'acc/val_{name}_class{c}_acc', val, iteration)
+            for part_name, result in val_metric_results.items():
+                for metric_name, val in result.items():
+                    log_scalar(writer, metrics, f'acc/val_{part_name}_{metric_name}', result[metric_name], iteration)
             
         ## For checkpointing
 
