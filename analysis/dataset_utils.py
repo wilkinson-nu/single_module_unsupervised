@@ -6,6 +6,7 @@ import numpy as np
 import time
 from collections import defaultdict
 from torch import nn
+from datasets.nularbox.truth_labels import make_cc_category
 
 def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
 
@@ -143,8 +144,11 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
             + label_dict["nhelium3"]
             + label_dict["nnuclfrag"]
         ),
+        "cc_category": np.ascontiguousarray(
+            make_cc_category(label_array)
+        ),
     })
-
+    
     out = {"labels": label_dict}
 
     ## Merge in the encoded features
