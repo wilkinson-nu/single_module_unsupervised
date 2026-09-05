@@ -101,7 +101,6 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
                     temp = soft(temp/apply_softmax)
                 representations[k].append(temp.detach().cpu())
         representations["encoder"].append(encoded_batch.detach().cpu())
-
         labels.extend(batch_labels)
         
         ## If desired, add a load more info, but this slows things down a lot...
@@ -124,9 +123,29 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
     representations = {k: torch.cat(v).numpy() for k, v in representations.items()}
 
     ## Return a dictionary to make my life easier
-    out = {
-        "labels": np.array(labels),
+    label_array = np.asarray(labels)    
+
+    label_dict = {
+        name: np.ascontiguousarray(label_array[name])
+        for name in label_array.dtype.names
     }
+
+    label_dict.update({
+        "ncharged": np.ascontiguousarray(
+            label_dict["nproton"]
+            + label_dict["npipm"]
+            + label_dict["nkapm"]
+        ),
+        "ncluster": np.ascontiguousarray(
+            label_dict["ndeuteron"]
+            + label_dict["ntritium"]
+            + label_dict["nalpha"]
+            + label_dict["nhelium3"]
+            + label_dict["nnuclfrag"]
+        ),
+    })
+
+    out = {"labels": label_dict}
 
     ## Merge in the encoded features
     out .update(representations)
