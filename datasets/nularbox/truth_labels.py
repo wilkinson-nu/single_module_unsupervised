@@ -29,6 +29,12 @@ LABEL_DTYPE_EXP = np.dtype([
     ("q0",        np.float32),
 ])
 
+## To be merged later when I remake inputs...
+LABEL_DTYPE_WITH_CC_CATEGORY = np.dtype(
+    LABEL_DTYPE_EXP.descr
+    + [("cc_category", np.int8)]
+)
+
 class Topology(Enum):
 
     ## Default
@@ -98,3 +104,132 @@ class Mode(Enum):
             if member.value == index:
                 return member.name
         return f"Unknown label for index {index}"
+
+
+CC_CATEGORY_NAMES = np.array([
+    "CC0pi0p",                    # 0
+    "CC0pi1p",                    # 1
+    "CC0piNp",                    # 2
+
+    "CC1pipm0pi0_0p",             # 3
+    "CC1pipm0pi0_1p",             # 4
+    "CC1pipm0pi0_Np",             # 5
+
+    "CCNpipm0pi0_0p",             # 6
+    "CCNpipm0pi0_1p",             # 7
+    "CCNpipm0pi0_Np",             # 8
+
+    "CC0pipm1pi0_0p",             # 9
+    "CC0pipm1pi0_1p",             # 10
+    "CC0pipm1pi0_Np",             # 11
+
+    "CC0pipmNpi0_0p",             # 12
+    "CC0pipmNpi0_1p",             # 13
+    "CC0pipmNpi0_Np",             # 14
+
+    "CCmixedpi_0p",               # 15
+    "CCmixedpi_1p",               # 16
+    "CCmixedpi_Np",               # 17
+
+    "CC-strange",                 # 18
+    "Other",                      # 19
+])
+
+CC_CATEGORY_IDS = {
+    name: i for i, name in enumerate(CC_CATEGORY_NAMES)
+}
+    
+
+def make_cc_category(labels):
+    """
+    Construct mutually exclusive CC topology categories.
+
+    CC-strange means a CC event containing at least one:
+      - Lambda0
+      - neutral kaon
+      - charged kaon
+
+    CC-strange takes precedence over pion/proton topology.
+
+    Np, Npipm, and Npi0 mean multiplicity >= 2.
+    """
+
+    is_cc = np.asarray(labels["cc"], dtype=bool)
+    nproton = np.asarray(labels["nproton"])
+    npipm = np.asarray(labels["npipm"])
+    npi0 = np.asarray(labels["npi0"])
+
+    # Default includes NC and invalid/unclassified events.
+    category = np.full(
+        labels.shape,
+        CC_CATEGORY_IDS["Other"],
+        dtype=np.int8,
+    )
+
+    valid_counts = (
+        (nproton >= 0)
+        & (npipm >= 0)
+        & (npi0 >= 0)
+    )
+
+    # Proton bins:
+    #   0 -> 0p
+    #   1 -> 1p
+    #   2 -> Np (>=2)
+    proton_bin = np.full(labels.shape, -1, dtype=np.int8)
+    proton_bin[nproton == 0] = 0
+    proton_bin[nproton == 1] = 1
+    proton_bin[nproton >= 2] = 2
+
+    # Pion topology bins:
+    #   0: no pions
+    #   1: exactly one charged pion, no pi0
+    #   2: >=2 charged pions, no pi0
+    #   3: exactly one pi0, no charged pions
+    #   4: >=2 pi0, no charged pions
+    #   5: both charged and neutral pions
+    pion_bin = np.full(labels.shape, -1, dtype=np.int8)
+
+    pion_bin[(npipm == 0) & (npi0 == 0)] = 0
+    pion_bin[(npipm == 1) & (npi0 == 0)] = 1
+    pion_bin[(npipm >= 2) & (npi0 == 0)] = 2
+    pion_bin[(npipm == 0) & (npi0 == 1)] = 3
+    pion_bin[(npipm == 0) & (npi0 >= 2)] = 4
+    pion_bin[(npipm >= 1) & (npi0 >= 1)] = 5
+
+    is_strange = (
+        (labels["nlambda0"] > 0)
+        | (labels["nka0"] > 0)
+        | (labels["nkapm"] > 0)
+    )
+
+    ordinary_cc = (
+        is_cc
+        & valid_counts
+        & ~is_strange
+        & (proton_bin >= 0)
+        & (pion_bin >= 0)
+    )
+
+    # Three proton categories per pion topology.
+    category[ordinary_cc] = (
+        3 * pion_bin[ordinary_cc]
+        + proton_bin[ordinary_cc]
+    ).astype(np.int8)
+
+    # Strange CC events override ordinary topology.
+    category[is_cc & is_strange] = CC_CATEGORY_IDS["CC-strange"]
+
+    return category
+
+def add_cc_category_field(labels):
+    result = np.empty(
+        labels.shape,
+        dtype=LABEL_DTYPE_WITH_CC_CATEGORY,
+    )
+
+    for field_name in labels.dtype.names:
+        result[field_name] = labels[field_name]
+
+    result["cc_category"] = make_cc_category(labels)
+    return result
