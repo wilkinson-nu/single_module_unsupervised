@@ -158,10 +158,14 @@ def fit_linear_probe(
         dim=0,
         unbiased=False,
         keepdim=True,
-    ).clamp_min(1e-6)
-
-    bank_features = (bank_features - mean) / std
-    query_features = (query_features - mean) / std
+    )
+    
+    # Prevent very low-variance dimensions from receiving huge amplification.
+    std_floor = 0.01 * std.median()
+    std_safe = std.clamp_min(std_floor)
+    
+    bank_features = (bank_features - mean) / std_safe
+    query_features = (query_features - mean) / std_safe
 
     # Avoid probe initialization/training changing the main training RNG.
     cuda_devices = (
@@ -191,8 +195,8 @@ def fit_linear_probe(
 
         for i in range(epochs):
             
-            sum_loss = torch.zeros((), device=device)
-            num_samples = 0
+            #sum_loss = torch.zeros((), device=device)
+            #num_samples = 0
             
             permutation = torch.randperm(
                 bank_features.shape[0],
@@ -220,13 +224,13 @@ def fit_linear_probe(
                 loss.backward()
                 optimizer.step()
 
-                this_batch_size = features.shape[0]
-                sum_loss += loss.detach().double()*this_batch_size
-                num_samples += this_batch_size
+                #this_batch_size = features.shape[0]
+                #sum_loss += loss.detach().double()*this_batch_size
+                #num_samples += this_batch_size
 
             ## Report the average loss for this epoch
-            av_loss = sum_loss/max(num_samples, 1)
-            print0(f"{i}: loss = {av_loss.item()}")
+            #av_loss = sum_loss/max(num_samples, 1)
+            #print0(f"{i}: loss = {av_loss.item()}")
                 
         # Evaluate on the query split.
         probe.eval()
