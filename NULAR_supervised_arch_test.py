@@ -246,7 +246,7 @@ def run_training(rank, local_rank, world_size, args):
                     buffer_enc .append(encoded_batch.detach().to("cpu"))
             
             ## Supervision specific metrics:
-            with torch.no_grad(): clf_metrics.update(sup_batch, blabels)
+            with torch.no_grad(): clf_metrics.update(sup_batch, blabels, outputs_are_logits=False)
 
             # Backward pass
             optimizer.zero_grad(set_to_none=True)
@@ -297,7 +297,7 @@ def run_training(rank, local_rank, world_size, args):
                     val_losses_tensor[name] += loss_val
                 val_tot_loss_tensor += sup_loss
         
-                val_metrics.update(sup_batch, blabels)
+                val_metrics.update(sup_batch, blabels, outputs_are_logits=False)
                 val_nbatches += 1
                 step += 1
                 
