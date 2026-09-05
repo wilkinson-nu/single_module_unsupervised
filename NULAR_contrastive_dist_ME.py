@@ -506,17 +506,13 @@ def run_training(rank, local_rank, world_size, args):
                     )
                 
             if knn_results is not None:
-                for name, m in knn_results.items():
-                    log_scalar(writer, metrics, f'knn/{name}_accuracy',           m['accuracy'],           iteration)
-                    log_scalar(writer, metrics, f'knn/{name}_mean_per_class_acc', m['mean_per_class_acc'], iteration)
-                    log_scalar(writer, metrics, f'knn/{name}_mae',                m['mae'],                iteration)
-                    log_scalar(writer, metrics, f'knn/{name}_recall_nonzero',     m['recall_nonzero'],     iteration)
+                for part_name, result in knn_results.items():
+                    for metric_name, val in result.items():
+                        log_scalar(writer, metrics, f'knn/{part_name}_{metric_name}', result[metric_name], iteration)
             if linear_results is not None:
-                for name, result in linear_results.items():
-                    log_scalar(writer, metrics, f"linear_probe/{name}_accuracy", result["accuracy"], iteration)
-                    log_scalar(writer, metrics, f"linear_probe/{name}_mean_per_class_acc", result["mean_per_class_acc"], iteration)
-                    log_scalar(writer, metrics, f"linear_probe/{name}_mae", result["mae"], iteration)
-                    log_scalar(writer, metrics, f"linear_probe/{name}_recall_nonzero", result["recall_nonzero"], iteration)
+                for part_name, result in linear_results.items():
+                    for	metric_name, val in result.items():
+                        log_scalar(writer, metrics, f'linear_probe/{part_name}_{metric_name}', result[metric_name], iteration)
                     
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
