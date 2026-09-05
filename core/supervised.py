@@ -65,113 +65,147 @@ def supervised_loss(outputs, labels, classifier_config):
 
 
 class ClassificationMetrics:
+    """
+    Computes, for every particle/count target:
+
+      - MAE of the predicted multiplicity
+      - Binary F1 for zero versus nonzero
+
+    For nonzero F1, support from all multiplicity classes greater than zero
+    is combined before deciding whether the prediction is nonzero.
+    """
+
     def __init__(self, classifier_config, device):
         self.classifier_config = classifier_config
         self.device = device
         self.reset()
 
     def reset(self):
-        self.correct = {
-            name: torch.tensor(0, device=self.device)
-            for name in self.classifier_config
-        }
         self.total = {
-            name: torch.tensor(0, device=self.device)
+            name: torch.zeros((), device=self.device)
             for name in self.classifier_config
-        }
-        self.per_class_correct = {
-            name: torch.zeros(cfg['n_classes'], device=self.device)
-            for name, cfg in self.classifier_config.items()
-        }
-        self.per_class_total = {
-            name: torch.zeros(cfg['n_classes'], device=self.device)
-            for name, cfg in self.classifier_config.items()
         }
         self.abs_error = {
-            name: torch.tensor(0.0, device=self.device)
+            name: torch.zeros((), device=self.device)
             for name in self.classifier_config
         }
-        # Removed mae_total — it's identical to total, no need to track separately
+        self.nonzero_tp = {
+            name: torch.zeros((), device=self.device)
+            for name in self.classifier_config
+        }
+        self.nonzero_fp = {
+            name: torch.zeros((), device=self.device)
+            for name in self.classifier_config
+        }
+        self.nonzero_fn = {
+            name: torch.zeros((), device=self.device)
+            for name in self.classifier_config
+        }
 
-    def update(self, outputs, labels):
-        for name, logits in outputs.items():
-            with torch.no_grad():
-                preds   = logits.argmax(dim=-1)
-                targets = labels[name].long()
-                n_classes = self.classifier_config[name]['n_classes']
-                
-                self.correct[name] += (preds == targets).sum()
-                self.total[name]   += targets.numel()
-                
-                # Vectorized per-class counts — eliminates Python loop + GPU syncs
-                # one_hot: (N, n_classes), then mask by correct predictions
-                one_hot = torch.nn.functional.one_hot(targets, num_classes=n_classes).float()  # (N, C)
-                correct_mask = (preds == targets).float().unsqueeze(1)                          # (N, 1)
-                self.per_class_correct[name] += (one_hot * correct_mask).sum(dim=0)
-                self.per_class_total[name]   += one_hot.sum(dim=0)
-                
-                self.abs_error[name] += (preds.float() - targets.float()).abs().sum()
+    @torch.no_grad()
+    def update(
+        self,
+        outputs,
+        labels,
+        *,
+        outputs_are_logits=False,
+    ):
+        """
+        Parameters
+        ----------
+        outputs:
+            Dictionary mapping label names to tensors of shape [N, C].
+
+            For kNN, these are nonnegative class votes.
+            For a linear classifier, these are usually logits.
+
+        labels:
+            Dictionary mapping label names to integer targets of shape [N].
+
+        outputs_are_logits:
+            Set True for ordinary classifier logits. Leave False for kNN
+            votes or probabilities.
+        """
+        for name, cfg in self.classifier_config.items():
+            scores = outputs[name]
+            targets = labels[name].long()
+            n_classes = cfg["n_classes"]
+
+            ## Multiplicity MAE
+            predictions = scores.argmax(dim=-1)
+
+            self.abs_error[name] += (predictions.float() - targets.float()).abs().sum()
+            self.total[name] += targets.numel()
+
+            ## Binary zero-versus-nonzero F1
+            ## Convert raw logits to probabilities
+            if outputs_are_logits:
+                presence_scores = scores.softmax(dim=-1)
+            else:
+                ## kNN votes or already-normalized probabilities.
+                presence_scores = scores
+
+            zero_score = presence_scores[:, 0]
+            nonzero_score = presence_scores[:, 1:].sum(dim=-1)
+
+            ## Treat ties as zero
+            predicted_nonzero = nonzero_score > zero_score
+            target_nonzero = targets > 0
+
+            self.nonzero_tp[name] += (predicted_nonzero & target_nonzero).sum()
+            self.nonzero_fp[name] += (predicted_nonzero & ~target_nonzero).sum()
+            self.nonzero_fn[name] += (~predicted_nonzero & target_nonzero).sum()
 
     def reduce(self):
-        # Batch all tensors into a single all_reduce per classifier to reduce
-        # communication overhead
-        for name in self.classifier_config:
-            # Stack scalars + per_class vectors into one tensor
-            packed = torch.cat([
-                self.correct[name].unsqueeze(0).float(),
-                self.total[name].unsqueeze(0).float(),
-                self.abs_error[name].unsqueeze(0),
-                self.per_class_correct[name],
-                self.per_class_total[name],
-            ])
-            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
 
-            # Unpack
-            n = self.classifier_config[name]['n_classes']
-            self.correct[name]           = packed[0].long()
-            self.total[name]             = packed[1].long()
-            self.abs_error[name]         = packed[2]
-            self.per_class_correct[name] = packed[3:3 + n]
-            self.per_class_total[name]   = packed[3 + n:3 + 2 * n]
+        for name in self.classifier_config:
+            packed = torch.stack([
+                self.total[name],
+                self.abs_error[name],
+                self.nonzero_tp[name],
+                self.nonzero_fp[name],
+                self.nonzero_fn[name],
+            ])
+
+            dist.all_reduce(
+                packed,
+                op=dist.ReduceOp.SUM,
+            )
+
+            self.total[name] = packed[0]
+            self.abs_error[name] = packed[1]
+            self.nonzero_tp[name] = packed[2]
+            self.nonzero_fp[name] = packed[3]
+            self.nonzero_fn[name] = packed[4]
 
     def compute(self):
-        # All .item() calls are deferred to here — called once per epoch,
-        # so syncs are acceptable
         results = {}
-        for name, cfg in self.classifier_config.items():
-            n_classes = cfg['n_classes']
 
-            total            = self.total[name].item()
-            correct          = self.correct[name].item()
-            per_class_correct = self.per_class_correct[name].cpu()  # single transfer
-            per_class_total   = self.per_class_total[name].cpu()
+        for name in self.classifier_config:
+            total = self.total[name].item()
+            abs_error = self.abs_error[name].item()
 
-            acc = correct / max(total, 1)
+            tp = self.nonzero_tp[name].item()
+            fp = self.nonzero_fp[name].item()
+            fn = self.nonzero_fn[name].item()
 
-            # Vectorized per-class accuracy — no Python loop
-            valid_mask     = per_class_total > 0
-            per_class_acc_tensor = torch.where(
-                valid_mask,
-                per_class_correct / per_class_total.clamp(min=1),
-                torch.full_like(per_class_correct, float('nan')),
+            mae = (
+                abs_error / total
+                if total > 0
+                else float("nan")
             )
-            per_class_acc = per_class_acc_tensor.tolist()
 
-            valid_accs         = per_class_acc_tensor[valid_mask]
-            mean_per_class_acc = valid_accs.mean().item() if valid_mask.any() else float('nan')
+            f1_denominator = 2 * tp + fp + fn
 
-            mae = self.abs_error[name].item() / max(total, 1)
-
-            # Vectorized recall — slice off class 0
-            tp             = per_class_correct[1:].sum().item()
-            fn             = (per_class_total[1:] - per_class_correct[1:]).sum().item()
-            recall_nonzero = tp / max(tp + fn, 1)
+            f1_nonzero = (
+                2 * tp / f1_denominator
+                if f1_denominator > 0
+                else float("nan")
+            )
 
             results[name] = {
-                'accuracy':           acc,
-                'mean_per_class_acc': mean_per_class_acc,
-                'per_class_acc':      per_class_acc,
-                'mae':                mae,
-                'recall_nonzero':     recall_nonzero,
+                "mae": mae,
+                "f1_nonzero": f1_nonzero,
             }
+
         return results
