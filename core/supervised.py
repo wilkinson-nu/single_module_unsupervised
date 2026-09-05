@@ -29,15 +29,15 @@ DERIVED_LABELS = {
 }
 
 DEFAULT_CLASSIFIER_CONFIG = {
-    'nproton':   {'n_classes': 4, 'weight': 1.0},
-    'npipm':     {'n_classes': 3, 'weight': 1.0},
-    'npi0':      {'n_classes': 3, 'weight': 1.0},
-    'nem':       {'n_classes': 3, 'weight': 1.0},
-    'ncluster':  {'n_classes': 4, 'weight': 1.0},
-    'nlambda0':  {'n_classes': 2, 'weight': 5.0},  # upweight rare events
-    'nkapm':     {'n_classes': 2, 'weight': 5.0},  # upweight rare events    
-    'nka0':      {'n_classes': 2, 'weight': 5.0},  # upweight rare events    
-    'ncharged':  {'n_classes': 6, 'weight': 1.0},
+    'nproton':   {'n_classes': 4, 'weight': 1.0, 'cap': 3},
+    'npipm':     {'n_classes': 3, 'weight': 1.0, 'cap': 2},
+    'npi0':      {'n_classes': 3, 'weight': 1.0, 'cap': 2},
+    'nem':       {'n_classes': 3, 'weight': 1.0, 'cap': 2},
+    'ncluster':  {'n_classes': 4, 'weight': 1.0, 'cap': 3},
+    'nlambda0':  {'n_classes': 2, 'weight': 5.0, 'cap': 1},  # upweight rare events
+    'nkapm':     {'n_classes': 2, 'weight': 5.0, 'cap': 1},  # upweight rare events    
+    'nka0':      {'n_classes': 2, 'weight': 5.0, 'cap': 1},  # upweight rare events    
+    'ncharged':  {'n_classes': 6, 'weight': 1.0, 'cap': 5},
 }
 
 class SupervisedHead(nn.Module):
