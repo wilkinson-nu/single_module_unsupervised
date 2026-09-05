@@ -118,7 +118,7 @@ def evaluate_knn(
         for name, cfg in classifier_config.items()
     }
 
-    metrics.update(votes, query_labels)
+    metrics.update(votes, query_labels, outputs_are_logits=False)
 
     # No reduce: features and labels are already globally gathered,
     # and this calculation runs on rank 0.
@@ -255,7 +255,7 @@ def fit_linear_probe(
                 }
 
                 outputs = probe(features)
-                probe_metrics.update(outputs, labels)
+                probe_metrics.update(outputs, labels, outputs_are_logits=True)
 
         # Do not call reduce(): this probe runs on rank 0 using globally
         # gathered bank and query features.
