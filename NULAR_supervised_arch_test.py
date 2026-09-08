@@ -17,7 +17,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
-from datasets.nularbox.encoder import get_encoder
+from core.models.resnet_encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import uniformity, alignment, basic_geometry_metrics

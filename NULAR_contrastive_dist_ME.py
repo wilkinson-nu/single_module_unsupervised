@@ -19,7 +19,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
 from core.losses.vicreg import VICRegLossDistributed
 from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
-from datasets.nularbox.encoder import get_encoder
+from core.models.resnet_encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
 from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
