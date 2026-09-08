@@ -99,7 +99,7 @@ echo "Prepare images..."
 ## Make 2 sets:
 ## - One where containment is required in the full image
 ## - Another where containment is in a smaller region
-shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 make_2D_nusim_images.py \
+shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 make_nusim_images.py \
         --input ${OUTFILE_ROOT}_EDEPSIM.root \
         --output ${OUTFILE_ROOT}_IMAGES_CCCONT512.h5 \
         --image_size ${IMAGE_SIZE} \
@@ -115,7 +115,7 @@ if [ ! -d "${OUTDIR_ROOT}/IMAGES_CCCONT512" ]; then
 fi
 cp ${tempDir}/${OUTFILE_ROOT}_IMAGES_CCCONT512.h5 ${OUTDIR_ROOT}/IMAGES_CCCONT512/.
 
-shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 make_2D_nusim_images.py \
+shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 make_nusim_images.py \
         --input ${OUTFILE_ROOT}_EDEPSIM.root \
 	--output ${OUTFILE_ROOT}_IMAGES_CCCONT256.h5 \
         --image_size ${IMAGE_SIZE} \
