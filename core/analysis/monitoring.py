@@ -11,7 +11,6 @@ def extract_features(encoder, loader, device, label_names):
     encoder.eval()
     fs, ls = [], {n: [] for n in label_names}
 
-    print0("Looping over events...")
     for bcoords, bfeats, blabels, bs in loader:
         bcoords = bcoords.to(device, non_blocking=True)
         bfeats  = bfeats.to(device,  non_blocking=True)
@@ -22,7 +21,6 @@ def extract_features(encoder, loader, device, label_names):
     if was_training:
         encoder.train()
 
-    print0("Finished loop over events...")
     f = torch.cat(fs)
     world = dist.get_world_size()
     gf = [torch.zeros_like(f) for _ in range(world)]
@@ -35,7 +33,6 @@ def extract_features(encoder, loader, device, label_names):
         gl = [torch.zeros_like(l) for _ in range(world)]
         dist.all_gather(gl, l.contiguous())
         out_l[n] = torch.cat(gl)
-    print0("Finished extract_features gather")
     return f, out_l
 
 
