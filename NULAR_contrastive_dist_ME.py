@@ -683,7 +683,8 @@ if __name__ == '__main__':
     world_size = int(os.environ["SLURM_NTASKS"])
     
     ## Report arguments
-    for arg in vars(args): print0(arg, getattr(args, arg))
+    if rank == 0:
+        for arg in vars(args): print(arg, getattr(args, arg))
 
     ## Removed mp.spawn, now requires srun
     run_training(rank, local_rank, world_size, args)
