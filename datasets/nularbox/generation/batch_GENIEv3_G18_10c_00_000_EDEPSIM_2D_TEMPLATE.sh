@@ -62,10 +62,10 @@ shifter --entrypoint --module=cvmfs --image=docker:wilkinsonnu/nuisance_project:
     	setup genie v3_02_00c -q e20:inclxx:prof; \
 	export INCL_SRC_DIR=/cvmfs/fermilab.opensciencegrid.org/products/genie/local/inclxx/v5_2_9_5a/source; \
 	export GENIE_PDG_TABLE=mod_genie_pdg_table.txt; \
+	export GXMLPATH=xml_override; \
 	gevgen -n ${NEVENTS} -t ${TARG} -p ${NU_PDG} \
 	--event-generator-list CC \
         --cross-sections ${GENIE_TUNE}_splines.xml.gz \
-	--xml_path xml_override \
         --tune ${GENIE_TUNE} --seed ${SEED} \
         -f ${FLUX_FILE},${FLUX_HIST} -e ${E_MIN},${E_MAX} -o ${OUTFILE_ROOT}_GHEP.root &> /dev/null"
 
