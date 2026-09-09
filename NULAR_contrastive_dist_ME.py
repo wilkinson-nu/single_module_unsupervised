@@ -169,7 +169,7 @@ def run_training(rank, local_rank, world_size, args):
     ## So we don't constantly ask args
     num_iterations = args.nepoch
     log_dir = args.log
-    instance_scale = args.instance_scale
+    clust_loss_scale = args.clust_loss_scale
     norm_encoder = bool(args.norm_encoder)
     weight_decay = args.weight_decay
     weight_decay_final = args.weight_decay_final
@@ -291,7 +291,6 @@ def run_training(rank, local_rank, world_size, args):
             ## Deal with the projection loss
             proj_batch = heads["proj"](encoded_batch)
             proj_loss, proj_loss_parts = loss_fns["proj"](proj_batch)
-            proj_loss = instance_scale * proj_loss
                 
             tot_loss = proj_loss
             losses_tensor["proj"] += proj_loss.detach()
@@ -325,6 +324,8 @@ def run_training(rank, local_rank, world_size, args):
             if "clust" in heads:
                 clust_batch = heads["clust"](encoded_batch)
                 clust_loss, clust_entropy = loss_fns["clust"](clust_batch)
+                clust_loss = args.clust_loss_scale * clust_loss
+                clust_entropy = args.clust_loss_scale * clust_entropy
                 tot_loss += clust_loss + clust_entropy
                 losses_tensor["clust"] += clust_loss.detach()
                 entropy_tensor += clust_entropy.detach()
@@ -640,6 +641,7 @@ if __name__ == '__main__':
     parser.add_argument('--entropy_scale', type=float, default=1.0)
     parser.add_argument('--softmax_temp', type=float, default=1.0)
     parser.add_argument('--instance_scale', type=float, default=1.0)
+    parser.add_argument('--clust_loss_scale', type=float, default=1.0)
 
     ## Projection head architecture
     parser.add_argument('--proj_arch', type=str, default="two")
