@@ -83,9 +83,7 @@ class ProjectionHeadTwoLayer(nn.Module):
             x = self.proj.norm0(x)
             x = self.proj.act0(x)
 
-        h1_fix = self.proj.lin1(x)
-
-        h1 = h1_fix
+        h1 = self.proj.lin1(x)
         if self.apply_bn: h1 = self.proj.norm1(h1)
         h1 = self.proj.act1(h1)
 
@@ -94,7 +92,7 @@ class ProjectionHeadTwoLayer(nn.Module):
             out = self.proj.norm2(out)
 
         if return_hidden:
-            return {"proj_layer1": h1_fix,
+            return {"proj_layer1": h1,
                     "proj_final": out}
         return out
 
@@ -165,14 +163,11 @@ class ProjectionHeadThreeLayer(nn.Module):
             x = self.proj.norm0(x)
             x = self.proj.act0(x)
 
-        h1_fix = self.proj.lin1(x)
-
-        h1 = h1_fix
+        h1 = self.proj.lin1(x)
         if self.apply_bn: h1 = self.proj.norm1(h1)
         h1 = self.proj.act1(h1)
 
-        h2_fix = self.proj.lin2(h1)
-        h2 = h2_fix
+        h2 = self.proj.lin2(h1)
         if self.apply_bn: h2 = self.proj.norm2(h2)
         h2 = self.proj.act2(h2)
 
@@ -181,8 +176,8 @@ class ProjectionHeadThreeLayer(nn.Module):
             out = self.proj.norm3(out)
 
         if return_hidden:
-            return {"proj_layer1": h1_fix,
-                    "proj_layer2": h2_fix,
+            return {"proj_layer1": h1,
+                    "proj_layer2": h2,
                     "proj_final": out}
         return out
         
