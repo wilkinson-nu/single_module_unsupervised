@@ -120,6 +120,9 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
         if batch_eventids is not None:
             event_ids.extend(batch_eventids)
 
+        # Manage CUDA memory for ME
+        torch.cuda.empty_cache()
+            
     ## Turn into numpy arrays 
     representations = {k: torch.cat(v).numpy() for k, v in representations.items()}
 
