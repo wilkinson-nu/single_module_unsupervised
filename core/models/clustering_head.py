@@ -24,7 +24,7 @@ class ClusteringHeadLogits(nn.Module):
     def make_network(self):
         clust = OrderedDict()
         clust['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=True)
-        if self.apply_bn: proj['norm1'] = nn.BatchNorm1d(self.nhidden)
+        if self.apply_bn: clust['norm1'] = nn.BatchNorm1d(self.nhidden)
         clust['act1'] = self.hidden_act_fn()
         clust['lin2'] = nn.Linear(self.nhidden, self.nclusters, bias=False)
         return nn.Sequential(clust)
@@ -78,7 +78,7 @@ class ClusteringHeadTwoLayer(nn.Module):
     def make_network(self):
         clust = OrderedDict()
         clust['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=True)
-        if self.apply_bn: proj['norm1'] = nn.BatchNorm1d(self.nhidden)
+        if self.apply_bn: clust['norm1'] = nn.BatchNorm1d(self.nhidden)
         clust['act1'] = self.hidden_act_fn()
         clust['lin2'] = nn.Linear(self.nhidden, self.nclusters, bias=False)
         return nn.Sequential(clust)
@@ -133,10 +133,10 @@ class ClusteringHeadThreeLayer(nn.Module):
     def make_network(self):
         clust = OrderedDict()
         clust['lin1'] = nn.Linear(self.nchan, self.nhidden, bias=True)
-        if self.apply_bn: proj['norm1'] = nn.BatchNorm1d(self.nhidden)
+        if self.apply_bn: clust['norm1'] = nn.BatchNorm1d(self.nhidden)
         clust['act1'] = self.hidden_act_fn()
         clust['lin2'] = nn.Linear(self.nhidden, self.nhidden, bias=True)
-        if self.apply_bn: proj['norm2'] = nn.BatchNorm1d(self.nhidden)
+        if self.apply_bn: clust['norm2'] = nn.BatchNorm1d(self.nhidden)
         clust['act2'] = self.hidden_act_fn()
         clust['lin3'] = nn.Linear(self.nhidden, self.nclusters, bias=False)
         return nn.Sequential(clust)
