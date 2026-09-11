@@ -8,20 +8,23 @@ from matplotlib import cm
 from scipy.sparse import coo_matrix
 from collections import defaultdict
 import json
-from truth_labels import LABEL_DTYPE_EXP, CCTopology, Topology, Mode
+from truth_labels import PARTICLE_STACK_DTYPE, EVENT_LABEL_DTYPE, CCTopology, Topology, Mode
 import argparse
 import matplotlib.patches as patches
+from collections import Counter
 
-## TODO look at more "event shape" variables --> probably only interesting for 3D
-## Energy deposit in ~5mm, ~20mm, ~50mm of the vertex
-## Ratios 5/20 and 5/50
-## Do the lambda and k0 decay in the detector?
-## N. charged particles that leave (non-neutron/photon) energy >20 mm from the vertex (+protons +pions + kaons)
-## Where in the detector do gammas leave energy?
-## Detached vertex? --> neutron producing a detached vertex, or lambda? Or k0s in detector?
+## TODO: look at more "event shape" variables --> probably only interesting for 3D
+## TODO: Do the k0L decay in the detector?
+## TODO: Count detached vertices? --> neutron producing a detached vertex, or lambda? Or k0s in detector?
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
+
+def position_to_numpy(position):
+    return np.array(
+        [position.X(), position.Y(), position.Z()],
+        dtype=np.float64,
+    )
 
 def get_mode(code):
 
@@ -57,78 +60,78 @@ def get_mode(code):
     print("Found unparseable code:", code)
     return Mode.NONE 
 
-def get_topology(l):
+def get_topology(part, cc):
 
-    if l["nlambda0"]+l["nkapm"]+l["nka0"]+l['nantiprot']+l['nantineut'] > 0:
-        if l["cc"]: return Topology.CCOther
+    if part["nlambda0"]+part["nkapm"]+part["nka0"]+part['nantiprot']+part['nantineut'] > 0:
+        if cc: return Topology.CCOther
         else: return Topology.NCOther
-    if l["npipm"]+l["npi0"]>2:
-        if l["cc"]: return Topology.CCNpi
+    if part["npipm"]+part["npi0"]>2:
+        if cc: return Topology.CCNpi
         else: return Topology.NCNpi        
-    if l["npipm"]+l["npi0"]>1:
-        if l["cc"]: return Topology.CC2pi
+    if part["npipm"]+part["npi0"]>1:
+        if cc: return Topology.CC2pi
         else: return Topology.NC2pi
-    if l["npipm"]+l["npi0"]==0:
-        if l["cc"]: return Topology.CC0pi
+    if part["npipm"]+part["npi0"]==0:
+        if cc: return Topology.CC0pi
         else: return Topology.NC0pi
-    if l["npipm"] == 1 and l["npi0"]==0:
-        if l["cc"]: return Topology.CC1pipm
+    if part["npipm"] == 1 and part["npi0"]==0:
+        if cc: return Topology.CC1pipm
         else: return Topology.NC1pipm
-    if l["npipm"] == 0 and l["npi0"]==1:
-        if l["cc"]: return Topology.CC1pi0
+    if part["npipm"] == 0 and part["npi0"]==1:
+        if cc: return Topology.CC1pi0
         else: return Topology.NC1pi0
 
     return Topology.NONE
 
-def get_cctopology(l):
+def get_cctopology(part, cc):
 
     ## Shortcut NC events
-    if not np.asarray(labels["cc"], dtype=bool): return CCTopology.NC
+    if not cc: return CCTopology.NC
 
     ## Remove any complex events
-    if l["nlambda0"]+l["nkapm"]+l["nka0"]+l['nantiprot']+l['nantineut'] > 0:
+    if part["nlambda0"]+part["nkapm"]+part["nka0"]+part['nantiprot']+part['nantineut'] > 0:
         return CCTopology.CCOther
 
     ## Everything else should be some combination of pions and protons
-    if l["npipm"] == 0 and l["npi0"] == 0:
-        if l["nproton"] == 0:
+    if part["npipm"] == 0 and part["npi0"] == 0:
+        if part["nproton"] == 0:
             return CCTopology.CC0pi0p
-        elif  l["nproton"] == 1:
+        elif  part["nproton"] == 1:
             return CCTopology.CC0pi1p
         else:
             return CCTopology.CC0piNp
-    elif l["npipm"] == 1 and l["npi0"] == 0:
-        if l["nproton"] == 0:
+    elif part["npipm"] == 1 and part["npi0"] == 0:
+        if part["nproton"] == 0:
             return CCTopology.CC1pipm0pi0_0p
-        elif  l["nproton"] == 1:
+        elif  part["nproton"] == 1:
             return CCTopology.CC1pipm0pi0_1p
         else:
             return CCTopology.CC1pipm0pi0_Np
-    elif l["npipm"] > 1 and l["npi0"] == 0:
-        if l["nproton"] == 0:
+    elif part["npipm"] > 1 and part["npi0"] == 0:
+        if part["nproton"] == 0:
             return CCTopology.CCNpipm0pi0_0p
-        elif  l["nproton"] == 1:
+        elif  part["nproton"] == 1:
             return CCTopology.CCNpipm0pi0_1p
         else:
             return CCTopology.CCNpipm0pi0_Np
-    elif l["npipm"] == 0 and l["npi0"] == 1:
-        if l["nproton"] == 0:
+    elif part["npipm"] == 0 and part["npi0"] == 1:
+        if part["nproton"] == 0:
             return CCTopology.CC0pipm1pi0_0p
-        elif  l["nproton"] == 1:
+        elif  part["nproton"] == 1:
             return CCTopology.CC0pipm1pi0_1p
         else:
             return CCTopology.CC0pipm1pi0_Np        
-    elif l["npipm"] == 0 and l["npi0"] > 1:
-        if l["nproton"] == 0:
+    elif part["npipm"] == 0 and part["npi0"] > 1:
+        if part["nproton"] == 0:
             return CCTopology.CC0pipmNpi0_0p
-        elif  l["nproton"] == 1:
+        elif  part["nproton"] == 1:
             return CCTopology.CC0pipmNpi0_1p
         else:
             return CCTopology.CC0pipmNpi0_Np
     else:
-        if l["nproton"] == 0:
+        if part["nproton"] == 0:
             return CCTopology.CCmixedpi_0p
-        elif  l["nproton"] == 1:
+        elif  part["nproton"] == 1:
             return CCTopology.CCmixedpi_1p
         else:
             return CCTopology.CCmixedpi_Np
@@ -161,131 +164,139 @@ def is_ccinc(pdg_list):
     if abs(pdg_list[0]) in [12, 14, 16]: return False
     return True
 
+def check_unrecognized_pdgs(pdgs):
+    recognized = {
+        12, 14, 16,
+        -12, -14, -16,
+        2212, -2212,
+        2112, -2112,
+        211, -211, 111,
+        321, -321,
+        130, 310, 311, -311,
+        22, 11, -11, 13, -13,
+        3122, -3122,
+        1000010020,  # deuteron
+        1000010030,  # tritium
+        1000020030,  # helium-3
+        1000020040,  # alpha
+        1000180400,  # argon remnant
+    }
 
-def get_truth_labels(vertex, groo):
+    remaining = [
+        pdg for pdg in pdgs
+        if pdg not in recognized
+        and not (1000020060 <= pdg < 1000180400)
+    ]
 
-    l = np.zeros((), dtype=LABEL_DTYPE_EXP)
+    if remaining:
+        print("Remaining PDG list:", remaining)
+        
 
-    ## Get all of the primary particles coming out of the event
-    pdg_list = [x.GetPDGCode() for x in vertex.Particles]
-    
-    ## Get the neutrino and outgoing lepton
+## Create a PARTICLE_STACK_DTYPE record
+def get_particle_counts(pdg_list):
+
+    result = np.zeros((), dtype=PARTICLE_STACK_DTYPE)
+    counts = Counter(pdg_list)
+
+    result["nproton"]   = counts[2212]
+    result["nantiprot"] = counts[-2212]
+    result["nneutron"]  = counts[2112]
+    result["nantineut"] = counts[-2112]
+    result["npip"] = counts[211]
+    result["npim"] = counts[-211]
+    result["npi0"] = counts[111]
+    result["nkap"] = counts[321]
+    result["nkam"] = counts[-321]
+    result["nka0"] = sum(counts[pdg] for pdg in (130, 310, 311, -311))
+    result["ngamma"] = counts[22]
+    result["nepm"] = counts[11] + counts[-11]
+    result["nmuon"] = counts[13] + counts[-13]
+    result["nlambda0"] = counts[3122] + counts[-3122]
+    result["ndeuteron"] = counts[1000010020]
+    result["ntritium"]  = counts[1000010030]
+    result["nhelium3"]  = counts[1000020030]
+    result["nalpha"]    = counts[1000020040]
+    result["nnuclfrag"] = sum(count for pdg, count in counts.items() if 1000020060 <= pdg < 1000180400)
+
+    ## Compound counts
+    result["npipm"] = result["npip"] + result["npim"]
+    result["nkapm"] = result["nkap"] + result["nkam"]
+    result["nem"] = result["nepm"] + result["ngamma"]
+    result["ncharged"] = result["nproton"] + result["npipm"] + result["nkapm"] + result["nmuon"]
+    result["ncluster"] = result["ndeuteron"] + result["ntritium"] + result["nhelium3"] + result["nalpha"] + result["nnuclfrag"]
+
+    ## Scream if any particles we weren't expecting made it through
+    check_unrecognized_pdgs(pdg_list)
+
+    return result
+
+
+def get_event_features(vertex,
+                       groo,
+                       particle_truth,
+                       particle_visible,
+                       deposition_features):
+    event_labels = np.zeros((), dtype=EVENT_LABEL_DTYPE)
+
+    particles = list(vertex.Particles)
+    pdg_list = [int(particle.GetPDGCode()) for particle in particles]
+
     nu_4mom = get_neutrino_4mom(groo)
-    lep_4mom = vertex.Particles[0].GetMomentum()
+    outgoing_4mom = particles[0].GetMomentum()
 
-    l["cc"] = is_ccinc(pdg_list)
-    l["enu"] = nu_4mom.E()/1000.
-    l["q0"] = (nu_4mom.E() - lep_4mom.E())/1000.
 
-    ## Remove the leading lepton from the list (strong assumption about the order)
-    pdg_list = pdg_list[1:]
+    cc = is_ccinc(pdg_list)
+    event_labels["cc"] = cc
+    event_labels["enu"] = nu_4mom.E() / 1000.0
+    event_labels["q0"] = (nu_4mom.E() - outgoing_4mom.E()) / 1000.0
+    event_labels["mode"] = np.int8(get_mode(str(groo.EvtCode)).value)
 
-    ## Strip any neutrinos
-    pdg_list = [x for x in pdg_list if abs(x) not in [12, 14, 16]]
+    # Derived particle-topology labels
+    event_labels["topology_truth"] = np.int8(get_topology(particle_truth, cc).value)
+    event_labels["topology_visible"] = np.int8(get_topology(particle_visible, cc).value)
+    event_labels["cctopology_truth"] = np.int8(get_cctopology(particle_truth, cc).value)
+    event_labels["cctopology_visible"] = np.int8(get_cctopology(particle_visible, cc).value)
+
+    # Energy deposited in spheres around the true vertex
+    edep = deposition_features["edep_inside"]
+    event_labels["edep_5mm"] = np.float32(edep[5.0])
+    event_labels["edep_10mm"] = np.float32(edep[10.0])
+    event_labels["edep_20mm"] = np.float32(edep[20.0])   
+    event_labels["edep_50mm"] = np.float32(edep[50.0])
     
-    ## Now count particles in the list (and modify the list)
-    l["nproton"] = sum(1 for x in pdg_list if x == 2212)
-    pdg_list = [x for x in pdg_list if x != 2212]
-    l["nantiprot"] = sum(1 for x in pdg_list if x == -2212)
-    pdg_list = [x for x in pdg_list if x != -2212]    
-    l["nneutron"] = sum(1 for x in pdg_list if x == 2112)
-    pdg_list = [x for x in pdg_list if x != 2112]
-    l["nantineut"] = sum(1 for x in pdg_list if x == -2112)
-    pdg_list = [x for x in pdg_list if x != -2112]    
-    l["npip"] = sum(1 for x in pdg_list if x == 211)
-    pdg_list = [x for x in pdg_list if x != 211]
-    l["npim"] = sum(1 for x in pdg_list if x == -211)
-    pdg_list = [x for x in pdg_list if x != -211]
-    l["npi0"] = sum(1 for x in pdg_list if x == 111)
-    pdg_list = [x for x in pdg_list if x != 111]
-    l["nkap"] = sum(1 for x in pdg_list if x == 321)
-    pdg_list = [x for x in pdg_list if x != 321]
-    l["nkam"] = sum(1 for x in pdg_list if abs(x) == 321)
-    pdg_list = [x for x in pdg_list if x != -321]
-    l["nka0"] = sum(1 for x in pdg_list if x in [130, 310, 311, -311])
-    pdg_list = [x for x in pdg_list if x not in [130, 310, 311, -311]]
-    l["ngamma"] = sum(1 for x in pdg_list if x == 22)
-    pdg_list = [x for x in pdg_list if x != 22]
-    l["nepm"] = sum(1 for x in pdg_list if abs(x) == 11)
-    pdg_list = [x for x in pdg_list if abs(x) == 11]
-    l["nlambda0"] = sum(1 for x in pdg_list if abs(x) == 3122)
-    pdg_list = [x for x in pdg_list if abs(x) != 3122]    
-    l["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
-    pdg_list = [x for x in pdg_list if abs(x) != 13]
+    return event_labels
 
-    ## Add some fragmentation categories for INCL
-    l["ndeuteron"] = sum(1 for x in pdg_list if x == 1000010020)
-    pdg_list = [x for x in pdg_list if x != 1000010020]
-    l["nalpha"] = sum(1 for x in pdg_list if x == 1000020040)
-    pdg_list = [x for x in pdg_list if x != 1000020040]    
-    l["nhelium3"] = sum(1 for x in pdg_list if x == 1000020030)
-    pdg_list = [x for x in pdg_list if x != 1000020030]
-    l["ntritium"] = sum(1 for x in pdg_list if x == 1000010030)
-    pdg_list = [x for x in pdg_list if x != 1000010030] 
-    l["nnuclfrag"] = sum(1 for x in pdg_list if (x >= 1000020060 and x < 1000180400))
-    pdg_list = [x for x in pdg_list if not (x >= 1000020060 and x < 1000180400)]
-    
-    ## Also remove remnant nuclei (coherent events)
-    pdg_list = [x for x in pdg_list if x not in [1000180400]]
+def get_excluded_ids(event,
+                     low_energy_cut=10.0):
 
-    ## Sanity check during testing
-    if len(pdg_list)>0: print("Remaining list:", pdg_list)
+    neutron_lineage = set()
+    k0l_lineage = set()
+    lowe_lineage = set()
 
-    ## Make some compound labels
-    l["nem"] = l["nepm"] + l["ngamma"]
-    l["npipm"] = l["npip"] + l["npim"]
-    l["nkapm"] = l["nkap"] + l["nkam"]
-    l['ncharged'] = l['nproton'] + l['npipm'] + l['nkapm'] + l['nmuon']
-    l['ncluster']= l['ndeuteron'] + l['nalpha'] + l['nhelium3'] + l['ntritium'] + l['nnuclfrag']
-
-    ## Add some event summary categories
-    l["topology"] = np.int8(get_topology(l, vertex).value)
-    l["cctopology"] = np.int8(get_cctopology(l, vertex).value)    
-    l["mode"] = np.int8(get_mode(str(groo.EvtCode)).value)
-    
-    return l
-
-## We want to ignore all hits produced by neutrons or their daughters
-## So, make a set of all true trajectories that are neutrons or their descendants 
-def get_neutron_and_daughter_ids(event):
-    
-    neutrons  = set()
-    daughters = set()
-    
     for traj in event.Trajectories:
-        
-        if traj.GetPDGCode() == 2112:
-            neutrons .add(traj.GetTrackId())
-            continue
-        par_id = traj.GetParentId()
-        if par_id in neutrons or par_id in daughters:
-            daughters .add(traj.GetTrackId())
+        track_id = int(traj.GetTrackId())
+        parent_id = int(traj.GetParentId())
+        pdg = int(traj.GetPDGCode())
 
-    return neutrons.union(daughters)
+        ## Neutrons and descendents
+        if abs(pdg) == 2112 or parent_id in neutron_lineage:
+            neutron_lineage .add(track_id)
 
-## Also allow hits produced by K0L to escape
-def get_k0l_ids(event):
-    
-    k0ls  = set()
-    daughters = set()
-    
-    for traj in event.Trajectories:
-        
-        if traj.GetPDGCode() == 130:
-            k0ls .add(traj.GetTrackId())
-            continue
-        par_id = traj.GetParentId()
-        if par_id in k0ls or par_id in daughters:
-            daughters .add(traj.GetTrackId())
+        ## Same treatment for K0L
+        if pdg == 130 or parent_id in k0l_lineage:
+            k0l_lineage .add(track_id)
 
-    return k0ls.union(daughters)
+        ## Remove very low energy fluff
+        energy =  traj.GetInitialMomentum().E()
+        if energy < low_energy_cut or parent_id in lowe_lineage:
+            lowe_lineage .add(track_id)
 
-## Get a set of trajectory IDs with total energy < 10 MeV
-## This is a semi-arbitrary cut-off to ignore delta rays and
-## other low-energy stuff that leaks out of the detector
-def get_low_energy_ids(event, low_E_cut=10):
-    return set(x.GetTrackId() for x in event.Trajectories if x.GetInitialMomentum().E() < low_E_cut)
-
+    return {
+        "all": (neutron_lineage | k0l_lineage | lowe_lineage),
+        "neutron": neutron_lineage,
+        "k0l": k0l_lineage,
+        "lowe": lowe_lineage,
+    }
 
 def muon_exits_downstream(point, bbox):
 
@@ -340,19 +351,19 @@ def exiting_muon(event, muon_id, bbox, downstream=False):
 ## This is designed to select a set of events in which:
 ## - No other activity escapes the volume of interest except for neutrons or low energy junk, or neutrinos
 ## - Where the volume of interest can be a defined cube of voxels
-def hadron_contained_cut(event, bbox):
+def hadron_contained_cut(event, excluded, bbox):
     
     ## Get the primary lepton (assumes a well ordered stack)
     out_lep = event.Primaries[0].Particles[0]
     
     ## Get all neutrons and neutron descendents in the event
-    neutron_ids = get_neutron_and_daughter_ids(event)
+    neutron_ids = excluded["neutron"]
     
     ## Get a list of low energy truth trajectories (may be quite long)
-    low_energy_ids = get_low_energy_ids(event)
+    low_energy_ids = excluded["lowe"]
 
     ## Get a list of k0l daughters
-    k0l_ids = get_k0l_ids(event)
+    k0l_ids = excluded["k0l"]
     
     ## Loop over detector segments
     for seg in event.SegmentDetectors:        
@@ -394,6 +405,120 @@ def hadron_contained_cut(event, bbox):
     return True
 
 
+## Energy deposited within a spherical volume (for vertex activity)
+## Defaults to assuming the vertex is always centered on (0,0,0)
+def segment_fraction_inside_sphere(p0, p1, radius, center=[0,0,0]):
+
+    p0 = np.asarray(p0, dtype=np.float64)
+    p1 = np.asarray(p1, dtype=np.float64)
+    center = np.asarray(center, dtype=np.float64)
+
+    d = p1 - p0
+    q = p0 - center
+
+    a = np.dot(d, d)
+
+    # Zero-length segment
+    if a <= 0.0: return float(np.dot(q, q) <= radius * radius)
+
+    b = 2.0 * np.dot(q, d)
+    c = np.dot(q, q) - radius * radius
+
+    discriminant = b * b - 4.0 * a * c
+
+    if discriminant < 0.0:
+        # No boundary crossing. The segment is either wholly inside
+        # or wholly outside.
+        midpoint = 0.5 * (p0 + p1)
+        return float(
+            np.dot(midpoint - center, midpoint - center)
+            <= radius * radius
+        )
+
+    sqrt_discriminant = np.sqrt(max(discriminant, 0.0))
+
+    t0 = (-b - sqrt_discriminant) / (2.0 * a)
+    t1 = (-b + sqrt_discriminant) / (2.0 * a)
+
+    if t0 > t1:
+        t0, t1 = t1, t0
+
+    # The part inside the sphere lies between the two roots.
+    t_enter = max(0.0, t0)
+    t_exit = min(1.0, t1)
+
+    return max(0.0, t_exit - t_enter)
+
+
+def get_deposition_features(event,
+                            excluded,
+                            vertex_radii=(5.0, 10.0, 20.0, 50.0),
+                            visible_radius=20.0,
+                            visible_min_edep=0.1,
+                            vertex_position=(0,0,0)):
+    """
+    Calculate:
+      * total deposited energy inside each vertex-centered sphere;
+      * energy deposited outside visible_radius by each primary ID;
+      * the set of primary IDs satisfying the visibility requirement.
+
+    GetPrimaryId() attributes descendant deposits to their original primary.
+
+    Energies are returned in the units of TG4HitSegment::GetEnergyDeposit(),
+    normally MeV.
+    """
+    vertex_position = np.asarray(vertex_position, dtype=np.float64)
+    vertex_radii = tuple(float(r) for r in vertex_radii)
+
+    edep_inside = {radius: 0.0 for radius in vertex_radii}
+    primary_edep_outside = defaultdict(float)
+
+    ## Vertices to ignore
+    excluded_ids = excluded["all"]
+
+    for detector_name, segments in event.SegmentDetectors:
+        for segment in segments:
+            
+            energy = float(segment.GetEnergyDeposit())
+            if energy <= 0.0: continue
+
+            p0 = position_to_numpy(segment.GetStart())
+            p1 = position_to_numpy(segment.GetStop())
+
+            ## Keep track of energy inside each vertex box (sphere) independent of contributor
+            for radius in vertex_radii:
+                fraction_inside = segment_fraction_inside_sphere(p0, p1, radius, vertex_position)
+                edep_inside[radius] += energy * fraction_inside
+
+            ## What produced this segment
+            contributors = segment.GetContributors()
+            if len(contributors) == 0: continue
+            contributor_id = contributors[0]
+
+            ## If this is in the ignore list... ignore
+            if contributor_id in excluded_ids: continue
+
+            ## What primary produced this?
+            primary_id = segment.GetPrimaryId()
+
+            fraction_inside = segment_fraction_inside_sphere(p0, p1, visible_radius, vertex_position)
+            fraction_outside = max(0.0, 1.0 - fraction_inside)
+
+            primary_edep_outside[primary_id] += (energy * fraction_outside)
+
+    visible_primary_ids = {
+        primary_id
+        for primary_id, energy in primary_edep_outside.items()
+        if energy > visible_min_edep
+    }
+
+    return {
+        "edep_inside": edep_inside,
+        "primary_edep_outside": dict(primary_edep_outside),
+        "visible_primary_ids": visible_primary_ids,
+    }
+
+
 ## How do we deal with events where nothing happens...?
 def get_3D_image_from_event(event, origin, voxel_size):
     
@@ -413,8 +538,8 @@ def get_3D_image_from_event(event, origin, voxel_size):
             p1_tlv = seg[1][n].GetStop()
             E      = seg[1][n].GetEnergyDeposit()
             
-            p0 = np.array([p0_tlv.X(), p0_tlv.Y(), p0_tlv.Z()], dtype=np.float64)
-            p1 = np.array([p1_tlv.X(), p1_tlv.Y(), p1_tlv.Z()], dtype=np.float64)
+            p0 = position_to_numpy(p0_tlv)
+            p1 = position_to_numpy(p1_tlv)
             delta = p1 - p0
             length = np.linalg.norm(delta)
             
@@ -567,15 +692,45 @@ def make_images(infilelist,
         if not exiting_muon(event, out_lep.GetTrackId(), bbox, exit_downstream):
             nmuonfail += 1
             continue
-    
-        if hadron_cont and not hadron_contained_cut(event, bbox):
+
+        ## Get a dictionary with a description of all of the IDs which we exclude
+        excluded_ids = get_excluded_ids(event)
+        
+        if hadron_cont and not hadron_contained_cut(event, excluded_ids, bbox):
             nhadfail += 1
             continue
 
-        ## If we pass the main selection cuts, get truth info
-        vertex = edep_tree.Event.Primaries[0]
-        labels = get_truth_labels(vertex, groo_tree)
+        ## If we pass the main selection cuts, get truth info for labels
+        vertex = event.Primaries[0]
+        vertex_particles = list(vertex.Particles)
 
+        ## Check that the first outgoing particle is indeed a muon...
+        if abs(int(vertex_particles[0].GetPDGCode())) != 13:
+            raise RuntimeError("Expected first vertex particle to be the outgoing muon")
+
+        ## Skip the muon
+        vertex_particles = vertex_particles[1:]
+        
+        pdg_list_truth = [int(particle.GetPDGCode()) for particle in vertex_particles]
+
+        particle_truth = get_particle_counts(pdg_list_truth)
+
+        ## Get info for visible labels
+        deposition_features = get_deposition_features(event, excluded_ids)
+
+        visible_pdg_list = [
+            p.GetPDGCode()
+            for p in vertex_particles
+            if int(p.GetTrackId()) in deposition_features["visible_primary_ids"]
+        ]
+        particle_visible = get_particle_counts(visible_pdg_list)
+
+        event_labels = get_event_features(vertex,
+                                          groo_tree,
+                                          particle_truth,
+                                          particle_visible,
+                                          deposition_features)
+        
         ## Get voxelised 3D hits
         coords_3d_raw, values_3d_raw = get_3D_image_from_event(event, origin, voxel_size)
         x_raw = coords_3d_raw[:, 0]
@@ -599,10 +754,11 @@ def make_images(infilelist,
 
         ## Check we're above the minimum number of hits (in 3D)
         if np.count_nonzero(values_3d) < min_hits:
-            print("Rejected event with labels:", labels)
-            print("Topology =", Topology.name_from_index(labels['topology']))
-            print("Mode =", Mode.name_from_index(labels['mode']))
-            print("N. hits =", np.count_nonzero(values_3d))
+            print("Rejected event with:")
+            print("--- Mode =", Mode.name_from_index(event_labels['mode']))
+            print("--- True CC topology =", CCTopology.name_from_index(event_labels['cctopology_truth']))
+            print("--- Vis. CC topology =", CCTopology.name_from_index(event_labels['cctopology_visible']))
+            print("--- N. hits =", np.count_nonzero(values_3d))
             nminhits += 1
             continue        
         nselected += 1
@@ -632,7 +788,9 @@ def make_images(infilelist,
             'coords_3d':  coords_3d,
             'values_3d':  values_3d,
             'event_id':   evt,
-            'label':      labels,
+            'event_labels':  event_labels,
+            'particle_truth': particle_truth,
+            'particle_visible': particle_visible,
         })
 
         ## Optionally dump out some files to have a look at
@@ -675,8 +833,10 @@ def make_images(infilelist,
     with h5py.File(output_file_name, 'w', libver='latest') as fout:
         N = len(event_data_list)
         fout.attrs['N'] = N
-        fout.attrs['label_dtype'] = LABEL_DTYPE_EXP.descr
+        fout.attrs['particle_dtype'] = PARTICLE_STACK_DTYPE.descr
+        fout.attrs['event_label_dtype'] = EVENT_LABEL_DTYPE.descr
         fout.attrs['Topology_enum'] = json.dumps({m.name: m.value for m in Topology})
+        fout.attrs['CCTopology_enum'] = json.dumps({m.name: m.value for m in CCTopology})
         fout.attrs['Mode_enum'] = json.dumps({m.name: m.value for m in Mode})
         fout.attrs['shape_3d'] = np.array(output_full_size, dtype=np.uint16)
         fout.attrs['shape_xz'] = np.array((output_full_size[0], output_full_size[2]), dtype=np.uint16)
@@ -685,7 +845,12 @@ def make_images(infilelist,
         xyz_data, xyz_coords = [], []
         xz_data, xz_row, xz_col = [], [], []
         xy_data, xy_row, xy_col = [], [], []
-        labels, event_ids = [], []
+        
+        particle_truth_array = np.empty(N, dtype=PARTICLE_STACK_DTYPE)
+        particle_visible_array = np.empty(N, dtype=PARTICLE_STACK_DTYPE)
+        event_labels_array = np.empty(N, dtype=EVENT_LABEL_DTYPE)
+        event_ids = np.empty(N, dtype=np.uint32)
+        
         xyz_off = np.zeros(N + 1, dtype=np.int64)
         xz_off  = np.zeros(N + 1, dtype=np.int64)
         xy_off  = np.zeros(N + 1, dtype=np.int64)
@@ -699,8 +864,13 @@ def make_images(infilelist,
             xy_data.append(ev['image_xy'].data.astype(np.float32))
             xy_row.append(ev['image_xy'].row.astype(np.uint16))
             xy_col.append(ev['image_xy'].col.astype(np.uint16))
-            labels.append(ev['label'])
-            event_ids.append(np.uint32(ev['event_id']))
+
+            ## Event records
+            particle_truth_array[i] = ev["particle_truth"]
+            particle_visible_array[i] = ev["particle_visible"]
+            event_labels_array[i] = ev["event_labels"]
+            event_ids[i] = np.uint32(ev["event_id"])
+
             xyz_off[i+1] = xyz_off[i] + len(ev['values_3d'])
             xz_off[i+1]  = xz_off[i]  + len(ev['image_xz'].data)
             xy_off[i+1]  = xy_off[i]  + len(ev['image_xy'].data)
@@ -723,9 +893,10 @@ def make_images(infilelist,
         fout.create_dataset('xy_row',  data=_cat1(xy_row, np.uint16), **cargs)
         fout.create_dataset('xy_col',  data=_cat1(xy_col, np.uint16), **cargs)
         fout.create_dataset('xy_offsets', data=xy_off)
-        if N:
-            fout.create_dataset('labels', data=np.array(labels, dtype=LABEL_DTYPE_EXP))
-        fout.create_dataset('event_id', data=np.array(event_ids, dtype=np.uint32))
+        fout.create_dataset("particle_truth", data=particle_truth_array)
+        fout.create_dataset("particle_visible", data=particle_visible_array)
+        fout.create_dataset("event_labels", data=event_labels_array)
+        fout.create_dataset("event_id", data=event_ids)
             
     ## Report summary
     print("Selected", nselected, "/", nevts, "events")
@@ -766,7 +937,7 @@ if __name__ == '__main__':
 
     ## Add containment option
     parser.add_argument('--hadron_cont', type=int, choices=[0,1], default=1)
-    
+
     # Parse arguments from command line
     args = parser.parse_args()
 

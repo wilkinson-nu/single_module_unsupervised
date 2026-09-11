@@ -2,12 +2,8 @@ import numpy as np
 from enum import Enum, auto
 
 
-## Initial label types to store, to be clarified and then will need to be versioned (probably)
-LABEL_DTYPE_EXP = np.dtype([
-    ("cc",        np.bool_),
-    ("topology",  np.int8),
-    ("cctopology",np.int8),
-    ("mode",      np.int8),
+## The particle stack labels (for both truth and visible
+PARTICLE_STACK_DTYPE = np.dtype([
     ("nneutron",  np.int8),
     ("nantineut", np.int8),
     ("nproton",   np.int8),    
@@ -32,8 +28,28 @@ LABEL_DTYPE_EXP = np.dtype([
     ("nnuclfrag", np.int8),
     ("ncharged",  np.int8),
     ("ncluster",  np.int8),    
+])
+
+## These are event summary variables
+EVENT_LABEL_DTYPE = np.dtype([
+
+    ## Interaction truth
+    ("cc",        np.bool_),
     ("enu",       np.float32),
     ("q0",        np.float32),
+    ("mode",      np.int8),
+
+    ## Summaries from the two particle stacks
+    ("topology_truth",    np.int8),
+    ("topology_visible",  np.int8),
+    ("cctopology_truth",  np.int8),
+    ("cctopology_visible",np.int8),
+
+    ## Global deposition features
+    ("edep_5mm",      np.float32),
+    ("edep_10mm",     np.float32),
+    ("edep_20mm",     np.float32),
+    ("edep_50mm",     np.float32),
 ])
 
 class Topology(Enum):
