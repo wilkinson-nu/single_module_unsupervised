@@ -8,10 +8,17 @@ from matplotlib import cm
 from scipy.sparse import coo_matrix
 from collections import defaultdict
 import json
-from truth_labels import LABEL_DTYPE_EXP, Topology, Mode
+from truth_labels import LABEL_DTYPE_EXP, CCTopology, Topology, Mode
 import argparse
-from PIL import Image
 import matplotlib.patches as patches
+
+## TODO look at more "event shape" variables --> probably only interesting for 3D
+## Energy deposit in ~5mm, ~20mm, ~50mm of the vertex
+## Ratios 5/20 and 5/50
+## Do the lambda and k0 decay in the detector?
+## N. charged particles that leave (non-neutron/photon) energy >20 mm from the vertex (+protons +pions + kaons)
+## Where in the detector do gammas leave energy?
+## Detached vertex? --> neutron producing a detached vertex, or lambda? Or k0s in detector?
 
 ## This is not something to be taken lightly as it will dump out an image for every event...
 make_plots = False
@@ -50,29 +57,84 @@ def get_mode(code):
     print("Found unparseable code:", code)
     return Mode.NONE 
 
-def get_topology(labels, vertex):
+def get_topology(l):
 
-    if labels["nstrange"]+labels["ncharm"]+labels["nkapm"]+labels["nka0"] > 0:
-        if labels["cc"]: return Topology.CCOther
+    if l["nlambda0"]+l["nkapm"]+l["nka0"]+l['nantiprot']+l['nantineut'] > 0:
+        if l["cc"]: return Topology.CCOther
         else: return Topology.NCOther
-    if labels["npipm"]+labels["npi0"]>2:
-        if labels["cc"]: return Topology.CCNpi
+    if l["npipm"]+l["npi0"]>2:
+        if l["cc"]: return Topology.CCNpi
         else: return Topology.NCNpi        
-    if labels["npipm"]+labels["npi0"]>1:
-        if labels["cc"]: return Topology.CC2pi
+    if l["npipm"]+l["npi0"]>1:
+        if l["cc"]: return Topology.CC2pi
         else: return Topology.NC2pi
-    if labels["npipm"]+labels["npi0"]==0:
-        if labels["cc"]: return Topology.CC0pi
+    if l["npipm"]+l["npi0"]==0:
+        if l["cc"]: return Topology.CC0pi
         else: return Topology.NC0pi
-    if labels["npipm"] == 1 and labels["npi0"]==0:
-        if labels["cc"]: return Topology.CC1pipm
+    if l["npipm"] == 1 and l["npi0"]==0:
+        if l["cc"]: return Topology.CC1pipm
         else: return Topology.NC1pipm
-    if labels["npipm"] == 0 and labels["npi0"]==1:
-        if labels["cc"]: return Topology.CC1pi0
+    if l["npipm"] == 0 and l["npi0"]==1:
+        if l["cc"]: return Topology.CC1pi0
         else: return Topology.NC1pi0
 
-    print("Unknown topology:", [x.GetPDGCode() for x in vertex.Particles])
     return Topology.NONE
+
+def get_cctopology(l):
+
+    ## Shortcut NC events
+    if not np.asarray(labels["cc"], dtype=bool): return CCTopology.NC
+
+    ## Remove any complex events
+    if l["nlambda0"]+l["nkapm"]+l["nka0"]+l['nantiprot']+l['nantineut'] > 0:
+        return CCTopology.CCOther
+
+    ## Everything else should be some combination of pions and protons
+    if l["npipm"] == 0 and l["npi0"] == 0:
+        if l["nproton"] == 0:
+            return CCTopology.CC0pi0p
+        elif  l["nproton"] == 1:
+            return CCTopology.CC0pi1p
+        else:
+            return CCTopology.CC0piNp
+    elif l["npipm"] == 1 and l["npi0"] == 0:
+        if l["nproton"] == 0:
+            return CCTopology.CC1pipm0pi0_0p
+        elif  l["nproton"] == 1:
+            return CCTopology.CC1pipm0pi0_1p
+        else:
+            return CCTopology.CC1pipm0pi0_Np
+    elif l["npipm"] > 1 and l["npi0"] == 0:
+        if l["nproton"] == 0:
+            return CCTopology.CCNpipm0pi0_0p
+        elif  l["nproton"] == 1:
+            return CCTopology.CCNpipm0pi0_1p
+        else:
+            return CCTopology.CCNpipm0pi0_Np
+    elif l["npipm"] == 0 and l["npi0"] == 1:
+        if l["nproton"] == 0:
+            return CCTopology.CC0pipm1pi0_0p
+        elif  l["nproton"] == 1:
+            return CCTopology.CC0pipm1pi0_1p
+        else:
+            return CCTopology.CC0pipm1pi0_Np        
+    elif l["npipm"] == 0 and l["npi0"] > 1:
+        if l["nproton"] == 0:
+            return CCTopology.CC0pipmNpi0_0p
+        elif  l["nproton"] == 1:
+            return CCTopology.CC0pipmNpi0_1p
+        else:
+            return CCTopology.CC0pipmNpi0_Np
+    else:
+        if l["nproton"] == 0:
+            return CCTopology.CCmixedpi_0p
+        elif  l["nproton"] == 1:
+            return CCTopology.CCmixedpi_1p
+        else:
+            return CCTopology.CCmixedpi_Np
+
+    return CCTopology.NONE
+
 
 def get_neutrino_4mom(groo_event):
     
@@ -99,9 +161,10 @@ def is_ccinc(pdg_list):
     if abs(pdg_list[0]) in [12, 14, 16]: return False
     return True
 
+
 def get_truth_labels(vertex, groo):
 
-    labels = np.zeros((), dtype=LABEL_DTYPE_EXP)
+    l = np.zeros((), dtype=LABEL_DTYPE_EXP)
 
     ## Get all of the primary particles coming out of the event
     pdg_list = [x.GetPDGCode() for x in vertex.Particles]
@@ -110,9 +173,9 @@ def get_truth_labels(vertex, groo):
     nu_4mom = get_neutrino_4mom(groo)
     lep_4mom = vertex.Particles[0].GetMomentum()
 
-    labels["cc"] = is_ccinc(pdg_list)
-    labels["enu"] = nu_4mom.E()/1000.
-    labels["q0"] = (nu_4mom.E() - lep_4mom.E())/1000.
+    l["cc"] = is_ccinc(pdg_list)
+    l["enu"] = nu_4mom.E()/1000.
+    l["q0"] = (nu_4mom.E() - lep_4mom.E())/1000.
 
     ## Remove the leading lepton from the list (strong assumption about the order)
     pdg_list = pdg_list[1:]
@@ -121,43 +184,45 @@ def get_truth_labels(vertex, groo):
     pdg_list = [x for x in pdg_list if abs(x) not in [12, 14, 16]]
     
     ## Now count particles in the list (and modify the list)
-    labels["nproton"] = sum(1 for x in pdg_list if x == 2212)
+    l["nproton"] = sum(1 for x in pdg_list if x == 2212)
     pdg_list = [x for x in pdg_list if x != 2212]
-    labels["nantiprot"] = sum(1 for x in pdg_list if x == -2212)
+    l["nantiprot"] = sum(1 for x in pdg_list if x == -2212)
     pdg_list = [x for x in pdg_list if x != -2212]    
-    labels["nneutron"] = sum(1 for x in pdg_list if x == 2112)
+    l["nneutron"] = sum(1 for x in pdg_list if x == 2112)
     pdg_list = [x for x in pdg_list if x != 2112]
-    labels["nantineut"] = sum(1 for x in pdg_list if x == -2112)
+    l["nantineut"] = sum(1 for x in pdg_list if x == -2112)
     pdg_list = [x for x in pdg_list if x != -2112]    
-    labels["npipm"] = sum(1 for x in pdg_list if abs(x) == 211)
-    pdg_list = [x for x in pdg_list if abs(x) != 211]
-    labels["npi0"] = sum(1 for x in pdg_list if x == 111)
+    l["npip"] = sum(1 for x in pdg_list if x == 211)
+    pdg_list = [x for x in pdg_list if x != 211]
+    l["npim"] = sum(1 for x in pdg_list if x == -211)
+    pdg_list = [x for x in pdg_list if x != -211]
+    l["npi0"] = sum(1 for x in pdg_list if x == 111)
     pdg_list = [x for x in pdg_list if x != 111]
-    labels["nkapm"] = sum(1 for x in pdg_list if abs(x) == 321)
-    pdg_list = [x for x in pdg_list if abs(x) != 321]
-    labels["nka0"] = sum(1 for x in pdg_list if abs(x) in [310, 311])
-    pdg_list = [x for x in pdg_list if abs(x) not in [310, 311]]
-    labels["nem"] = sum(1 for x in pdg_list if abs(x) in [22, 11])
-    pdg_list = [x for x in pdg_list if abs(x) not in [22, 11]]
-    labels["nlambda0"] = sum(1 for x in pdg_list if abs(x) == 3122)
+    l["nkap"] = sum(1 for x in pdg_list if x == 321)
+    pdg_list = [x for x in pdg_list if x != 321]
+    l["nkam"] = sum(1 for x in pdg_list if abs(x) == 321)
+    pdg_list = [x for x in pdg_list if x != -321]
+    l["nka0"] = sum(1 for x in pdg_list if x in [130, 310, 311, -311])
+    pdg_list = [x for x in pdg_list if x not in [130, 310, 311, -311]]
+    l["ngamma"] = sum(1 for x in pdg_list if x == 22)
+    pdg_list = [x for x in pdg_list if x != 22]
+    l["nepm"] = sum(1 for x in pdg_list if abs(x) == 11)
+    pdg_list = [x for x in pdg_list if abs(x) == 11]
+    l["nlambda0"] = sum(1 for x in pdg_list if abs(x) == 3122)
     pdg_list = [x for x in pdg_list if abs(x) != 3122]    
-    labels["nstrange"] = sum(1 for x in pdg_list if abs(x) in [3222, 3112, 3212])
-    pdg_list = [x for x in pdg_list if abs(x) not in [3222, 3112, 3212]]    
-    labels["ncharm"] = sum(1 for x in pdg_list if abs(x) in [411, 4122, 421, 4212, 4222, 431])
-    pdg_list = [x for x in pdg_list if abs(x) not in [411, 4122, 421, 4212, 4222, 431]]       
-    labels["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
+    l["nmuon"] = sum(1 for x in pdg_list if abs(x) == 13)
     pdg_list = [x for x in pdg_list if abs(x) != 13]
 
     ## Add some fragmentation categories for INCL
-    labels["ndeuteron"] = sum(1 for x in pdg_list if x == 1000010020)
+    l["ndeuteron"] = sum(1 for x in pdg_list if x == 1000010020)
     pdg_list = [x for x in pdg_list if x != 1000010020]
-    labels["nalpha"] = sum(1 for x in pdg_list if x == 1000020040)
+    l["nalpha"] = sum(1 for x in pdg_list if x == 1000020040)
     pdg_list = [x for x in pdg_list if x != 1000020040]    
-    labels["nhelium3"] = sum(1 for x in pdg_list if x == 1000020030)
+    l["nhelium3"] = sum(1 for x in pdg_list if x == 1000020030)
     pdg_list = [x for x in pdg_list if x != 1000020030]
-    labels["ntritium"] = sum(1 for x in pdg_list if x == 1000010030)
+    l["ntritium"] = sum(1 for x in pdg_list if x == 1000010030)
     pdg_list = [x for x in pdg_list if x != 1000010030] 
-    labels["nnuclfrag"] = sum(1 for x in pdg_list if (x >= 1000020060 and x < 1000180400))
+    l["nnuclfrag"] = sum(1 for x in pdg_list if (x >= 1000020060 and x < 1000180400))
     pdg_list = [x for x in pdg_list if not (x >= 1000020060 and x < 1000180400)]
     
     ## Also remove remnant nuclei (coherent events)
@@ -166,10 +231,19 @@ def get_truth_labels(vertex, groo):
     ## Sanity check during testing
     if len(pdg_list)>0: print("Remaining list:", pdg_list)
 
-    labels["topology"] = np.int8(get_topology(labels, vertex).value)
-    labels["mode"] = np.int8(get_mode(str(groo.EvtCode)).value)
-        
-    return labels
+    ## Make some compound labels
+    l["nem"] = l["nepm"] + l["ngamma"]
+    l["npipm"] = l["npip"] + l["npim"]
+    l["nkapm"] = l["nkap"] + l["nkam"]
+    l['ncharged'] = l['nproton'] + l['npipm'] + l['nkapm'] + l['nmuon']
+    l['ncluster']= l['ndeuteron'] + l['nalpha'] + l['nhelium3'] + l['ntritium'] + l['nnuclfrag']
+
+    ## Add some event summary categories
+    l["topology"] = np.int8(get_topology(l, vertex).value)
+    l["cctopology"] = np.int8(get_cctopology(l, vertex).value)    
+    l["mode"] = np.int8(get_mode(str(groo.EvtCode)).value)
+    
+    return l
 
 ## We want to ignore all hits produced by neutrons or their daughters
 ## So, make a set of all true trajectories that are neutrons or their descendants 
@@ -543,8 +617,6 @@ def make_images(infilelist,
         col_xz = coords_3d[:, 2]
         this_xz = coo_matrix((values_3d, (row_xz, col_xz)), shape=shape_xz)
         this_xz .sum_duplicates()
-        #img = Image.fromarray((arr * 255).astype(np.uint8))
-        #img.save("plots/image_"+str(evt)+".png")
 
         ## Project onto XY (and sum duplicates)
         shape_xy = (output_full_size[0], output_full_size[1])
