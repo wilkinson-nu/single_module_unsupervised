@@ -5,6 +5,7 @@ import MinkowskiEngine as ME
 import numpy as np
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from torch import nn
 from datasets.nularbox.truth_labels import make_cc_category
 
@@ -35,42 +36,65 @@ def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
     return dataset, loader
 
 
-def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidden=False, apply_softmax=False):
-
-    ## Record some timing info
+def image_loop(encoder,
+               heads,
+               loader,
+               device,
+               detailed_info=False,
+               return_hidden=False):
+    
     start = time.time()
 
-    representations = defaultdict(list)     
-    latent = []    ## This is the instance clustering space
-    enc_latent = []    ## This is after the encoder (as passed to the clustering head) 
-    hidden_latent = []
-    cluster = []
+    representations = defaultdict(list)
+
+    # Only one of these paths will be populated.
+    old_label_records = []
+    new_label_batches = defaultdict(lambda: defaultdict(list))
+    label_schema = None
+
     nhits = []
     maxQ = []
     sumQ = []
-    labels = []
+
     filenames = []
     event_ids = []
 
     encoder.eval()
     encoder.to(device)
-    for h in heads.values():
-        h.eval()
-        h.to(device)
 
-    if apply_softmax:
-        soft = nn.Softmax(dim=1)
-        
-    ## Loop over the images (discard any extra info returned by loader)
+    for head in heads.values():
+        head.eval()
+        head.to(device)
+
     for batch in loader:
-
-        ## Start with the items that are always there
         batch_coords, batch_feats, batch_labels = batch[:3]
-        ## If the loader returns the file names and event ids, collect those too
-        batch_filenames = batch[3] if len(batch) > 3 else None
-        batch_eventids = batch[4] if len(batch) > 4 else None
-        
-        batch_size = len(batch_labels)
+
+        # The metadata collate function returns five items. A four-item
+        # batch may instead be from solo_labelled_collate_fn, whose final
+        # item is the batch size.
+        if len(batch) >= 5:
+            batch_filenames = batch[3]
+            batch_eventids = batch[4]
+        else:
+            batch_filenames = None
+            batch_eventids = None
+
+        ## Deal with the multiple file layouts (old can be deprecated... soon...
+        if label_schema is None:            
+            nested_schema = isinstance(batch_labels, Mapping)
+            label_schema = "new" if nested_schema else "old"
+
+        if label_schema == "new"
+            # Find the event dimension from any label tensor.
+            try:
+                first_group = next(iter(batch_labels.values()))
+                first_field = next(iter(first_group.values()))
+                batch_size = len(first_field)
+            except StopIteration:
+                raise RuntimeError("Could not infer batch size from empty nested labels")
+        else:
+            batch_size = len(batch_labels)
+
         batch_coords = batch_coords.to(device)
         batch_feats = batch_feats.to(device)
         orig_batch = ME.SparseTensor(batch_feats, batch_coords, device=device)            
@@ -89,7 +113,6 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
         if not return_hidden:
             proj_batch = {"proj_final": proj_batch}
             if "clust" in heads:
-                if apply_softmax: clust_batch = soft(clust_batch/apply_softmax)
                 clust_batch = {"clust_final": clust_batch}
 
         ## Get the representations all in one place
@@ -97,13 +120,23 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
             representations[k].append(v.detach().cpu())
         if "clust" in heads:
             for k, v in clust_batch.items():
-                temp = v
-                if k == "clust_final" and apply_softmax:
-                    temp = soft(temp/apply_softmax)
-                representations[k].append(temp.detach().cpu())
+                representations[k].append(v.detach().cpu())
         representations["encoder"].append(encoded_batch.detach().cpu())
-        labels.extend(batch_labels)
         
+        ## Collect labels according to their existing interface.
+        if label_schema == "new":
+            for group_name, fields in batch_labels.items():
+                for field_name, values in fields.items():
+                    if torch.is_tensor(values):
+                        values = values.detach().cpu()
+                    else:
+                        values = torch.as_tensor(values)
+
+                    new_label_batches[group_name][field_name].append(values)                    )
+        else:
+            # Preserve the old structured-record behavior.
+            old_label_records.extend(batch_labels)
+
         ## If desired, add a load more info, but this slows things down a lot...
         if detailed_info is True:
             nhits_batch = torch.tensor([f.shape[0] for f in dec_feats], device=device)
@@ -122,57 +155,62 @@ def image_loop(encoder, heads, loader, device, detailed_info=False, return_hidde
 
         # Manage CUDA memory for ME
         torch.cuda.empty_cache()
-            
+
     ## Turn into numpy arrays 
     representations = {k: torch.cat(v).numpy() for k, v in representations.items()}
 
-    ## Return a dictionary to make my life easier
-    label_array = np.asarray(labels)    
+    if label_schema == "old":
+        # Preserve the previous flat label output and derived fields.
+        label_array = np.asarray(old_label_records)
 
-    label_dict = {
-        name: np.ascontiguousarray(label_array[name])
-        for name in label_array.dtype.names
-    }
+        label_dict = {name: np.ascontiguousarray(label_array[name])
+                      for name in label_array.dtype.names}
 
-    label_dict.update({
-        "ncharged": np.ascontiguousarray(
-            label_dict["nproton"]
-            + label_dict["npipm"]
-            + label_dict["nkapm"]
-        ),
-        "ncluster": np.ascontiguousarray(
-            label_dict["ndeuteron"]
-            + label_dict["ntritium"]
-            + label_dict["nalpha"]
-            + label_dict["nhelium3"]
-            + label_dict["nnuclfrag"]
-        ),
-        "cc_category": np.ascontiguousarray(
-            make_cc_category(label_array)
-        ),
-    })
-    
+        label_dict.update({
+            "ncharged": np.ascontiguousarray(
+                label_dict["nproton"]
+                + label_dict["npipm"]
+                + label_dict["nkapm"]
+            ),
+            "ncluster": np.ascontiguousarray(
+                label_dict["ndeuteron"]
+                + label_dict["ntritium"]
+                + label_dict["nalpha"]
+                + label_dict["nhelium3"]
+                + label_dict["nnuclfrag"]
+            ),
+            "cc_category": np.ascontiguousarray(
+                make_cc_category(label_array)
+            ),
+        })
+
+    else:
+        # New nested output. Stored derived fields and topologies are
+        # retained directly rather than recalculated.
+        label_dict = {
+            group_name: {field_name: np.ascontiguousarray(torch.cat(chunks, dim=0).numpy())
+                for field_name, chunks in fields.items()}
+            for group_name, fields in new_label_batches.items()
+        }
+
     out = {"labels": label_dict}
-
-    ## Merge in the encoded features
     out .update(representations)
-    
+
     if "clust" in heads:
         cluster = out["clust_final"]
         out["clust"] = cluster
         out["clust_index"] = np.argmax(cluster, axis=1)
         out["clust_max"] = np.max(cluster, axis=1)
-    
-    if detailed_info is True:
+
+    if detailed_info:
         out["nhits"] = torch.cat(nhits).numpy()
         out["sumQ"] = torch.cat(sumQ).numpy()
         out["maxQ"] = torch.cat(maxQ).numpy()
-    
-    ## Add the filename and event id if applicable
+
     if filenames: out["filename"] = filenames
-    if event_ids: out["event_id"] = event_ids
-    
-    print("Time to process events with image_loop:", time.time() - start)
+    if event_ids: out["event_id"] = np.asarray(event_ids)
+
+    print(f"Time to process events with image_loop ({label_schema} labels):", time.time() - start)
     return out
 
 
