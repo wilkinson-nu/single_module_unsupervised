@@ -1,11 +1,18 @@
 import sys
+import os
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 from scipy.sparse import coo_matrix
 from glob import glob
-from truth_labels import Topology, Mode
+from truth_labels import (
+    PARTICLE_STACK_DTYPE,
+    EVENT_LABEL_DTYPE,
+    CCTopology,
+    Topology,
+    Mode,
+)
 from enum import Enum
 
 ## Damn I miss ROOT
@@ -174,7 +181,7 @@ class TH1Iish:
     def FlushBuffer(self):
 
         if not self.buffer: return
-        values = np.concatenate(self.buffer)
+        values = np.concatenate(self.buffer).astype(np.int64, copy=False)
         self.buffer.clear()
         
         if values.size:
@@ -198,7 +205,7 @@ class TH1Iish:
         self.max_seen = None
         
     def GetArray(self):
-        return self.counts.copy(), self.bin_edges.copy()
+        return self.counts.copy(), np.arange(self.nbins + 1)
 
     def GetMinMax(self):
         return self.min_seen, self.max_seen
@@ -234,49 +241,41 @@ class TH1Iish:
         else:
             plt.close()            
 
-
 class TH1Enum:
     def __init__(self, enum_class):
-
         if not issubclass(enum_class, Enum):
             raise TypeError("enum_class must be an Enum")
 
         self.enum_class = enum_class
-        self.bin_labels = [e.name for e in enum_class]
+        self.members = list(enum_class)
+        self.bin_labels = [member.name for member in self.members]
+        self.value_to_bin = {
+            member.value: i
+            for i, member in enumerate(self.members)
+        }
 
-        values = np.array([e.value for e in enum_class], dtype=int)
-        self.min_val = values.min()
-        self.max_val = values.max()
-        
-        self.nbins = len(enum_class)
-        self.counts = np.zeros(self.nbins, dtype=int)
-
-        ## Add a buffer 
+        self.nbins = len(self.members)
+        self.counts = np.zeros(self.nbins, dtype=np.int64)
         self.buffer = []
 
     def Fill(self, values):
-
-        arr = np.atleast_1d(np.asarray(values))
-
-        ## Turn the enum to an int if it is passed as an enum
-        if issubclass(arr.dtype.type, Enum):
-            arr = np.array([v.value for v in arr], dtype=int)
-        else:
-            arr = arr.astype(int, copy=False)
-            
+        arr = np.atleast_1d(np.asarray(values)).astype(int, copy=False)
         self.buffer.append(arr)
 
-    ## TODO
     def FlushBuffer(self):
-
+        
         if not self.buffer: return
+
         values = np.concatenate(self.buffer)
         self.buffer.clear()
 
-        ## Map values to the enum
-        idx = values - self.min_val
-        idx, cnt = np.unique(idx, return_counts=True)
-        self.counts[idx] += cnt
+        for value, count in zip(*np.unique(values, return_counts=True)):
+            index = self.value_to_bin.get(int(value))
+            if index is None:
+                print(f"Warning: unknown {self.enum_class.__name__} "
+                      f"value {value}, seen {count} times")
+                continue
+            self.counts[index] += count
         
     def Reset(self):
         self.counts.fill(0)
@@ -313,167 +312,187 @@ class TH1Enum:
         else:
             plt.close()
 
-            
-def setup_truth_histograms():
-
-    hists = {}    
-
-    # High level truth histograms
-    hists['enu']       = TH1Dish(np.linspace(0, 50, 100))
-    hists['q0']        = TH1Dish(np.linspace(0, 50, 100))
-
-    # Particle count histograms
-    for name, nbins in [('cc', 2), ('nneutron', 21), ('nproton', 21),
-                        ('nantineut', 6), ('nantiprot', 6), ('npipm', 6),
-                        ('npi0', 6), ('nkapm', 6), ('nka0', 6), ('nem', 6),
-                        ('nmuon', 6), ('nstrange', 6), ('ncharm', 6),
-                        ('ndeuteron', 6), ('ntritium', 6), ('nalpha', 6),
-                        ('nhelium3', 6), ('nnuclfrag', 6),
-                        ('ncluster', 11), ('ncharged', 21)]:
-        hists[name] = TH1Iish(nbins=nbins)
-
-    # Enum histograms
-    hists['topology'] = TH1Enum(Topology)
-    hists['mode']     = TH1Enum(Mode)
-
-    return hists
 
 
-def fill_truth_histograms(hists, label):
+ENUM_FIELDS = {
+    "mode": Mode,
+    "topology_truth": Topology,
+    "topology_visible": Topology,
+    "cctopology_truth": CCTopology,
+    "cctopology_visible": CCTopology,
+}
+
+FLOAT_BINS = {
+    "enu": np.linspace(0, 50, 101),
+    "q0": np.linspace(0, 50, 101),
+    "edep_5mm": np.linspace(0, 1000, 201),
+    "edep_10mm": np.linspace(0, 1000, 201),
+    "edep_20mm": np.linspace(0, 1000, 201),
+    "edep_50mm": np.linspace(0, 1000, 201),
+}
+
+INTEGER_BINS = {
+    "nneutron": 21,
+    "nproton": 21,
+    "ncharged": 21,
+    "ncluster": 11,
+}
+
+
+def setup_record_histograms(dtype):
+    hists = {}
+
+    for name in dtype.names:
+        field_dtype = dtype.fields[name][0]
+
+        if name in ENUM_FIELDS:
+            hists[name] = TH1Enum(ENUM_FIELDS[name])
+
+        elif np.issubdtype(field_dtype, np.bool_):
+            hists[name] = TH1Iish(2)
+
+        elif np.issubdtype(field_dtype, np.integer):
+            hists[name] = TH1Iish(INTEGER_BINS.get(name, 6))
+
+        elif np.issubdtype(field_dtype, np.floating):
+            hists[name] = TH1Dish(FLOAT_BINS.get(name, np.linspace(0, 100, 101)))
+
+    return hists            
+
+
+def setup_label_histograms():
+    return {
+        "particle_truth": setup_record_histograms(PARTICLE_STACK_DTYPE),
+        "particle_visible": setup_record_histograms(PARTICLE_STACK_DTYPE),
+        "event": setup_record_histograms(EVENT_LABEL_DTYPE),
+    }
+
+
+def fill_record_histograms(hists, records):
+    for name, hist in hists.items():
+        hist.Fill(records[name])
+
+
+def fill_label_histograms(hists, h5file, start, end):
+    fill_record_histograms(hists["particle_truth"],
+                           h5file["particle_truth"][start:end])
+    fill_record_histograms(hists["particle_visible"],
+                           h5file["particle_visible"][start:end])
+    fill_record_histograms(hists["event"],
+                           h5file["event_labels"][start:end])
+
     
-    for key in ['nneutron', 'nproton', 'nantineut', 'nantiprot', 'npipm', 'npi0',
-                'nkapm', 'nka0', 'nem', 'nmuon', 'nstrange', 'ncharm',
-                'ndeuteron', 'ntritium', 'nalpha', 'nhelium3', 'nnuclfrag',
-                'enu', 'q0']:
-        hists[key].Fill(label[key])
+def draw_record_histograms(hists, output_root):
+    for name, hist in hists.items():
+        kwargs = {}
 
-    hists['cc']      .Fill(int(label['cc']))
-    hists['topology'].Fill(label['topology'])
-    hists['mode']    .Fill(label['mode'])
-    hists['ncharged'].Fill(label['nproton'] + label['npipm'] + label['nkapm'])
-    hists['ncluster'].Fill(label['ndeuteron'] + label['nalpha'] + label['nhelium3'] 
-                           + label['ntritium'] + label['nnuclfrag'])
-    return True
+        if isinstance(hist, TH1Iish) and name == "cc":
+            kwargs["xlabels"] = ["NC", "CC"]
+
+        if isinstance(hist, (TH1Iish, TH1Enum)):
+            hist.Draw(f"{output_root}{name}.png",
+                      xtitle=name,
+                      **kwargs)
+            hist.Draw(f"{output_root}{name}_logy.png",
+                      xtitle=name,
+                      logy=True,
+                      **kwargs)
+        else:
+            hist.Draw(f"{output_root}{name}.png",
+                      xtitle=name)
+            hist.Draw(f"{output_root}{name}_logy.png",
+                      xtitle=name,
+                      logy=True)
 
 
-def draw_truth_histograms(hists, output_name_root):
-
-    r = output_name_root
-
-    hists['enu']      .Draw(r+"enu.png", xtitle=r'$E_{\nu}$ (GeV)')
-    hists['q0']       .Draw(r+"q0.png", xtitle=r'$q_{0}$ (GeV)')
-
-    for name, xtitle, kwargs in [
-        ('cc',         None,                       {'xlabels': ['NC', 'CC']}),
-        ('nneutron',   'N. 2112',                  {}),
-        ('nproton',    'N. 2212',                  {}),
-        ('nantineut',  'N. -2112',                 {'logy': True}),
-        ('nantiprot',  'N. -2212',                 {'logy': True}),
-        ('npipm',      r'N. $\pi^{\pm}$',          {'logy': True}),
-        ('npi0',       r'N. $\pi^{0}$',            {'logy': True}),
-        ('nkapm',      r'N. $K^{\pm}$',            {'logy': True}),
-        ('nka0',       r'N. $K^{0}$',              {'logy': True}),
-        ('nem',        'N. EM',                    {'logy': True}),
-        ('nmuon',      r'N. $\mu^{\pm}$',          {'logy': True}),
-        ('nstrange',   'N. Strange (not kaon)',     {'logy': True}),
-        ('ncharm',     'N. Charm',                  {'logy': True}),
-        ('ndeuteron',  'N. deuteron',               {'logy': True}),
-        ('ntritium',   'N. tritium',                {'logy': True}),
-        ('nalpha',     'N. alpha',                  {'logy': True}),
-        ('nhelium3',   r'N. $^{3}$He',             {'logy': True}),
-        ('nnuclfrag',  'N. nuclear fragments',      {'logy': True}),
-        ('ncluster',   'N. cluster',                {'logy': True}),
-        ('ncharged',   'N. charged',                {'logy': True}),
-    ]:
-        hists[name].Draw(r+f"{name}.png", xtitle=xtitle, **kwargs)
-
-    hists['topology'].Draw(r+"topology.png")
-    hists['topology'].Draw(r+"topology_logy.png", logy=True)
-    hists['mode']    .Draw(r+"mode.png")
-    hists['mode']    .Draw(r+"mode_logy.png", logy=True)
-
+def draw_label_histograms(hists, output_root):
+    for group_name, group_hists in hists.items():
+        draw_record_histograms(group_hists,
+                               f"{output_root}{group_name}_")
 
 def setup_data_histograms(alpha_min, alpha_max, p="xz"):
     
     hists = {}
     
-    # Image-level histograms
+    ## Image-level histograms
     hists['nhits_lin'] = TH1Dish(np.linspace(0, 4000, 200))
     hists['nhits_log'] = TH1Dish(np.logspace(0, 3.7, 100))
     hists['E']         = TH1Dish(np.logspace(-1, 2.4, 125))
     hists['SumE']      = TH1Dish(np.linspace(0, 5000, 100))
     hists['MaxE']      = TH1Dish(np.logspace(-1, 2.4, 125))
 
-    # Position histograms
+    ## Position histograms
     hists[p[0]]             = TH1Dish(np.linspace(0, 512, 257))
     hists[p[1]]             = TH1Dish(np.linspace(0, 512, 257))
     hists[p[0]+'_vs_E']     = TH2Dish(np.linspace(0, 512, 257), np.logspace(-1, 2.4, 125))
     hists[p[1]+'_vs_E']     = TH2Dish(np.linspace(0, 512, 257), np.logspace(-1, 2.4, 125))
     hists[p[0]+'_vs_'+p[1]] = TH2Dish(np.linspace(0, 512, 257), np.linspace(0, 512, 257))
 
-    # Add options for 3D
-    if len(p) == 3:
+    if p == "xyz":
         hists[p[2]]             = TH1Dish(np.linspace(0, 512, 257))
         hists[p[2]+'_vs_E']     = TH2Dish(np.linspace(0, 512, 257), np.logspace(-1, 2.4, 125))
         hists[p[0]+'_vs_'+p[2]] = TH2Dish(np.linspace(0, 512, 257), np.linspace(0, 512, 257))
         hists[p[1]+'_vs_'+p[2]] = TH2Dish(np.linspace(0, 512, 257), np.linspace(0, 512, 257))
         
-    # Alpha transform histograms
+    ## Alpha transform histograms
     hists['alpha'] = [TH1Dish(np.linspace(0, 5, 100)) for _ in range(alpha_min, alpha_max+1)]
 
     return hists
 
+def fill_data_histograms(hists,
+                         h5file,
+                         event_index,
+                         alpha_min,
+                         alpha_max,
+                         p="xz"):
+    
+    offsets = h5file[f"{p}_offsets"]
+    start = int(offsets[event_index])
+    end = int(offsets[event_index + 1])
 
-def fill_data_histograms(hists, group, alpha_min, alpha_max, p="xz"):
+    data = h5file[f"{p}_data"][start:end]
 
-    data = group['data_'+p][:]
+    if p == "xyz":
+        coords = h5file["xyz_coords"][start:end]
+        ax0 = coords[:, 0]
+        ax1 = coords[:, 1]
+        ax2 = coords[:, 2]
+    else:
+        ax0 = h5file[f"{p}_row"][start:end]
+        ax1 = h5file[f"{p}_col"][start:end]
 
-    if len(p) == 2:
-        ax0  = group['row_'+p][:]
-        ax1  = group['col_'+p][:]
-
-    if len(p) == 3:
-        coords = group['coords_xyz']
-        ax0 = coords[:,0]
-        ax1 = coords[:,1]
-        ax2 = coords[:,2]
-        
     if len(data) < 1:
-        return False  # empty image
+        return False
 
-    # Image-level histograms
-    hists['nhits_lin'] .Fill(np.count_nonzero(data))
-    hists['nhits_log'] .Fill(np.count_nonzero(data))
-    hists['E']         .Fill(data)
-    hists['SumE']      .Fill(np.sum(data))
-    hists['MaxE']      .Fill(np.max(data))
+    hists["nhits_lin"].Fill(np.count_nonzero(data))
+    hists["nhits_log"].Fill(np.count_nonzero(data))
+    hists["E"].Fill(data)
+    hists["SumE"].Fill(np.sum(data))
+    hists["MaxE"].Fill(np.max(data))
 
-    # Position histograms
-    hists[p[0]]             .Fill(ax0)
-    hists[p[1]]             .Fill(ax1)
-    hists[p[0]+'_vs_E']     .Fill(ax0, data)
-    hists[p[1]+'_vs_E']     .Fill(ax1, data)
-    hists[p[0]+'_vs_'+p[1]] .Fill(ax0, ax1)
+    hists[p[0]].Fill(ax0)
+    hists[p[1]].Fill(ax1)
+    hists[p[0] + "_vs_E"].Fill(ax0, data)
+    hists[p[1] + "_vs_E"].Fill(ax1, data)
+    hists[p[0] + "_vs_" + p[1]].Fill(ax0, ax1)
 
-    # Add options for 3D
-    if len(p) == 3:
-        hists[p[2]]             .Fill(ax2)
-        hists[p[2]+'_vs_E']     .Fill(ax2, data)
-        hists[p[0]+'_vs_'+p[2]] .Fill(ax0, ax2)
-        hists[p[1]+'_vs_'+p[2]] .Fill(ax1, ax2)
+    if p == "xyz":
+        hists[p[2]].Fill(ax2)
+        hists[p[2] + "_vs_E"].Fill(ax2, data)
+        hists[p[0] + "_vs_" + p[2]].Fill(ax0, ax2)
+        hists[p[1] + "_vs_" + p[2]].Fill(ax1, ax2)
 
-    for a in range(alpha_min, alpha_max+1):
-        a_data = np.log10(1 + a*data) / np.log10(1 + a)
-        hists['alpha'][a-alpha_min].Fill(a_data)
+    for alpha in range(alpha_min, alpha_max + 1):
+        transformed = np.log10(1 + alpha * data)/ np.log10(1 + alpha)
+        hists["alpha"][alpha - alpha_min].Fill(transformed)
 
     return True
-
 
 def flush_per_hit_histograms(hists, alpha_min, alpha_max, p="xz"):
     for key in ['E', p[0], p[1], p[0]+'_vs_'+p[1], p[0]+'_vs_E', p[1]+'_vs_E']:
         hists[key].FlushBuffer()
 
-    if len(p)==3:
+    if p=="xyz":
         for key in [p[2], p[2]+'_vs_E', p[0]+'_vs_'+p[2], p[1]+'_vs_'+p[2]]:
             hists[key].FlushBuffer()
 
@@ -508,7 +527,7 @@ def draw_data_histograms(hists, output_name_root, alpha_min, alpha_max, p="xz"):
         hists['alpha'][a-alpha_min].Draw(r+f"LogAlphaE{a}_liny_"+p+".png", xtitle=xtitle, logy=False)
         hists['alpha'][a-alpha_min].Draw(r+f"LogAlphaE{a}_logy_"+p+".png", xtitle=xtitle, logy=True)
 
-    if len(p) == 3:
+    if p == "xyz":
         hists[p[2]].Draw(r+p[2]+"_logy_"+p+".png", xtitle=p[2]+' coord.', logy=True)
         hists[p[2]].Draw(r+p[2]+"_liny_"+p+".png", xtitle=p[2]+' coord.', logy=False)
         hists[p[2]+'_vs_E']    .Draw(r+p[2]+"_vs_E_linz_"+p+".png",  xtitle=p[2]+" coord.", ytitle="Raw E(MeV)", logz=False)
@@ -519,50 +538,70 @@ def draw_data_histograms(hists, output_name_root, alpha_min, alpha_max, p="xz"):
         hists[p[1]+'_vs_'+p[2]].Draw(r+p[1]+'_vs_'+p[2]+"_linz_"+p+".png", xtitle=p[1]+" coord.", ytitle=p[2]+" coord.", logz=False)
         hists[p[1]+'_vs_'+p[2]].Draw(r+p[1]+'_vs_'+p[2]+"_logz_"+p+".png", xtitle=p[1]+" coord.", ytitle=p[2]+" coord.", logz=True)
         
-## Do the business
-def make_dataset_summary_plots(input_file_names, output_name_root="plots/"):
+
+def make_dataset_summary_plots(input_file_names,
+                               output_name_root="plots/"):
 
     alpha_min, alpha_max = 5, 5
-    max_images  = 1e5
-    sum_images  = 0
+    max_images = 100_000
+    sum_images = 0
     total_images = 0
-    nEmpty       = 0
+    n_empty = 0
 
-    truth_hists = setup_truth_histograms()
+    os.makedirs(output_name_root, exist_ok=True)
+
+    label_hists = setup_label_histograms()
     xz_hists    = setup_data_histograms(alpha_min, alpha_max, "xz")
     xy_hists    = setup_data_histograms(alpha_min, alpha_max, "xy")
     xyz_hists   = setup_data_histograms(alpha_min, alpha_max, "xyz")
-   
-    for file in glob(input_file_names):
-        if sum_images > max_images: break
 
-        print("Reading", file)
-        with h5py.File(file, 'r', libver='latest') as f:
-            nimages = f.attrs['N']
+    for filename in sorted(glob(input_file_names)):
+        if sum_images >= max_images: break
+        print("Reading", filename)
+
+        with h5py.File(filename, "r", libver="latest") as h5file:
+            nimages = int(h5file.attrs["N"])
             print("Found", nimages, "images")
             total_images += nimages
 
-            for i in range(nimages):
-                if sum_images > max_images: break
-                group = f[str(i)]
-                filled = fill_truth_histograms(truth_hists, group['label'][()])
-                filled = fill_data_histograms(xz_hists, group, alpha_min, alpha_max, "xz")
-                filled = fill_data_histograms(xy_hists, group, alpha_min, alpha_max, "xy")
-                filled = fill_data_histograms(xyz_hists, group, alpha_min, alpha_max, "xyz")
-                
-                if not filled:
-                    nEmpty += 1
-                    continue
+            required = {
+                "particle_truth",
+                "particle_visible",
+                "event_labels",
+            }
+            missing = required - set(h5file.keys())
+
+            if missing:
+                raise RuntimeError(f"{filename} is missing new-schema datasets: "
+                                   f"{sorted(missing)}")
+
+            ## How many events to include from this file
+            n_to_process = min(nimages, max_images - sum_images)
+
+            # Labels can be filled efficiently as arrays.
+            fill_label_histograms(label_hists, h5file, 0, n_to_process)
+
+            ## Fill data histograms in an event loop
+            for event_index in range(n_to_process):
+                filled_xz  = fill_data_histograms(xz_hists, h5file, event_index, alpha_min, alpha_max, "xz")
+                filled_xy  = fill_data_histograms(xy_hists, h5file, event_index, alpha_min, alpha_max, "xy")
+                filled_xyz = fill_data_histograms(xyz_hists, h5file, event_index, alpha_min, alpha_max, "xyz")
+
+                if not (filled_xz and filled_xy and filled_xyz): n_empty += 1
                 sum_images += 1
 
             flush_per_hit_histograms(xz_hists, alpha_min, alpha_max, "xz")
             flush_per_hit_histograms(xy_hists, alpha_min, alpha_max, "xy")
-            flush_per_hit_histograms(xyz_hists, alpha_min, alpha_max, "xyz")            
-            
-    draw_truth_histograms(truth_hists, output_name_root)
+            flush_per_hit_histograms(xyz_hists, alpha_min, alpha_max, "xyz")
+
+    draw_label_histograms(label_hists, output_name_root)
     draw_data_histograms(xz_hists, output_name_root, alpha_min, alpha_max, "xz")
     draw_data_histograms(xy_hists, output_name_root, alpha_min, alpha_max, "xy")
-    draw_data_histograms(xyz_hists, output_name_root, alpha_min, alpha_max, "xyz")    
+    draw_data_histograms(xyz_hists, output_name_root, alpha_min, alpha_max, "xyz")  
+    
+    print("Processed:", sum_images)
+    print("Available:", total_images)
+    print("Events with at least one empty representation:", n_empty)
     
 if __name__ == '__main__':
 
