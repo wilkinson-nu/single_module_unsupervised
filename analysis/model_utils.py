@@ -4,7 +4,6 @@ import argparse
 from core.models.resnet_encoder import get_encoder
 from core.models.projection_head import get_projhead
 from core.models.clustering_head import get_clusthead
-from core.models.projection_head_dino import get_dino_projhead
 
 def load_checkpoint(state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')
@@ -24,10 +23,7 @@ def get_models_from_checkpoint(state_file_name):
     ## Dictionary of heads and load saved model parameters
     heads = {}
 
-    if hasattr(args, 'simdino_eps'):
-        heads["proj"] = get_dino_projhead(encoder.get_nchan(), args)
-    else:
-        heads["proj"] = get_projhead(encoder.get_nchan(), args)
+    heads["proj"] = get_projhead(encoder.get_nchan(), args)
     heads["proj"] .load_state_dict(checkpoint['proj_head_state_dict'])
 
     ## Optionally load the clustering head
@@ -44,19 +40,3 @@ def get_encoder_from_checkpoint(state_file_name):
     encoder = get_encoder(args)
     encoder.load_state_dict(checkpoint['encoder_state_dict'])
     return encoder, None, args
-
-def get_models_from_checkpoint_dino(state_file_name):
-
-    checkpoint, args = load_checkpoint(state_file_name)
-
-    ## Get the models                                                                                                                                                                    
-    encoder = get_encoder(args)
-    encoder.load_state_dict(checkpoint['encoder_state_dict'])
-
-    ## Dictionary of heads and load saved model parameters                                                                                                                               
-    heads = {}
-
-    heads["proj"] = get_dino_projhead(encoder.get_nchan_instance(), args)
-    heads["proj"] .load_state_dict(checkpoint['proj_head_state_dict'])
-
-    return encoder, heads, args
