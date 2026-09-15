@@ -166,7 +166,8 @@ class single_2d_dataset_ME(Dataset):
                  projection="xz",
                  max_open=9999):
         
-        self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
+        self.infile_dir = infile_dir
+        self.hdf5_files = sorted(glob(os.path.join(self.infile_dir, '*.h5')))
         self.file_indices = []
         self.file_schemas = []
         self.transform = transform
@@ -219,6 +220,9 @@ class single_2d_dataset_ME(Dataset):
         self.file_indices.append(cumulative_size)
         self.length = cumulative_size
 
+        if cumulative_size == 0:
+            raise RuntimeError(f"No files in {self.infile_dir}!")
+        
         schemas = set(self.file_schemas)
         if len(schemas) != 1:
             raise RuntimeError("Multiple labeling schemes found")

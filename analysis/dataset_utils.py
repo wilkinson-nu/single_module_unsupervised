@@ -84,7 +84,7 @@ def image_loop(encoder,
             nested_schema = isinstance(batch_labels, Mapping)
             label_schema = "new" if nested_schema else "old"
 
-        if label_schema == "new"
+        if label_schema == "new":
             # Find the event dimension from any label tensor.
             try:
                 first_group = next(iter(batch_labels.values()))
@@ -132,7 +132,7 @@ def image_loop(encoder,
                     else:
                         values = torch.as_tensor(values)
 
-                    new_label_batches[group_name][field_name].append(values)                    )
+                    new_label_batches[group_name][field_name].append(values)
         else:
             # Preserve the old structured-record behavior.
             old_label_records.extend(batch_labels)
