@@ -41,7 +41,7 @@ from torch.utils.tensorboard import SummaryWriter
 from datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
-from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
+from core.supervised import DEFAULT_CLASSIFIER_CONFIG
 from core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training
@@ -144,13 +144,31 @@ def run_training(rank, local_rank, world_size, args):
         args.out_image_size,
         "no_aug",
     )
+
+    ## Which label groups to run monitoring probes on
+    MONITOR_LABEL_GROUPS = ("particle_truth", "particle_visible")
+
+    ## Run kNN for cosine and euclidean
+    KNN_METRICS = ("cosine", "euclidean")
+
+    ## Apply maxima to the N. particle groups of interest
+    MONITOR_CONFIG = DEFAULT_CLASSIFIER_CONFIG
+    
+    PARTICLE_LABEL_CLAMP = {
+        name: cfg["cap"]
+        for name, cfg in MONITOR_CONFIG.items()
+        if "cap" in cfg
+    }
+    
+    MONITOR_LABEL_CLAMP = {
+        name: PARTICLE_LABEL_CLAMP
+        for name in MONITOR_LABEL_GROUPS
+    }
     
     monitor_collate = partial(
         solo_labelled_collate_fn,
-        label_clamp=LABEL_CLAMP,
-        derived_labels=DERIVED_LABELS,
+        label_clamp=MONITOR_LABEL_CLAMP,
     )
-    MONITOR_CONFIG = DEFAULT_CLASSIFIER_CONFIG
     
     bank_loader, query_loader = build_monitoring_data(
         data_dir=args.data_dir,
@@ -420,35 +438,47 @@ def run_training(rank, local_rank, world_size, args):
             monitor_tstart = time.time()
             bank_f, bank_l = extract_features(encoder, bank_loader,  device, MONITOR_CONFIG.keys())
             qry_f,  qry_l  = extract_features(encoder, query_loader, device, MONITOR_CONFIG.keys())
-            
+
             if rank == 0 and run_knn:
-                print0("Running kNN")
-                knn_results = evaluate_knn(
-                    bank_f,
-                    bank_l,
-                    qry_f,
-                    qry_l,
-                    classifier_config=MONITOR_CONFIG,
-                    device=device,
-                    k=args.knn_k,
-                    temperature=args.knn_T,
-                )
+                knn_results = {}
+                
+                for metric in KNN_METRICS:
+                    knn_results[metric] = {}
+
+                    for label_group in MONITOR_LABEL_GROUPS:
+                        print0(f"Running {metric} kNN for {label_group}")
+
+                        knn_results[metric][label_group] = evaluate_knn(
+                            bank_f,
+                            bank_l[label_group],
+                            qry_f,
+                            qry_l[label_group],
+                            classifier_config=MONITOR_CONFIG,
+                            device=device,
+                            k=args.knn_k,
+                            metric=metric,
+                            pca_dims=args.knn_pca,
+                        )
 
             if rank == 0 and run_linear:
-                print0("Running linear probe")
-                linear_results = fit_linear_probe(
-                    bank_f,
-                    bank_l,
-                    qry_f,
-                    qry_l,
-                    classifier_config=MONITOR_CONFIG,
-                    device=device,
-                    epochs=args.linear_epochs,
-                    batch_size=args.linear_batch_size,
-                    lr=args.linear_lr,
-                    seed=args.seed, # + iteration,
-                )
-                
+                linear_results = {}
+
+                for label_group in MONITOR_LABEL_GROUPS:
+                    print0(f"Running linear probe for {label_group}")
+
+                    linear_results[label_group] = fit_linear_probe(
+                        bank_f,
+                        bank_l[label_group],
+                        qry_f,
+                        qry_l[label_group],
+                        classifier_config=MONITOR_CONFIG,
+                        device=device,
+                        epochs=args.linear_epochs,
+                        batch_size=args.linear_batch_size,
+                        lr=args.linear_lr,
+                        seed=args.seed,
+                    )
+            
             ## Stop all ranks from moving on before the linear probe is finished
             dist.barrier()
             print0(f"Monitoring time taken: {(time.time()-monitor_tstart):.2f}")
@@ -505,15 +535,19 @@ def run_training(rank, local_rank, world_size, args):
                         value,
                         iteration,
                     )
-                
+
             if knn_results is not None:
-                for part_name, result in knn_results.items():
-                    for metric_name, val in result.items():
-                        log_scalar(writer, metrics, f'knn/{part_name}_{metric_name}', result[metric_name], iteration)
+                for dist, group_results in knn_results.items():
+                    for label_group, target_results in group_results.items():
+                        for part, result in target_results.items():
+                            for metric, value in result.items():
+                                log_scalar(writer, metrics, f"knn/{dist}/{label_group}/{part}_{metric}", value, iteration)
+                    
             if linear_results is not None:
-                for part_name, result in linear_results.items():
-                    for	metric_name, val in result.items():
-                        log_scalar(writer, metrics, f'linear_probe/{part_name}_{metric_name}', result[metric_name], iteration)
+                for label_group, target_results in linear_results.items():
+                    for part, result in target_results.items():
+                        for metric, value in result.items():
+                            log_scalar(writer, metrics, f"linear/{label_group}/{part}_{metric}", value, iteration)                            
                     
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
@@ -663,7 +697,7 @@ if __name__ == '__main__':
     parser.add_argument('--monitor_nquery',   type=int, default=10000)
     parser.add_argument('--knn_every', type=int, default=1)
     parser.add_argument('--knn_k',     type=int, default=20)
-    parser.add_argument('--knn_T',     type=float, default=0.1)
+    parser.add_argument('--knn_pca',     type=float, default=None)
     parser.add_argument("--linear_every", type=int, default=5)
     parser.add_argument("--linear_epochs", type=int, default=20)
     parser.add_argument("--linear_batch_size", type=int, default=1024)

@@ -6,120 +6,192 @@ from core.supervised import ClassificationMetrics, SupervisedHead, supervised_lo
 from core.utils import print0
 
 @torch.no_grad()
-def extract_features(encoder, loader, device, label_names):
+def extract_features(encoder,
+                     loader,
+                     device,
+                     label_names,
+                     label_groups=("particle_truth", "particle_visible")):
+    
     was_training = encoder.training
     encoder.eval()
-    fs, ls = [], {n: [] for n in label_names}
-
+    model = encoder.module if hasattr(encoder, "module") else encoder
+    
+    feats = []
+    labels = {
+        group: {name: [] for name in label_names}
+        for group in label_groups
+    }
+    
     for bcoords, bfeats, blabels, bs in loader:
         bcoords = bcoords.to(device, non_blocking=True)
         bfeats  = bfeats.to(device,  non_blocking=True)
         batch   = ME.SparseTensor(bfeats, bcoords, device=device)
-        fs.append(encoder.module(batch, bs).float())
-        for n in label_names:
-            ls[n].append(blabels[n].to(device).long())
+        feats.append(model(batch, bs).float())
+
+        for group in label_groups:
+            for name in label_names:
+                labels[group][name].append(
+                    blabels[group][name].to(device, non_blocking=True).long()
+                )
     if was_training:
         encoder.train()
 
-    f = torch.cat(fs)
-    world = dist.get_world_size()
-    gf = [torch.zeros_like(f) for _ in range(world)]
-    dist.all_gather(gf, f.contiguous())
-    f = torch.cat(gf)
+    feats = torch.cat(feats)
 
-    out_l = {}
-    for n in label_names:
-        l  = torch.cat(ls[n])
-        gl = [torch.zeros_like(l) for _ in range(world)]
-        dist.all_gather(gl, l.contiguous())
-        out_l[n] = torch.cat(gl)
-    return f, out_l
+    def gather_equal_size(tensor):
+        gathered = [
+            torch.empty_like(tensor)
+            for _ in range(dist.get_world_size())
+        ]
+        dist.all_gather(gathered, tensor.contiguous())
+        return torch.cat(gathered, dim=0)
+
+    feats = gather_equal_size(feats)
+
+    labels = {
+        group: {name: gather_equal_size(values)
+                for name, values in group_labels.items()}
+        for group, group_labels in labels.items()
+    }
+
+    return feats, labels
 
 
 @torch.no_grad()
-def knn_neighbors(q, bank, k=20, chunk=2048):
-    center = bank.mean(dim=0, keepdim=True)
+def pca_project(bank, query, n_components):
 
-    qn = F.normalize(q - center, dim=1)
-    bn = F.normalize(bank - center, dim=1)
+    if n_components is None:
+        return bank, query
 
-    similarities = []
+    max_components = min(bank.shape[0], bank.shape[1])
+
+    mean = bank.mean(dim=0, keepdim=True)
+    bank_centered = bank - mean
+    query_centered = query - mean
+
+    ## Vh rows are principal directions, ordered by singular value
+    _, _, vh = torch.linalg.svd(bank_centered, full_matrices=False)
+    components = vh[:n_components].T
+
+    return (bank_centered @ components, query_centered @ components)
+
+
+@torch.no_grad()
+def knn_neighbors(query,
+                  bank,
+                  *,
+                  k=20,
+                  chunk=2048,
+                  metric="euclidean"):
+    
+    if metric not in ("euclidean", "cosine"):
+        raise ValueError(f"Unknown kNN metric {metric!r}")
+
+    if bank.shape[0] == 0:
+        raise ValueError("The kNN bank is empty")
+
+    k = min(k, bank.shape[0])
     indices = []
 
-    k = min(k, bn.shape[0])
+    if metric == "cosine":
+        bank_work = F.normalize(bank, dim=1)
 
-    for i in range(0, qn.shape[0], chunk):
-        sim = qn[i:i + chunk] @ bn.t()
-        sk, ik = sim.topk(k, dim=1)
+        for start in range(0, query.shape[0], chunk):
+            query_chunk = F.normalize(query[start:start + chunk], dim=1)
+            similarities = query_chunk @ bank_work.T
 
-        similarities.append(sk)
-        indices.append(ik)
+            indices.append(
+                similarities.topk(k,
+                                  dim=1,
+                                  largest=True,
+                                  ).indices
+            )
 
-    return torch.cat(similarities), torch.cat(indices)
+    else:
+        ## Squared Euclidean distance (sqrt doesn't affect kNN, so neglect)
+        bank_norm2 = (bank * bank).sum(dim=1, keepdim=False).unsqueeze(0)
+
+        for start in range(0, query.shape[0], chunk):
+            query_chunk = query[start:start + chunk]
+            
+            distance2 = (
+                (query_chunk * query_chunk).sum(dim=1, keepdim=True)
+                + bank_norm2
+                - 2.0 * query_chunk @ bank.T
+            ).clamp_min_(0.0)
+
+            indices.append(
+                distance2.topk(k,
+                               dim=1,
+                               largest=False,
+                               ).indices
+            )
+
+    return torch.cat(indices, dim=0)
 
 
 @torch.no_grad()
 def knn_votes_from_neighbors(
-    similarities,
     indices,
     bank_labels,
     n_classes,
-    temperature=0.1,
 ):
-    # Subtracting the row maximum is numerically safer. It does not
-    # change the winning class because it scales every row uniformly.
-    weights = torch.exp(
-        (similarities - similarities[:, :1]) / temperature
-    )
-
     neighbor_labels = bank_labels[indices]
 
-    one_hot = F.one_hot(
-        neighbor_labels,
-        num_classes=n_classes,
-    ).float()
+    one_hot = F.one_hot(neighbor_labels,
+                        num_classes=n_classes)
 
-    return (one_hot * weights.unsqueeze(-1)).sum(dim=1)
+    return one_hot.sum(dim=1).float()
 
 
-def evaluate_knn(
+def evaluate_knn(bank_features,
+                 bank_labels,
+                 query_features,
+                 query_labels,
+                 *,
+                 classifier_config,
+                 device,
+                 k,
+                 metric="euclidean",
+                 pca_dims=None,
+                 chunk=2048):
+
+    ## If pca_dims == 0, this just returns
+    bank_features, query_features = pca_project(
         bank_features,
-        bank_labels,
         query_features,
-        query_labels,
-        *,
-        classifier_config,
-        device,
-        k,
-        temperature,
-):
-    metrics = ClassificationMetrics(
-        classifier_config,
-        device=device,
+        pca_dims,
     )
 
-    similarities, indices = knn_neighbors(
+    indices = knn_neighbors(
         query_features,
         bank_features,
         k=k,
+        chunk=chunk,
+        metric=metric,
     )
-    
+
     votes = {
         name: knn_votes_from_neighbors(
-            similarities,
             indices,
             bank_labels[name],
             cfg["n_classes"],
-            temperature=temperature,
         )
         for name, cfg in classifier_config.items()
     }
 
-    metrics.update(votes, query_labels, outputs_are_logits=False)
+    metrics = ClassificationMetrics(
+        classifier_config,
+        device=device,
+    )
+    metrics.update(
+        votes,
+        query_labels,
+        outputs_are_logits=False,
+    )
 
-    # No reduce: features and labels are already globally gathered,
-    # and this calculation runs on rank 0.
     return metrics.compute()
+
 
 def fit_linear_probe(
     bank_features,

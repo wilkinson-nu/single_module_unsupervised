@@ -39,7 +39,7 @@ from core.data.datasets import solo_labelled_collate_fn
 from core.data.dataloaders import build_supervised_dataloaders
 
 ## Supervised learning specific
-from core.supervised import LABEL_CLAMP, DERIVED_LABELS, DEFAULT_CLASSIFIER_CONFIG
+from core.supervised import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG
 from core.supervised import SupervisedHead, supervised_loss, ClassificationMetrics
 
 ## Utilities for multi-rank training
@@ -106,7 +106,6 @@ def run_training(rank, local_rank, world_size, args):
     labelled_collate = partial(
         solo_labelled_collate_fn,
         label_clamp=LABEL_CLAMP,
-        derived_labels=DERIVED_LABELS,
     )
     
     train_dataset, train_loader, val_dataset, val_loader = build_supervised_dataloaders(

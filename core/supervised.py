@@ -17,17 +17,6 @@ LABEL_CLAMP = {
     'nlambda0':  1,
 }
 
-def _ncharged(l):
-    return l['nproton'] + l['npipm'] + l['nkapm']
-
-def _ncluster(l):
-    return l['ndeuteron'] + l['nalpha'] + l['nhelium3'] + l['ntritium'] + l['nnuclfrag']
-
-DERIVED_LABELS = {
-    'ncharged': _ncharged,
-    'ncluster': _ncluster,
-}
-
 DEFAULT_CLASSIFIER_CONFIG = {
     'nproton':   {'n_classes': 4, 'weight': 1.0, 'cap': 3},
     'npipm':     {'n_classes': 3, 'weight': 1.0, 'cap': 2},
