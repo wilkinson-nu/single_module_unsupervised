@@ -537,17 +537,17 @@ def run_training(rank, local_rank, world_size, args):
                     )
 
             if knn_results is not None:
-                for dist, group_results in knn_results.items():
+                for dist_metric, group_results in knn_results.items():
                     for label_group, target_results in group_results.items():
                         for part, result in target_results.items():
                             for metric, value in result.items():
-                                log_scalar(writer, metrics, f"knn/{dist}/{label_group}/{part}_{metric}", value, iteration)
+                                log_scalar(writer, metrics, f"knn_{label_group}/{dist_metric}/{part}_{metric}", value, iteration)
                     
             if linear_results is not None:
                 for label_group, target_results in linear_results.items():
                     for part, result in target_results.items():
                         for metric, value in result.items():
-                            log_scalar(writer, metrics, f"linear/{label_group}/{part}_{metric}", value, iteration)                            
+                            log_scalar(writer, metrics, f"linear_{label_group}/{part}_{metric}", value, iteration)                            
                     
             if scheduler: 
                 log_scalar(writer, metrics, 'train/lr', scheduler.get_last_lr()[0], iteration)
@@ -697,7 +697,7 @@ if __name__ == '__main__':
     parser.add_argument('--monitor_nquery',   type=int, default=10000)
     parser.add_argument('--knn_every', type=int, default=1)
     parser.add_argument('--knn_k',     type=int, default=20)
-    parser.add_argument('--knn_pca',     type=float, default=None)
+    parser.add_argument('--knn_pca',     type=int, default=None)
     parser.add_argument("--linear_every", type=int, default=5)
     parser.add_argument("--linear_epochs", type=int, default=20)
     parser.add_argument("--linear_batch_size", type=int, default=1024)
