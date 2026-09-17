@@ -48,6 +48,14 @@ def extract_features(encoder,
 
     feats = gather_equal_size(feats)
 
+    ## Concatenate local batches
+    labels = {
+        group: {name: torch.cat(chunks, dim=0)
+                for name, chunks in group_labels.items()}
+        for group, group_labels in labels.items()
+    }
+
+    ## Now gather across ranks
     labels = {
         group: {name: gather_equal_size(values)
                 for name, values in group_labels.items()}
@@ -99,13 +107,7 @@ def knn_neighbors(query,
         for start in range(0, query.shape[0], chunk):
             query_chunk = F.normalize(query[start:start + chunk], dim=1)
             similarities = query_chunk @ bank_work.T
-
-            indices.append(
-                similarities.topk(k,
-                                  dim=1,
-                                  largest=True,
-                                  ).indices
-            )
+            indices.append(similarities.topk(k, dim=1, largest=True).indices)
 
     else:
         ## Squared Euclidean distance (sqrt doesn't affect kNN, so neglect)
@@ -120,12 +122,7 @@ def knn_neighbors(query,
                 - 2.0 * query_chunk @ bank.T
             ).clamp_min_(0.0)
 
-            indices.append(
-                distance2.topk(k,
-                               dim=1,
-                               largest=False,
-                               ).indices
-            )
+            indices.append(distance2.topk(k, dim=1, largest=False).indices)
 
     return torch.cat(indices, dim=0)
 
