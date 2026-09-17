@@ -2,8 +2,9 @@ import sys
 import os
 import h5py
 import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from scipy.sparse import coo_matrix
 from glob import glob
 from truth_labels import (
