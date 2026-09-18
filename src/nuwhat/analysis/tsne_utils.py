@@ -7,8 +7,6 @@ from cuml.manifold import TSNE as cuML_TSNE
 import cupy as cp
 from cuml.preprocessing import StandardScaler as cuMLScaler
 from cuml.manifold import UMAP as cuML_UMAP
-from sklearn.decomposition import PCA as skl_PCA
-from cuml.decomposition import PCA as cuML_PCA
 
 def compute_tsne_skl(input_vect,
                      perp=30,
@@ -63,7 +61,772 @@ def run_tsne_skl(input_vect=None, zvect=None, alpha_vect=None, perp=30, exag=6,
     return tsne_results
 
 
-def plot_tsne(tsne_results,
+def _make_discrete_cmap(n_colors, cmap=None):
+    """
+    Construct a discrete palette where consecutive classes have strongly
+    contrasting colors.
+    """
+
+    if n_colors < 1:
+        raise ValueError("n_colors must be positive")
+
+    if cmap is not None:
+        source_cmap = plt.get_cmap(cmap)
+
+        if isinstance(source_cmap, mcolors.ListedColormap):
+            colors = np.asarray(source_cmap.colors)
+
+            if n_colors <= len(colors):
+                return mcolors.ListedColormap(colors[:n_colors])
+
+        # This is less suitable for categorical colors because adjacent
+        # samples from a continuous map can be similar.
+        colors = source_cmap(np.linspace(0, 1, n_colors))
+        return mcolors.ListedColormap(colors)
+
+    if n_colors <= 10:
+        # Different hue for every consecutive class.
+        colors = list(plt.cm.tab10.colors[:n_colors])
+
+    elif n_colors <= 20:
+        tab20 = list(plt.cm.tab20.colors)
+
+        ## Rearrange to put saturated colors first
+        ordering = [
+            0, 2, 4, 6, 8, 10, 12, 14, 16, 18,
+            5, 7, 9, 11, 13, 15, 17, 19, 1, 3,
+        ]
+        colors = [tab20[i] for i in ordering[:n_colors]]
+
+    else:
+        ## Extend the above if more clases are requested
+        tab20 = list(plt.cm.tab20.colors)
+        ordering = [
+            0, 2, 4, 6, 8, 10, 12, 14, 16, 18,
+            5, 7, 9, 11, 13, 15, 17, 19, 1, 3,
+        ]
+        colors = [tab20[i] for i in ordering]
+
+        extra_candidates = (
+            list(plt.cm.Set1.colors)
+            + list(plt.cm.Dark2.colors)
+            + list(plt.cm.Set2.colors)
+            + list(plt.cm.tab20b.colors)
+            + list(plt.cm.tab20c.colors)
+        )
+
+        colors.extend(extra_candidates)
+        colors = colors[:n_colors]
+
+        # Fall back to a generated palette if the requested number exceeds
+        # the combined discrete palettes.
+        if len(colors) < n_colors:
+            n_extra = n_colors - len(colors)
+            colors.extend(
+                plt.cm.hsv(
+                    np.linspace(0, 1, n_extra, endpoint=False)
+                )
+            )
+
+    return mcolors.ListedColormap(colors)
+
+def plot_tsne(
+    tsne_results,
+    zvect,
+    alpha_vect=None,
+    ztitle="Cluster ID",
+    ax=None,
+    add_colorbar=True,
+    color_mode="discrete",
+    cmap=None,
+    norm_type="linear",
+    vmin=None,
+    vmax=None,
+    save_name=None,
+    order_by_value=False,
+):
+    """
+    Plot t-SNE coordinates colored by discrete, categorical, or continuous
+    values.
+
+    Parameters
+    ----------
+    tsne_results : array-like, shape (N, 2)
+        The t-SNE coordinates.
+
+    zvect : array-like, shape (N,)
+        Values used to color points.
+
+    color_mode : {"discrete", "categorical", "continuous"}
+        discrete:
+            Ordered integer-valued classes, such as particle multiplicity.
+            Uses high-contrast colors. Values can be clipped using vmin/vmax.
+            Endpoint labels become <=vmin and >=vmax.
+
+        categorical:
+            Unordered classes, including strings. vmin/vmax are not allowed.
+
+        continuous:
+            Continuous numerical values. Uses a continuous color scale.
+
+    norm_type : {"linear", "log"}
+        Normalization for continuous variables only.
+
+    vmin, vmax : optional
+        For discrete mode, values outside the range are assigned to the
+        corresponding endpoint class.
+
+        For continuous mode, these define the displayed color range.
+    """
+
+    tsne_results = np.asarray(tsne_results)
+    zvect = np.asarray(zvect)
+
+    if tsne_results.ndim != 2 or tsne_results.shape[1] != 2:
+        raise ValueError("tsne_results must have shape (N, 2)")
+
+    if len(zvect) < len(tsne_results):
+        raise ValueError(
+            "zvect requires at least as many points as tsne_results"
+        )
+
+    zvect = zvect[:len(tsne_results)]
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    ## Make the point sizes sensible
+    npts = tsne_results.shape[0]
+    if npts > 100_000:
+        point_size = 0.5
+    elif npts > 25_000:
+        point_size = 1.0
+    elif npts > 10_000:
+        point_size = 2.0
+    else:
+        point_size = 3.0
+
+    # Per-point alpha
+    if alpha_vect is not None:
+        alpha_vect = np.asarray(alpha_vect, dtype=float)
+
+        if len(alpha_vect) != npts:
+            raise ValueError(
+                "alpha_vect and tsne_results must have the same length"
+            )
+
+        # Preserve the nonlinear alpha transformation from the original.
+        alpha_vect = np.clip(alpha_vect, 0.0, 1.0) ** 3
+
+    if color_mode == "discrete":
+        # ================================================================
+        # Ordered integer-valued classes, e.g. number of particles
+        # ================================================================
+        try:
+            z_numeric = zvect.astype(float)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Discrete mode requires numerical integer-valued labels"
+            ) from error
+
+        finite = np.isfinite(z_numeric)
+
+        if not np.any(finite):
+            raise ValueError("zvect contains no finite values")
+
+        # Particle-count-style labels should be integer-valued, even if
+        # stored in a floating-point array.
+        if not np.allclose(
+            z_numeric[finite],
+            np.round(z_numeric[finite]),
+        ):
+            raise ValueError(
+                "Discrete mode requires integer-valued labels. "
+                "Use color_mode='continuous' for arbitrary floats."
+            )
+
+        z_integer = np.zeros(len(z_numeric), dtype=np.int64)
+        z_integer[finite] = np.round(z_numeric[finite]).astype(np.int64)
+
+        requested_vmin = vmin
+        requested_vmax = vmax
+
+        if vmin is None:
+            discrete_min = int(np.min(z_integer[finite]))
+        else:
+            if not np.isclose(vmin, round(vmin)):
+                raise ValueError(
+                    "vmin must be integer-valued in discrete mode"
+                )
+            discrete_min = int(round(vmin))
+
+        if vmax is None:
+            discrete_max = int(np.max(z_integer[finite]))
+        else:
+            if not np.isclose(vmax, round(vmax)):
+                raise ValueError(
+                    "vmax must be integer-valued in discrete mode"
+                )
+            discrete_max = int(round(vmax))
+
+        if discrete_min > discrete_max:
+            raise ValueError("vmin must not be greater than vmax")
+
+        # Clip all out-of-range values into the endpoint classes.
+        z_clipped = np.clip(
+            z_integer,
+            discrete_min,
+            discrete_max,
+        )
+
+        # Include every integer class in the displayed range, even if one
+        # of those classes happens not to occur in this sample.
+        levels = np.arange(
+            discrete_min,
+            discrete_max + 1,
+            dtype=np.int64,
+        )
+        n_levels = len(levels)
+
+        # Map discrete labels to consecutive color indices.
+        color_indices = z_clipped - discrete_min
+
+        discrete_cmap = _make_discrete_cmap(
+            n_levels,
+            cmap=cmap,
+        )
+
+        discrete_norm = mcolors.BoundaryNorm(
+            boundaries=np.arange(n_levels + 1) - 0.5,
+            ncolors=n_levels,
+        )
+
+        point_colors = discrete_cmap(color_indices)
+
+        # Invalid entries are gray.
+        point_colors[~finite] = mcolors.to_rgba("lightgray")
+
+        if alpha_vect is not None:
+            point_colors[:, 3] = alpha_vect
+
+        if order_by_value:
+            # Invalid values are drawn first; higher values are drawn last.
+            sorting_values = np.where(
+                finite,
+                z_clipped,
+                -np.inf,
+            )
+            sort_order = np.argsort(sorting_values)
+        else:
+            sort_order = np.arange(npts)
+
+        ax.scatter(
+            tsne_results[sort_order, 0],
+            tsne_results[sort_order, 1],
+            s=point_size,
+            c=point_colors[sort_order],
+            linewidths=0,
+            rasterized=npts > 50_000,
+        )
+
+        if add_colorbar:
+            scalar_mappable = plt.cm.ScalarMappable(
+                norm=discrete_norm,
+                cmap=discrete_cmap,
+            )
+            scalar_mappable.set_array([])
+
+            cbar = fig.colorbar(
+                scalar_mappable,
+                ax=ax,
+                ticks=np.arange(n_levels),
+            )
+            cbar.set_label(
+                ztitle,
+                rotation=270,
+                labelpad=20,
+            )
+
+            tick_labels = [str(value) for value in levels]
+
+            # Use clipped endpoint labels whenever the corresponding bound
+            # was explicitly requested.
+            if requested_vmin is not None:
+                tick_labels[0] = rf"$\leq${discrete_min}"
+
+            if requested_vmax is not None:
+                tick_labels[-1] = rf"$\geq${discrete_max}"
+
+            # If vmin == vmax, both clipping directions correspond to the
+            # same displayed class.
+            if (
+                requested_vmin is not None
+                and requested_vmax is not None
+                and discrete_min == discrete_max
+            ):
+                tick_labels[0] = str(discrete_min)
+
+            cbar.set_ticklabels(tick_labels)
+
+    elif color_mode == "categorical":
+        # ================================================================
+        # Unordered categories, e.g. interaction type
+        # ================================================================
+        if vmin is not None or vmax is not None:
+            raise ValueError(
+                "vmin and vmax are not meaningful in categorical mode"
+            )
+
+        unique_labels, color_indices = np.unique(
+            zvect,
+            return_inverse=True,
+        )
+        n_categories = len(unique_labels)
+
+        discrete_cmap = _make_discrete_cmap(
+            n_categories,
+            cmap=cmap,
+        )
+
+        discrete_norm = mcolors.BoundaryNorm(
+            boundaries=np.arange(n_categories + 1) - 0.5,
+            ncolors=n_categories,
+        )
+
+        point_colors = discrete_cmap(color_indices)
+
+        if alpha_vect is not None:
+            point_colors[:, 3] = alpha_vect
+
+        if order_by_value:
+            # This uses the category ordering returned by np.unique.
+            sort_order = np.argsort(color_indices)
+        else:
+            sort_order = np.arange(npts)
+
+        ax.scatter(
+            tsne_results[sort_order, 0],
+            tsne_results[sort_order, 1],
+            s=point_size,
+            c=point_colors[sort_order],
+            linewidths=0,
+            rasterized=npts > 50_000,
+        )
+
+        if add_colorbar:
+            scalar_mappable = plt.cm.ScalarMappable(
+                norm=discrete_norm,
+                cmap=discrete_cmap,
+            )
+            scalar_mappable.set_array([])
+
+            cbar = fig.colorbar(
+                scalar_mappable,
+                ax=ax,
+                ticks=np.arange(n_categories),
+            )
+            cbar.set_label(
+                ztitle,
+                rotation=270,
+                labelpad=20,
+            )
+            cbar.set_ticklabels(
+                [str(label) for label in unique_labels]
+            )
+
+    elif color_mode == "continuous":
+        # ================================================================
+        # Continuous numerical values, e.g. energy transfer
+        # ================================================================
+        try:
+            z_numeric = zvect.astype(float)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Continuous mode requires numerical values"
+            ) from error
+
+        finite = np.isfinite(z_numeric)
+
+        if norm_type == "linear":
+            valid = finite
+
+            if not np.any(valid):
+                raise ValueError("zvect contains no finite values")
+
+            color_vmin = (
+                np.min(z_numeric[valid])
+                if vmin is None else float(vmin)
+            )
+            color_vmax = (
+                np.max(z_numeric[valid])
+                if vmax is None else float(vmax)
+            )
+
+            if color_vmin > color_vmax:
+                raise ValueError("vmin must not be greater than vmax")
+
+            if color_vmin == color_vmax:
+                color_vmax = color_vmin + max(
+                    abs(color_vmin) * 1e-6,
+                    1e-12,
+                )
+
+            norm = mcolors.Normalize(
+                vmin=color_vmin,
+                vmax=color_vmax,
+                clip=True,
+            )
+
+        elif norm_type == "log":
+            valid = finite & (z_numeric > 0)
+
+            if not np.any(valid):
+                raise ValueError(
+                    "Log normalization requires positive values"
+                )
+
+            color_vmin = (
+                np.min(z_numeric[valid])
+                if vmin is None else float(vmin)
+            )
+            color_vmax = (
+                np.max(z_numeric[valid])
+                if vmax is None else float(vmax)
+            )
+
+            if color_vmin <= 0:
+                raise ValueError(
+                    "vmin must be positive with log normalization"
+                )
+
+            if color_vmax <= color_vmin:
+                raise ValueError(
+                    "vmax must be greater than vmin with "
+                    "log normalization"
+                )
+
+            norm = mcolors.LogNorm(
+                vmin=color_vmin,
+                vmax=color_vmax,
+                clip=True,
+            )
+
+        else:
+            raise ValueError(
+                "norm_type must be 'linear' or 'log'"
+            )
+
+        continuous_cmap = plt.get_cmap(cmap or "viridis").copy()
+        continuous_cmap.set_bad("lightgray")
+
+        scalar_mappable = plt.cm.ScalarMappable(
+            norm=norm,
+            cmap=continuous_cmap,
+        )
+        scalar_mappable.set_array([])
+
+        point_colors = scalar_mappable.to_rgba(z_numeric)
+        point_colors[~valid] = mcolors.to_rgba("lightgray")
+
+        if alpha_vect is not None:
+            point_colors[:, 3] = alpha_vect
+
+        if order_by_value:
+            sorting_values = np.where(
+                valid,
+                z_numeric,
+                -np.inf,
+            )
+            sort_order = np.argsort(sorting_values)
+        else:
+            sort_order = np.arange(npts)
+
+        ax.scatter(
+            tsne_results[sort_order, 0],
+            tsne_results[sort_order, 1],
+            s=point_size,
+            c=point_colors[sort_order],
+            linewidths=0,
+            rasterized=npts > 50_000,
+        )
+
+        if add_colorbar:
+            below_range = (
+                vmin is not None
+                and np.any(z_numeric[valid] < color_vmin)
+            )
+            above_range = (
+                vmax is not None
+                and np.any(z_numeric[valid] > color_vmax)
+            )
+
+            if below_range and above_range:
+                extend = "both"
+            elif below_range:
+                extend = "min"
+            elif above_range:
+                extend = "max"
+            else:
+                extend = "neither"
+
+            cbar = fig.colorbar(
+                scalar_mappable,
+                ax=ax,
+                extend=extend,
+            )
+            cbar.set_label(
+                ztitle,
+                rotation=270,
+                labelpad=20,
+            )
+
+    else:
+        raise ValueError(
+            "color_mode must be one of "
+            "'discrete', 'categorical', or 'continuous'"
+        )
+
+    ax.set_xlabel("t-SNE #0")
+    ax.set_ylabel("t-SNE #1")
+    ax.grid(False)
+
+    if save_name:
+        fig.savefig(
+            save_name,
+            dpi=200,
+            bbox_inches="tight",
+        )
+
+    return ax
+
+def plot_tsne_BAD(
+    tsne_results,
+    zvect,
+    alpha_vect=None,
+    ztitle="Cluster ID",
+    ax=None,
+    add_colorbar=True,
+    color_mode="categorical",   # "categorical" or "continuous"
+    cmap=None,
+    norm_type="linear",         # "linear" or "log"; continuous mode only
+    vmin=None,
+    vmax=None,
+    save_name=None,
+    order_by_value=False
+):
+    tsne_results = np.asarray(tsne_results)
+    zvect = np.asarray(zvect)
+
+    if tsne_results.shape[0] != len(zvect):
+        raise ValueError("tsne_results and zvect must have the same length")
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    ## Keep track of whether values were clipped for the colorbar arrow.
+    values_above_max = False
+
+    ## Plot larger values last, making them less likely to be hidden.
+    if order_by_value:
+        if np.issubdtype(zvect.dtype, np.number):
+            sortable = np.where(np.isfinite(zvect), zvect, -np.inf)
+            sort_order = np.argsort(sortable)
+        else:
+            sort_order = np.argsort(zvect.astype(str))
+    else:
+        sort_order = np.arange(len(zvect))
+
+    ## Make the point sizes sensible
+    npts = tsne_results.shape[0]
+    if npts > 100_000:
+        point_size = 0.5
+    elif npts > 25_000:
+        point_size = 1.0
+    elif npts > 10_000:
+        point_size = 2.0
+    else:
+        point_size = 3.0
+
+    if alpha_vect is not None:
+        alpha_vect = np.asarray(alpha_vect, dtype=float)
+        if len(alpha_vect) != len(zvect):
+            raise ValueError("alpha_vect and zvect must have the same length")
+        alpha_vect = np.clip(alpha_vect, 0.0, 1.0) ** 3
+
+    if color_mode == "continuous":
+        # Continuous numerical coloring
+        try:
+            z_numeric = zvect.astype(float)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "Continuous color mode requires a numerical zvect"
+            )
+
+        finite = np.isfinite(z_numeric)
+
+        if norm_type == "linear":
+            valid = finite
+
+            if not np.any(valid):
+                raise ValueError("zvect contains no finite values")
+
+            if vmin is None:
+                vmin = np.min(z_numeric[valid])
+            if vmax is None:
+                vmax = np.max(z_numeric[valid])
+
+            # Avoid a degenerate normalization if all values are identical.
+            if vmin == vmax:
+                vmax = vmin + max(abs(vmin) * 1e-6, 1e-12)
+
+            norm = mcolors.Normalize(vmin=vmin, vmax=vmax, clip=True)
+
+        elif norm_type == "log":
+            valid = finite & (z_numeric > 0)
+
+            if not np.any(valid):
+                raise ValueError(
+                    "Log normalization requires at least one positive value"
+                )
+
+            if vmin is None:
+                vmin = np.min(z_numeric[valid])
+            if vmax is None:
+                vmax = np.max(z_numeric[valid])
+
+            if vmin <= 0:
+                raise ValueError("vmin must be positive for log normalization")
+            if vmax <= vmin:
+                vmax = vmin * (1.0 + 1e-6)
+
+            norm = mcolors.LogNorm(vmin=vmin, vmax=vmax, clip=True)
+
+        else:
+            raise ValueError("norm_type must be 'linear' or 'log'")
+
+        cmap = plt.get_cmap(cmap or "viridis").copy()
+        cmap.set_bad("lightgray")
+
+        scalar_mappable = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        scalar_mappable.set_array([])
+
+        # Create RGBA colors explicitly so each point can have its own alpha.
+        point_colors = scalar_mappable.to_rgba(z_numeric)
+
+        # Display invalid/log-nonpositive values in gray.
+        point_colors[~valid] = mcolors.to_rgba("lightgray")
+
+        if alpha_vect is not None:
+            point_colors[:, 3] = alpha_vect
+
+        ax.scatter(
+            tsne_results[sort_order, 0],
+            tsne_results[sort_order, 1],
+            s=point_size,
+            c=point_colors[sort_order],
+            linewidths=0,
+            rasterized=npts > 50_000,
+        )
+
+        if add_colorbar:
+            cbar = fig.colorbar(
+                scalar_mappable,
+                ax=ax,
+                extend="max" if values_above_max else "neither",
+            )
+            cbar.set_label(ztitle, rotation=270, labelpad=20)
+
+    elif color_mode == "categorical":
+
+        unique_labels, zvect_idx = np.unique(
+            zvect,
+            return_inverse=True,
+        )
+        n_clusters = len(unique_labels)
+
+        if cmap is None:
+            all_colors = (
+                plt.cm.tab20.colors
+                + plt.cm.tab20b.colors
+                + plt.cm.tab20c.colors
+                + plt.cm.tab10.colors
+            )
+
+            if n_clusters > len(all_colors):
+                n_extra = n_clusters - len(all_colors)
+                denominator = max(1, n_extra - 1)
+                all_colors += tuple(
+                    plt.cm.nipy_spectral(i / denominator)
+                    for i in range(n_extra)
+                )
+
+            discrete_cmap = mcolors.ListedColormap(
+                all_colors[:n_clusters]
+            )
+        else:
+            source_cmap = plt.get_cmap(cmap)
+            discrete_cmap = mcolors.ListedColormap(
+                source_cmap(np.linspace(0, 1, n_clusters))
+            )
+
+        discrete_norm = mcolors.BoundaryNorm(
+            np.arange(n_clusters + 1),
+            ncolors=n_clusters,
+        )
+
+        point_colors = discrete_cmap(zvect_idx)
+
+        if alpha_vect is not None:
+            point_colors[:, 3] = alpha_vect
+
+        ax.scatter(
+            tsne_results[sort_order, 0],
+            tsne_results[sort_order, 1],
+            s=point_size,
+            c=point_colors[sort_order],
+            linewidths=0,
+            rasterized=npts > 50_000,
+        )
+
+        if add_colorbar:
+            scalar_mappable = plt.cm.ScalarMappable(
+                norm=discrete_norm,
+                cmap=discrete_cmap,
+            )
+            scalar_mappable.set_array([])
+
+            cbar = fig.colorbar(scalar_mappable, ax=ax)
+            cbar.set_label(ztitle, rotation=270, labelpad=20)
+            cbar.set_ticks(np.arange(n_clusters) + 0.5)
+
+            # Do not coerce labels to integers.
+            tick_labels = [
+                f"{label:g}" if isinstance(label, (float, np.floating))
+                else str(label)
+                for label in unique_labels
+            ]
+            cbar.set_ticklabels(tick_labels)
+
+    else:
+        raise ValueError(
+            "color_mode must be 'categorical' or 'continuous'"
+        )
+
+    ax.set_xlabel("t-SNE #0")
+    ax.set_ylabel("t-SNE #1")
+    ax.grid(False)
+
+    if save_name:
+        fig.savefig(save_name, dpi=200, bbox_inches="tight")
+
+    return ax
+
+
+def plot_tsne_OLD(tsne_results,
               zvect=None,
               alpha_vect=None,
               ztitle="Cluster ID",
@@ -165,67 +928,90 @@ def plot_tsne(tsne_results,
     return ax
 
 
-def plot_summary_tsne_block(tsne_results, processed, apply_alpha_vect=None, save_name=None):
-    fig, axes = plt.subplots(3, 2, figsize=(20, 10))
+def plot_summary_tsne_block_OLD(tsne_results, processed, apply_alpha_vect=None, save_name=None):
+    fig, axes = plt.subplots(2, 3, figsize=(20, 10))
 
     ntsne = len(tsne_results)
     alpha_vect = None
     if apply_alpha_vect: alpha_vect = processed['clust_max'][:ntsne]  
 
-    plot_tsne(tsne_results, processed.get('clust_index', np.zeros(ntsne))[:ntsne],
-              ax=axes[0][0], alpha_vect=alpha_vect, ztitle="Clust index")
-    plot_tsne(tsne_results, processed['labels']['topology'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['cc_category'][:ntsne], color_mode="categorical",
+              ax=axes[0][0], alpha_vect=alpha_vect, ztitle="CC category")
+    plot_tsne(tsne_results, processed['labels']['topology'][:ntsne], color_mode="categorical",
               ax=axes[0][1], alpha_vect=alpha_vect, ztitle="Topology")
-    plot_tsne(tsne_results, processed['labels']['mode'][:ntsne],
+    plot_tsne(tsne_results, processed['labels']['mode'][:ntsne], color_mode="categorical",
               ax=axes[0][2], alpha_vect=alpha_vect, ztitle="Mode")
 
-    nhits = processed['nhits'][:ntsne] /50.
-    plot_tsne(tsne_results, nhits.astype(int),
-              ax=axes[1][0], alpha_vect=alpha_vect, ztitle="N. hits /50", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['enu'][:ntsne].astype(int),
-              ax=axes[1][1], alpha_vect=alpha_vect, ztitle=r"$E_{\nu}$ (GeV)", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['q0'][:ntsne].astype(int),
-              ax=axes[1][2], alpha_vect=alpha_vect, ztitle=r"$q_{0}$ (GeV)", linear_colorbar=True)
+    nhits = processed['nhits'][:ntsne] //100.
+    plot_tsne(tsne_results, nhits, color_mode="continuous",
+              ax=axes[1][0], alpha_vect=alpha_vect, ztitle="N. hits /100", norm_type="linear", vmin=0, vmax=10)
+    plot_tsne(tsne_results, processed['labels']['enu'][:ntsne], color_mode="continuous",
+              ax=axes[1][1], alpha_vect=alpha_vect, ztitle=r"$E_{\nu}$ (GeV)", norm_type="linear", vmin=2, vmax=12)
+    plot_tsne(tsne_results, processed['labels']['q0'][:ntsne], color_mode="continuous",
+              ax=axes[1][2], alpha_vect=alpha_vect, ztitle=r"$q_{0}$ (GeV)", norm_type="linear", vmin=0, vmax=3)
 
     plt.tight_layout()
     if save_name: plt.savefig(save_name, dpi=200, bbox_inches='tight')
     plt.show()
     plt.close()
 
-
-
-def plot_particle_tsne_block(tsne_results, processed, save_name=None):
+    
+def plot_summary_tsne_block(tsne_results, processed, save_name=None):
     fig, axes = plt.subplots(3, 3, figsize=(20, 15))
 
     ntsne = len(tsne_results)
-    n_charged_particles = processed['labels']['nproton'] + \
-        processed['labels']['npipm'] + \
-        processed['labels']['nkapm']
 
-    nnuclear = processed['labels']['ndeuteron'] + \
-        processed['labels']['ntritium'] + \
-        processed['labels']['nalpha'] + \
-        processed['labels']['nhelium3'] + \
-        processed['labels']['nnuclfrag']
+    nhits = np.log10(processed['nhits'][:ntsne])
+    plot_tsne(tsne_results, nhits, color_mode="continuous",
+              ax=axes[0][0], ztitle=r"log$_{10}$(N. hits)", norm_type="linear")
+    plot_tsne(tsne_results, processed['labels']['event']['enu'][:ntsne], color_mode="continuous",
+              ax=axes[0][1], ztitle=r"$E_{\nu}$ (GeV)", norm_type="linear", vmin=2, vmax=12)
+    plot_tsne(tsne_results, processed['labels']['event']['q0'][:ntsne], color_mode="continuous",
+              ax=axes[0][2], ztitle=r"$q_{0}$ (GeV)", norm_type="linear", vmin=0, vmax=3)
+
+    plot_tsne(tsne_results, processed['labels']['event']['cctopology_truth'][:ntsne], color_mode="categorical",
+              ax=axes[1][0], ztitle="CC topology (truth)")
+    plot_tsne(tsne_results, processed['labels']['event']['cctopology_visible'][:ntsne], color_mode="categorical",
+              ax=axes[1][1], ztitle="CC Topology (visible)")
+    plot_tsne(tsne_results, processed['labels']['event']['edep_5mm'][:ntsne], color_mode="continuous",
+              ax=axes[1][2], ztitle=r"$E_{dep}$ 5 mm", norm_type="linear", vmax=100)
+
+    plot_tsne(tsne_results, processed['labels']['event']['edep_10mm'][:ntsne], color_mode="continuous",
+              ax=axes[2][0], ztitle=r"$E_{dep}$ 10 mm", norm_type="linear", vmax=200)
+    plot_tsne(tsne_results, processed['labels']['event']['edep_20mm'][:ntsne], color_mode="continuous",
+              ax=axes[2][1], ztitle=r"$E_{dep}$ 20 mm", norm_type="linear", vmax=200)
+    plot_tsne(tsne_results, processed['labels']['event']['edep_50mm'][:ntsne], color_mode="continuous",
+              ax=axes[2][2], ztitle=r"$E_{dep}$ 50 mm", norm_type="linear", vmax=300)
     
-    plot_tsne(tsne_results, n_charged_particles[:ntsne], order_by_value=False, max_z=10,
-              ax=axes[0][0], ztitle="N. charged particles", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nproton'][:ntsne], order_by_value=False, max_z=10,
-              ax=axes[0][1], ztitle="N. protons", linear_colorbar=True)
-    plot_tsne(tsne_results, nnuclear[:ntsne], order_by_value=False, max_z=5,
-              ax=axes[0][2], ztitle="N. cluster", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['npipm'][:ntsne],  order_by_value=False, max_z=5,
-              ax=axes[1][0], ztitle=r"N. $\pi^{\pm}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['npi0'][:ntsne],  order_by_value=True, max_z=5,
-              ax=axes[1][1], ztitle=r"N. $\pi^{0}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nem'][:ntsne], order_by_value=False, max_z=5,
-	      ax=axes[1][2], ztitle="N. EM", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nkapm'][:ntsne], order_by_value=True, max_z=5,
-              ax=axes[2][0], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nka0'][:ntsne], order_by_value=True, max_z=5,
-              ax=axes[2][1], ztitle=r"N. $K^{\pm}$", linear_colorbar=True)
-    plot_tsne(tsne_results, processed['labels']['nlambda0'][:ntsne], order_by_value=True, max_z=5,
-              ax=axes[2][2], ztitle=r"N. $\Lambda^{0}$", linear_colorbar=True)
+    plt.tight_layout()
+    if save_name: plt.savefig(save_name, dpi=200, bbox_inches='tight')
+    plt.show()
+    plt.close()
+    
+
+def plot_particle_tsne_block(tsne_results, processed_labels, save_name=None):
+    fig, axes = plt.subplots(3, 3, figsize=(20, 15))
+
+    ntsne = len(tsne_results)
+
+    plot_tsne(tsne_results, processed_labels['ncharged'], order_by_value=False, vmax=5,
+              ax=axes[0][0], ztitle="N. charged particles", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['nproton'][:ntsne], order_by_value=False, vmax=5,
+              ax=axes[0][1], ztitle="N. protons", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['ncluster'][:ntsne], order_by_value=False, vmax=3,
+              ax=axes[0][2], ztitle="N. cluster", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['npipm'][:ntsne],  order_by_value=False, vmax=3,
+              ax=axes[1][0], ztitle=r"N. $\pi^{\pm}$", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['npi0'][:ntsne],  order_by_value=True, vmax=3,
+              ax=axes[1][1], ztitle=r"N. $\pi^{0}$", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['nem'][:ntsne], order_by_value=False, vmax=3,
+	      ax=axes[1][2], ztitle="N. EM", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['nkapm'][:ntsne], order_by_value=True, vmax=3,
+              ax=axes[2][0], ztitle=r"N. $K^{\pm}$", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['nka0'][:ntsne], order_by_value=True, vmax=3,
+              ax=axes[2][1], ztitle=r"N. $K^{\pm}$", norm_type="linear", color_mode="discrete")
+    plot_tsne(tsne_results, processed_labels['nlambda0'][:ntsne], order_by_value=True, vmax=3,
+              ax=axes[2][2], ztitle=r"N. $\Lambda^{0}$", norm_type="linear", color_mode="discrete")
 
     plt.tight_layout()
     if save_name: plt.savefig(save_name, dpi=200, bbox_inches='tight')
@@ -290,7 +1076,7 @@ def run_umap_cuml(input_vect=None,
         metric=metric, 
         #build_algo='nn_descent',
         n_epochs=n_epochs,
-        init='spectral',
+        init='random',
         random_state=42, 
         verbose=True
     )
