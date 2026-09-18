@@ -70,38 +70,38 @@ def run_analysis(args):
     print("...inputs loaded!")
 
     ## Make some basic high-level plots
-    if training_args.clust_arch is ot "none":
-    plot_metric_data_vs_sim(nom_processed['clust_index'], 
-                            alt_processed['clust_index'], 
-                            alt_processed['labels']['topology'],
-                            label_enum=Topology,
-                            xtitle="Max. cluster index", 
-                            save_name=args.out_name_root+"_clust_index.png")
+    if training_args.clust_arch != "none":
+        plot_metric_data_vs_sim(nom_processed['clust_index'], 
+                                alt_processed['clust_index'], 
+                                alt_processed['labels']['topology'],
+                                label_enum=Topology,
+                                xtitle="Max. cluster index", 
+                                save_name=args.out_name_root+"_clust_index.png")
     
-    plot_metric_data_vs_sim(nom_processed['clust_max'], 
-                            alt_processed['clust_max'], 
-                            alt_processed['labels']['topology'],
-                            label_enum=Topology,
-                            xtitle="Max. cluster value",
-                            save_name=args.out_name_root+"_clust_max.png")
+        plot_metric_data_vs_sim(nom_processed['clust_max'], 
+                                alt_processed['clust_max'], 
+                                alt_processed['labels']['topology'],
+                                label_enum=Topology,
+                                xtitle="Max. cluster value",
+                                save_name=args.out_name_root+"_clust_max.png")
     
-    plot_metric_by_cluster(nom_processed['nhits'],
-                           nom_processed['clust_index'],
-                           nbinsx=70, x_max=1400,
-                           xtitle="N. hits",
-                           save_name=args.out_name_root+"_nhits.png")
+        plot_metric_by_cluster(nom_processed['nhits'],
+                               nom_processed['clust_index'],
+                               nbinsx=70, x_max=1400,
+                               xtitle="N. hits",
+                               save_name=args.out_name_root+"_nhits.png")
     
-    plot_metric_by_cluster(nom_processed['sumQ'],
-                           nom_processed['clust_index'],
-                           nbinsx=70, x_max=1400,
-                           xtitle="Sum Q",
-                           save_name=args.out_name_root+"_sumQ.png")
+        plot_metric_by_cluster(nom_processed['sumQ'],
+                               nom_processed['clust_index'],
+                               nbinsx=70, x_max=1400,
+                               xtitle="Sum Q",
+                               save_name=args.out_name_root+"_sumQ.png")
     
-    plot_metric_by_cluster(nom_processed['maxQ'],
-                           nom_processed['clust_index'],
-                           nbinsx=100, x_min=1.5, x_max=2.5,
-                           xtitle="Max. Q",
-                           save_name=args.out_name_root+"_maxQ.png")
+        plot_metric_by_cluster(nom_processed['maxQ'],
+                               nom_processed['clust_index'],
+                               nbinsx=100, x_min=1.5, x_max=2.5,
+                               xtitle="Max. Q",
+                               save_name=args.out_name_root+"_maxQ.png")
 
     ## Make a list of all representations we might have
     layer_list = ["encoder", "proj_final", "clust_final"]
