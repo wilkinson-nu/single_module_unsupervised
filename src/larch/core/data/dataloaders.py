@@ -5,10 +5,10 @@ from threadpoolctl import threadpool_limits
 from torch.utils.data import DataLoader, DistributedSampler, Subset
 
 ## Import dataset utils
-from core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn, single_2d_dataset_ME
+from larch.core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn, single_2d_dataset_ME
 
 ## Basic utils
-from core.utils import print0
+from larch.core.utils import print0
 
 
 def worker_init_fn(worker_id):

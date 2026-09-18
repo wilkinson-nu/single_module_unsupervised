@@ -4,8 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib import cm
-from core.analysis.image_utils import make_dense, make_dense_from_tensor
-from datasets.fsd.truth_labels import Label
+from larch.core.analysis.image_utils import make_dense, make_dense_from_tensor
+from larch.datasets.fsd.truth_labels import Label
 from matplotlib.ticker import MaxNLocator
 import faiss
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score

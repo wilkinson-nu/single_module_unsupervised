@@ -18,9 +18,9 @@ import torch
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ## Import analysis functions
-from analysis.plotting_utils import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_multiplicity_matrix_grid, plot_cluster_example_grid
-from analysis.tsne_utils import compute_tsne_cuml, compute_tsne_skl, plot_tsne, plot_tsne_block
-from datasets.nularbox.truth_labels import Mode, Topology
+from larch.analysis.plotting_utils import plot_metric_data_vs_sim, plot_metric_by_cluster, plot_multiplicity_matrix_grid, plot_cluster_example_grid
+from larch.analysis.tsne_utils import compute_tsne_cuml, compute_tsne_skl, plot_tsne, plot_tsne_block
+from larch.datasets.nularbox.truth_labels import Mode, Topology
 
 ## Seeding
 SEED=12345
@@ -28,10 +28,12 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Various shared analysis libraries
-from analysis.model_utils import load_checkpoint, get_models_from_checkpoint
-from analysis.dataset_utils import get_dataset, image_loop, reorder_clusters
-from core.data.augmentations_2d import CenterCrop
-    
+from larch.analysis.model_utils import load_checkpoint, get_models_from_checkpoint
+from larch.analysis.dataset_utils import get_dataset, image_loop, reorder_clusters
+from larch.core.data.augmentations_2d import CenterCrop
+from larch.datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
+import torchvision.transforms.v2 as transforms
+
 def run_analysis(args):
 
     ## Setup the encoder
@@ -41,23 +43,34 @@ def run_analysis(args):
     for h in heads.values(): h.to(device)
 
     ## Nominal transformation
-    transform = CenterCrop((512,512), (256,256))
-    
+    nom_transforms.Compose([
+            CenterCrop((512,512), (256,256)),
+            LogAlphaCharge(5)
+        ])
+
     ## Set up the datasets and loaders
-    nom_dataset, nom_loader = get_dataset(args.nom_data_dir, args.nnom, transform)
-    alt_dataset, alt_loader = get_dataset(args.alt_data_dir, args.nalt, transform)
+    nom_dataset, nom_loader = get_dataset(args.nom_data_dir, args.nnom, nom_transform)
+    alt_dataset, alt_loader = get_dataset(args.alt_data_dir, args.nalt, nom_transform)
 
     ## Get the processed vectors of interest from the datasets
     print("Loading inputs...")
     ## Need to modify these to also save intermediate layers from the heads
-    nom_processed = image_loop(encoder, heads, nom_loader, device, detailed_info=True, return_hidden=True)
-    alt_processed = image_loop(encoder, heads, alt_loader, device, detailed_info=True, return_hidden=True)
+
+    ## Hack in the logits case for now
+    apply_softmax=False
+    if training_args.sharpened_cluster_loss == 1:
+        print(training_args.clust_arch, training_args.clust_temp)
+        apply_softmax = training_args.clust_temp
+        
+    nom_processed = image_loop(encoder, heads, nom_loader, device, detailed_info=True, return_hidden=True, apply_softmax=apply_softmax)
+    alt_processed = image_loop(encoder, heads, alt_loader, device, detailed_info=True, return_hidden=True, apply_softmax=apply_softmax)
 
     ## Do some magic to re-order the clusters for presentation purposes
     reorder_clusters(nom_processed, alt_processed)
     print("...inputs loaded!")
 
     ## Make some basic high-level plots
+    if training_args.clust_arch is ot "none":
     plot_metric_data_vs_sim(nom_processed['clust_index'], 
                             alt_processed['clust_index'], 
                             alt_processed['labels']['topology'],

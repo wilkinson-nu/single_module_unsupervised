@@ -25,16 +25,16 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Various shared analysis libraries
-from analysis.tsne_utils import compute_tsne_cuml, plot_tsne, plot_tsne_block
-from analysis.model_utils import load_checkpoint, get_models_from_checkpoint
-from analysis.dataset_utils import get_dataset, image_loop
-from analysis.plotting_utils import run_faiss_kmeans
-from core.data.augmentations_2d import CenterCrop
-from core.data.augmentations_2d import FirstRegionCrop
-from datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
-from analysis.geometry_utils import plot_spectrum, pca_spectrum, cosine_spectrum
-from analysis.geometry_utils import plot_similarity_distributions, plot_cumulative_variance
-from analysis.geometry_utils import preprocess_embeddings
+from larch.analysis.tsne_utils import compute_tsne_cuml, plot_tsne, plot_particle_tsne_block
+from larch.analysis.model_utils import load_checkpoint, get_models_from_checkpoint
+from larch.analysis.dataset_utils import get_dataset, image_loop
+from larch.analysis.plotting_utils import run_faiss_kmeans
+from larch.core.data.augmentations_2d import CenterCrop
+from larch.core.data.augmentations_2d import FirstRegionCrop
+from larch.datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
+from larch.analysis.geometry_utils import plot_spectrum, pca_spectrum, cosine_spectrum
+from larch.analysis.geometry_utils import plot_similarity_distributions, plot_cumulative_variance
+from larch.analysis.geometry_utils import preprocess_embeddings
 
 
 ## For paraellising the ncluster runs
@@ -108,7 +108,7 @@ def run_analysis(args):
     aug2_processed = image_loop(encoder, heads, aug_loader, device, return_hidden=True, detailed_info=True)
 
     ## Loop over the latent spaces
-    for latent_name in ["encoder", "proj_final"]:
+    for latent_name in ["encoder", "proj_layer1", "proj_final"]:
 
         ## Cosine similarity comparisons
         plot_similarity_distributions(nom_processed[latent_name],
@@ -126,131 +126,131 @@ def run_analysis(args):
         cosine_eigvals = cosine_spectrum(nom_processed[latent_name])
         plot_spectrum(cosine_eigvals, save_name=args.out_name_root+"_simeigvals_"+latent_name+".png")
         plot_spectrum(cosine_eigvals, save_name=args.out_name_root+"_simeigvals_"+latent_name+"_max250.png", xlim=250)
-        
-    ## Get pre-processed embeddings
-    X_pca50_spherical = preprocess_embeddings(
-        nom_processed['encoder'],
-        pca=50,
-        drop_first_pca=False,
-        whiten=False,
-        spherical=True
-    )
-    
-    X_pca50_euclidean = preprocess_embeddings(
-        nom_processed['encoder'],
-        pca=50,
-        drop_first_pca=False,
-        whiten=True,
-        spherical=False
-    )
 
-    X_pca256_spherical = preprocess_embeddings(
-        nom_processed['encoder'],
-        pca=256,
-        drop_first_pca=False,
-        whiten=False,
-        spherical=True
-    )
-
-    X_pca100_euclidean = preprocess_embeddings(
-        nom_processed['encoder'],
-        pca=100,
-        drop_first_pca=False,
-        whiten=True,
-        spherical=False
-    )
-
-    ## t-SNE examples
-    print("Starting tSNE...")
-    tsne_results_euclidean = compute_tsne_cuml(X_pca50_euclidean,
-                                               perp=150, exag=20, lr=500,
-                                               metric="euclidean",
-                                               verbose=False)
-
-    plot_tsne_block(tsne_results_euclidean, nom_processed, apply_alpha_vect=False,
-                    save_name=args.out_name_root+"_euclidean_tsne_block.png")
-
-    tsne_results_spherical = compute_tsne_cuml(X_pca50_spherical,
-                                               perp=150, exag=20, lr=500,
-                                               metric="cosine",
-                                               verbose=False)
-    
-    plot_tsne_block(tsne_results_spherical, nom_processed, apply_alpha_vect=False,
-                    save_name=args.out_name_root+"_spherical_tsne_block.png")
-
-
-    ## Now run k-means over a variety of different ncluster possibilities
-    ncluster_list = [n for n in range(args.clust_min, args.clust_max+1, args.clust_step)]
-
-    ## Process euclidean k-means
-    print("Running euclidean k-means...")
-    euclidean_results = Parallel(
-        n_jobs = args.ngpus,
-        prefer="processes"
-    )(
-        delayed(parallel_faiss_kmeans)(
-            ncluster,
-            X_pca100_euclidean,
-            nattempts=args.nattempts,
-            spherical=False
-            )
-        for ncluster in ncluster_list
-    )
-
-    sil_euclidean = []
-    ch_euclidean = []
-    db_euclidean = []
-
-    ## Process the results
-    for ncluster, these_labels, metrics in euclidean_results:
-        sil_euclidean.append(metrics["silhouette"])
-        ch_euclidean.append(metrics["calinski_harabasz"])
-        db_euclidean.append(metrics["davies_bouldin"])
-
-        if ncluster in [50, 100]:
-            plot_tsne(tsne_results_euclidean, these_labels, alpha_vect=None, ztitle="Clust index",
-                      save_name=args.out_name_root+"_tsne_euclidean"+str(ncluster)+".png")
-
-    ## After the loop over clusters, make some summary plots
-    plot_metric(ncluster_list, sil_euclidean, "Silhouette Score", args.out_name_root+"_euclidean_silhouette.png")
-    plot_metric(ncluster_list, ch_euclidean, "Calinski–Harabasz Index", args.out_name_root+"_euclidean_ch.png")
-    plot_metric(ncluster_list, db_euclidean, "Davies–Bouldin Index", args.out_name_root+"_euclidean_db.png")
-
-
-    ## Process spherical k-means
-    print("Running spherical k-means...")
-    spherical_results = Parallel(
-        n_jobs = args.ngpus,
-        prefer="processes"
-    )(
-        delayed(parallel_faiss_kmeans)(
-            ncluster,
-            X_pca256_spherical,
-            nattempts=args.nattempts,
+    ## Now loop over encoded spaces of interest (not proj_final...)
+    for latent_name in ["encoder", "proj_layer1", "proj_final"]:
+        ## Get pre-processed embeddings
+        X_pca50_spherical = preprocess_embeddings(
+            nom_processed[latent_name],
+            pca=50,
+            drop_first_pca=False,
+            whiten=False,
             spherical=True
-            )
-        for ncluster in ncluster_list
-    )    
+        )
+        
+        X_pca50_euclidean = preprocess_embeddings(
+            nom_processed[latent_name],
+            pca=50,
+            drop_first_pca=False,
+            whiten=True,
+            spherical=False
+        )
+        
+        ## X_pca256_spherical = preprocess_embeddings(
+        ##     nom_processed[latent_name],
+        ##     pca=256,
+        ##     drop_first_pca=False,
+        ##     whiten=False,
+        ##     spherical=True
+        ## )
+        ## 
+        ## X_pca100_euclidean = preprocess_embeddings(
+        ##     nom_processed[latent_name],
+        ##     pca=100,
+        ##     drop_first_pca=False,
+        ##     whiten=True,
+        ##     spherical=False
+        ## )
 
-    sil_spherical = []
-    ch_spherical = []
-    db_spherical = []
-
-    ## Process the results
-    for ncluster, these_labels, metrics in spherical_results:
-        sil_spherical.append(metrics["silhouette"])
-        ch_spherical.append(metrics["calinski_harabasz"])
-        db_spherical.append(metrics["davies_bouldin"])
-
-        if ncluster in [50, 100]:
-            plot_tsne(tsne_results_spherical, these_labels, alpha_vect=None, ztitle="Clust index",
-                      save_name=args.out_name_root+"_tsne_spherical"+str(ncluster)+".png")
-
-    ## After the loop over clusters, make some summary plots
-    plot_metric(ncluster_list, sil_spherical, "Silhouette Score", args.out_name_root+"_spherical_silhouette.png")
-    plot_metric(ncluster_list, ch_spherical, "Calinski–Harabasz Index", args.out_name_root+"_spherical_ch.png")
-    plot_metric(ncluster_list, db_spherical, "Davies–Bouldin Index", args.out_name_root+"_spherical_db.png")
-    
+        ## t-SNE examples
+        print("Starting tSNE...")
+        tsne_results_euclidean = compute_tsne_cuml(X_pca50_euclidean,
+                                                   perp=150, exag=20, lr=500,
+                                                   metric="euclidean",
+                                                   verbose=False)
+        
+        plot_particle_tsne_block(tsne_results_euclidean, nom_processed,
+                                 save_name=args.out_name_root+"_"+latent_name+"_euclidean_tsne_block.png")
+        
+        tsne_results_spherical = compute_tsne_cuml(X_pca50_spherical,
+                                                   perp=150, exag=20, lr=500,
+                                                   metric="cosine",
+                                                   verbose=False)
+        
+        plot_particle_tsne_block(tsne_results_spherical, nom_processed,
+                                 save_name=args.out_name_root+"_"+latent_name+"_spherical_tsne_block.png")
+        
+        ## Now run k-means over a variety of different ncluster possibilities
+        ## ncluster_list = [n for n in range(args.clust_min, args.clust_max+1, args.clust_step)]
+        ## 
+        ## ## Process euclidean k-means
+        ## print("Running euclidean k-means...")
+        ## euclidean_results = Parallel(
+        ##     n_jobs = args.ngpus,
+        ##     prefer="processes"
+        ## )(
+        ##     delayed(parallel_faiss_kmeans)(
+        ##         ncluster,
+        ##         X_pca100_euclidean,
+        ##         nattempts=args.nattempts,
+        ##         spherical=False
+        ##     )
+        ##     for ncluster in ncluster_list
+        ## )
+        ## 
+        ## sil_euclidean = []
+        ## ch_euclidean = []
+        ## db_euclidean = []
+        ## 
+        ## ## Process the results
+        ## for ncluster, these_labels, metrics in euclidean_results:
+        ##     sil_euclidean.append(metrics["silhouette"])
+        ##     ch_euclidean.append(metrics["calinski_harabasz"])
+        ##     db_euclidean.append(metrics["davies_bouldin"])
+        ##     
+        ##     if ncluster in [50, 100]:
+        ##         plot_tsne(tsne_results_euclidean, these_labels, alpha_vect=None, ztitle="Clust index",
+        ##                   save_name=args.out_name_root+"_"+latent_name+"_tsne_euclidean"+str(ncluster)+".png")
+        ##         
+        ## ## After the loop over clusters, make some summary plots
+        ## plot_metric(ncluster_list, sil_euclidean, "Silhouette Score", args.out_name_root+"_"+latent_name+"_euclidean_silhouette.png")
+        ## plot_metric(ncluster_list, ch_euclidean, "Calinski–Harabasz Index", args.out_name_root+"_"+latent_name+"_euclidean_ch.png")
+        ## plot_metric(ncluster_list, db_euclidean, "Davies–Bouldin Index", args.out_name_root+"_"+latent_name+"_euclidean_db.png")
+        ##     
+        ## 
+        ## ## Process spherical k-means
+        ## print("Running spherical k-means...")
+        ## spherical_results = Parallel(
+        ##     n_jobs = args.ngpus,
+        ##     prefer="processes"
+        ## )(
+        ##     delayed(parallel_faiss_kmeans)(
+        ##         ncluster,
+        ##         X_pca256_spherical,
+        ##         nattempts=args.nattempts,
+        ##         spherical=True
+        ##     )
+        ##     for ncluster in ncluster_list
+        ## )    
+        ## 
+        ## sil_spherical = []
+        ## ch_spherical = []
+        ## db_spherical = []
+        ## 
+        ## ## Process the results
+        ## for ncluster, these_labels, metrics in spherical_results:
+        ##     sil_spherical.append(metrics["silhouette"])
+        ##     ch_spherical.append(metrics["calinski_harabasz"])
+        ##     db_spherical.append(metrics["davies_bouldin"])
+        ##     
+        ##     if ncluster in [50, 100]:
+        ##         plot_tsne(tsne_results_spherical, these_labels, alpha_vect=None, ztitle="Clust index",
+        ##                   save_name=args.out_name_root+"_"+latent_name+"_tsne_spherical"+str(ncluster)+".png")
+        ##         
+        ## ## After the loop over clusters, make some summary plots
+        ## plot_metric(ncluster_list, sil_spherical, "Silhouette Score", args.out_name_root+"_"+latent_name+"_spherical_silhouette.png")
+        ## plot_metric(ncluster_list, ch_spherical, "Calinski–Harabasz Index", args.out_name_root+"_"+latent_name+"_spherical_ch.png")
+        ## plot_metric(ncluster_list, db_spherical, "Davies–Bouldin Index", args.out_name_root+"_"+latent_name+"_spherical_db.png")            
         
 ## Do the business
 if __name__ == '__main__':

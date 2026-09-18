@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import torch.distributed as dist
-from core.losses.gather import GatherLayer
+from larch.core.losses.gather import GatherLayer
 
 class SimDINOLoss(nn.Module):
     """

@@ -2,8 +2,8 @@ import torch
 import MinkowskiEngine as ME
 import torch.distributed as dist
 import torch.nn.functional as F
-from core.supervised import ClassificationMetrics, SupervisedHead, supervised_loss
-from core.utils import print0
+from larch.core.supervised import ClassificationMetrics, SupervisedHead, supervised_loss
+from larch.core.utils import print0
 
 @torch.no_grad()
 def extract_features(encoder,

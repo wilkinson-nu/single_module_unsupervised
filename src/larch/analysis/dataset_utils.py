@@ -1,5 +1,3 @@
-from core.data.datasets import single_2d_dataset_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
-from core.data.augmentations_2d import FirstRegionCrop
 import torch
 import MinkowskiEngine as ME
 import numpy as np
@@ -7,7 +5,9 @@ import time
 from collections import defaultdict
 from collections.abc import Mapping
 from torch import nn
-from datasets.nularbox.truth_labels import make_cc_category
+from larch.datasets.nularbox.truth_labels import make_cc_category
+from larch.core.data.datasets import single_2d_dataset_ME, solo_ME_collate_fn, solo_ME_collate_fn_with_meta
+from larch.core.data.augmentations_2d import FirstRegionCrop
 
 def get_dataset(input_dir, nevents, nom_transform=False, return_metadata=False):
 

@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from core.losses.gather import GatherLayer
+from larch.core.losses.gather import GatherLayer
 import torch.distributed as dist
 
 @torch.no_grad()

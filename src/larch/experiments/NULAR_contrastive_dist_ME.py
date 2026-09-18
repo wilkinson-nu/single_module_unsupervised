@@ -16,40 +16,40 @@ from torch import nn
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
-from core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
-from core.losses.vicreg import VICRegLossDistributed
-from core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
-from core.models.resnet_encoder import get_encoder
-from core.models.projection_head import get_projhead
-from core.models.clustering_head import get_clusthead
-from core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
-from core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
-from core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
-from core.training.lars import log_lars_diagnostics
+from larch.core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
+from larch.core.losses.vicreg import VICRegLossDistributed
+from larch.core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
+from larch.core.models.resnet_encoder import get_encoder
+from larch.core.models.projection_head import get_projhead
+from larch.core.models.clustering_head import get_clusthead
+from larch.core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
+from larch.core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
+from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
+from larch.core.training.lars import log_lars_diagnostics
 
 ## Import datasets
-from core.data.datasets import solo_labelled_collate_fn
-from core.data.dataloaders import build_paired_training_data, build_monitoring_data
+from larch.core.data.datasets import solo_labelled_collate_fn
+from larch.core.data.dataloaders import build_paired_training_data, build_monitoring_data
 
-from core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+from larch.core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter
 
 ## Import transformations
-from datasets.nularbox.augmentations_2d import get_transform
+from larch.datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
-from core.supervised import DEFAULT_CLASSIFIER_CONFIG
-from core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
+from larch.core.supervised import DEFAULT_CLASSIFIER_CONFIG
+from larch.core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training
-from core.dist_utils import setup_distributed_runtime
-from core.utils import print0
+from larch.core.dist_utils import setup_distributed_runtime
+from larch.core.utils import print0
 
 ## Checkpointing
-from core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
+from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):

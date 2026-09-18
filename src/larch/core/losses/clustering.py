@@ -2,7 +2,7 @@ import math
 import torch
 from torch import nn
 import torch.distributed as dist
-from core.losses.gather import GatherLayer
+from larch.core.losses.gather import GatherLayer
 
 class ClusteringLossMerged(nn.Module):
     def __init__(self, temperature=0.5, entropy_weight=1.0):
