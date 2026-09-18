@@ -8,6 +8,7 @@ import math
 import random
 from collections import defaultdict
 from functools import partial
+from pathlib import Path
 
 ## The parallelisation libraries
 import torch.distributed as dist
@@ -50,6 +51,9 @@ from larch.core.utils import print0
 
 ## Checkpointing
 from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
+
+## Config handling
+from larch.core.config import apply_config, load_config, dump_args
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
@@ -183,10 +187,16 @@ def run_training(rank, local_rank, world_size, args):
         num_workers=args.num_workers,
         seed=args.seed,
     )
+
+    ## Make the log directory
+    log_dir = Path(args.run_dir) / args.log
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    ## Make the state_file
+    state_file = Path(args.run_dir) / args.state_file
     
     ## So we don't constantly ask args
     num_iterations = args.nepoch
-    log_dir = args.log
     clust_loss_scale = args.clust_loss_scale
     norm_encoder = bool(args.norm_encoder)
     weight_decay = args.weight_decay
@@ -208,10 +218,7 @@ def run_training(rank, local_rank, world_size, args):
     start_iteration = 0
     global_iter = 0
     if args.restart:
-        if not args.state_file:
-            print0("Restart requested, but no state file provided, aborting")
-            sys.exit()
-        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, scheduler, args.state_file)
+        start_iteration, metrics = load_checkpoint(encoder, heads, optimizer, scheduler, state_file)
         global_iter = start_iteration*nbatches
         print0("Restarting from iteration", start_iteration)
 
@@ -563,7 +570,7 @@ def run_training(rank, local_rank, world_size, args):
             
         ## For checkpointing
         #if rank==0 and iteration%25 == 0 and iteration != 0:
-        #    save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file+".check"+str(iteration), iteration, metrics, args)
+        #    save_checkpoint(encoder, heads, optimizer, scheduler, state_file+".check"+str(iteration), iteration, metrics, args)
 
         ## Add per GPU logging
         allocated_gb = torch.tensor(torch.cuda.memory_allocated() / 1e9, device=device)
@@ -602,7 +609,7 @@ def run_training(rank, local_rank, world_size, args):
                 
     ## Final version of the model
     if rank==0:
-        save_checkpoint(encoder, heads, optimizer, scheduler, args.state_file, iteration, metrics, args)
+        save_checkpoint(encoder, heads, optimizer, scheduler, state_file, iteration, metrics, args)
         writer.close()
 
     ## Report profiler if requested
@@ -617,110 +624,127 @@ def run_training(rank, local_rank, world_size, args):
     dist.barrier()
     dist.destroy_process_group()
 
-    
-## Do the business
-if __name__ == '__main__':
+
+def build_parser():
 
     ## Parse some args
-    parser = argparse.ArgumentParser("SimCLR training module")
+    parser = argparse.ArgumentParser("Contrastive SSL module")
 
-    # Basic job setup
-    parser.add_argument('--data_dir', type=str)
-    parser.add_argument('--nevents', type=int)
+    ## Basic job setup
+    parser.add_argument('--config', required=True)
+    parser.add_argument('--data_dir', type=str, required=True)
+    parser.add_argument('--run_dir', type=str, required=True)
+    parser.add_argument('--nevents', type=int, required=True)
+    parser.add_argument('--nepoch', type=int, required=True)
+    parser.add_argument('--seed', type=int)
+    parser.add_argument('--num_workers', type=int)
     parser.add_argument('--log', type=str)
     parser.add_argument('--state_file', type=str)
+    parser.add_argument('--restart', action='store_true')
     parser.add_argument('--pretrained', type=str, default=None)
-    parser.add_argument('--nepoch', type=int, default=200)
-    parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--seed', type=int, default=12345)
     
     ## Training dynamics
     parser.add_argument('--lr', type=float)
-    parser.add_argument('--batch_size', type=int, default=512)
-    parser.add_argument('--optimizer', type=str, default='adam')
-    parser.add_argument('--scheduler', type=str, default=None)
-    parser.add_argument('--lars_trust_coeff', type=float, default=0.001)
-    parser.add_argument('--lars_momentum', type=float, default=0.9)
-    parser.add_argument('--dropout', type=float, default=0)
-    parser.add_argument('--weight_decay', type=float, default=0)
-    parser.add_argument('--weight_decay_final', type=float, default=-1)
-    parser.add_argument('--weight_decay_head', type=int, choices=[0,1], default=0)
-    parser.add_argument('--norm_encoder', type=int, choices=[0,1], default=0)
-    parser.add_argument('--non_lars_lr_scale', type=float, default=1.0)
+    parser.add_argument('--batch_size', type=int)
+    parser.add_argument('--optimizer', type=str)
+    parser.add_argument('--scheduler', type=str)
+    parser.add_argument('--lars_trust_coeff', type=float)
+    parser.add_argument('--lars_momentum', type=float)
+    parser.add_argument('--dropout', type=float)
+    parser.add_argument('--weight_decay', type=float)
+    parser.add_argument('--weight_decay_final', type=float)
+    parser.add_argument('--weight_decay_head', type=int, choices=[0,1])
+    parser.add_argument('--norm_encoder', type=int, choices=[0,1])
+    parser.add_argument('--non_lars_lr_scale', type=float)
     
     ## Image size and augmentations
-    parser.add_argument('--out_image_size', type=int, default=256)
-    parser.add_argument('--aug_type', type=str, default=None)
-    parser.add_argument('--aug_prob', type=float, default=1)
+    parser.add_argument('--out_image_size', type=int)
+    parser.add_argument('--aug_type', type=str)
+    parser.add_argument('--aug_prob', type=float)
     parser.add_argument('--aug_val', type=float)
 
     ## Encoder architecture choices
-    parser.add_argument('--enc_act', type=str, default="relu")
-    parser.add_argument('--enc_arch', type=str, default=None)
-    parser.add_argument('--enc_arch_pool', type=str, default="avg")
-    parser.add_argument('--enc_res_pool', type=int, choices=[0,1], default=0)
-    parser.add_argument('--enc_stem_norm', type=int, choices=[0,1], default=0)
-    parser.add_argument('--enc_init_stem_stride', type=int, default=2)
-    parser.add_argument('--enc_final_stem_stride', type=int, default=2)
-    parser.add_argument('--enc_stem_pool', type=str, default='none')
-    parser.add_argument('--enc_stem_deep', type=int, choices=[0,1], default=1)
-    parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1], default=1)
-    parser.add_argument('--enc_final_linear', type=int, default=-1)
-    parser.add_argument('--enc_stem_channels', type=int, default=-1)
+    parser.add_argument('--enc_act', type=str)
+    parser.add_argument('--enc_arch', type=str)
+    parser.add_argument('--enc_arch_pool', type=str)
+    parser.add_argument('--enc_res_pool', type=int, choices=[0,1])
+    parser.add_argument('--enc_stem_norm', type=int, choices=[0,1])
+    parser.add_argument('--enc_init_stem_stride', type=int)
+    parser.add_argument('--enc_final_stem_stride', type=int)
+    parser.add_argument('--enc_stem_pool', type=str)
+    parser.add_argument('--enc_stem_deep', type=int, choices=[0,1])
+    parser.add_argument('--enc_layer1_norm', type=int, choices=[0,1])
+    parser.add_argument('--enc_final_linear', type=int)
+    parser.add_argument('--enc_stem_channels', type=int)
 
     ## (Optional) clustering head
-    parser.add_argument('--clust_arch', type=str, default="none")
-    parser.add_argument('--clust_temp', type=float, default=0.5)
-    parser.add_argument('--nclusters', type=int, default=20)
-    parser.add_argument('--entropy_scale', type=float, default=1.0)
-    parser.add_argument('--softmax_temp', type=float, default=1.0)
-    parser.add_argument('--instance_scale', type=float, default=1.0)
-    parser.add_argument('--clust_loss_scale', type=float, default=1.0)
+    parser.add_argument('--clust_arch', type=str)
+    parser.add_argument('--clust_temp', type=float)
+    parser.add_argument('--nclusters', type=int)
+    parser.add_argument('--entropy_scale', type=float)
+    parser.add_argument('--instance_scale', type=float)
+    parser.add_argument('--clust_loss_scale', type=float)
 
     ## Projection head architecture
-    parser.add_argument('--proj_arch', type=str, default="two")
-    parser.add_argument('--proj_init_bn', type=int, choices=[0,1], default=0)
-    parser.add_argument('--proj_final_bn', type=int, choices=[0,1], default=0)
-    parser.add_argument('--latent', type=int, default=128)
-    parser.add_argument('--nhidden', type=int, default=512)
+    parser.add_argument('--proj_arch', type=str)
+    parser.add_argument('--proj_init_bn', type=int, choices=[0,1])
+    parser.add_argument('--proj_final_bn', type=int, choices=[0,1])
+    parser.add_argument('--latent', type=int)
+    parser.add_argument('--nhidden', type=int)
 
     ## Projection head loss
-    parser.add_argument('--proj_loss', type=str, default="simclr")    
+    parser.add_argument('--proj_loss', type=str)
     ## TODO: rename to simlar_temp
-    parser.add_argument('--proj_temp', type=float, default=0.5)
-    parser.add_argument('--vicreg_sim_coeff', type=float, default=25.0)
-    parser.add_argument('--vicreg_std_coeff', type=float, default=25.0)
-    parser.add_argument('--vicreg_cov_coeff', type=float, default=1.0)   
+    parser.add_argument('--proj_temp', type=float)
+    parser.add_argument('--vicreg_sim_coeff', type=float)
+    parser.add_argument('--vicreg_std_coeff', type=float)
+    parser.add_argument('--vicreg_cov_coeff', type=float)
     
     ## kNN and linear probe monitoring options
-    parser.add_argument('--monitor_nbank',    type=int, default=50000)
-    parser.add_argument('--monitor_nquery',   type=int, default=10000)
-    parser.add_argument('--knn_every', type=int, default=1)
-    parser.add_argument('--knn_k',     type=int, default=20)
-    parser.add_argument('--knn_pca',     type=int, default=None)
-    parser.add_argument("--linear_every", type=int, default=5)
-    parser.add_argument("--linear_epochs", type=int, default=20)
-    parser.add_argument("--linear_batch_size", type=int, default=1024)
-    parser.add_argument("--linear_lr", type=float, default=1e-2)
+    parser.add_argument('--monitor_nbank', type=int)
+    parser.add_argument('--monitor_nquery', type=int)
+    parser.add_argument('--knn_every', type=int)
+    parser.add_argument('--knn_k', type=int)
+    parser.add_argument('--knn_pca', type=int)
+    parser.add_argument("--linear_every", type=int)
+    parser.add_argument("--linear_epochs", type=int)
+    parser.add_argument("--linear_batch_size", type=int)
+    parser.add_argument("--linear_lr", type=float)
     
-    ## Restart option
-    parser.add_argument('--restart', action='store_true')
-
     ## Optional profiler
-    parser.add_argument('--run_profiler', type=int, choices=[0,1], default=0)
-    parser.add_argument('--extra_log_rate', type=int, default=-1)
+    parser.add_argument('--run_profiler', type=int, choices=[0,1])
+    parser.add_argument('--extra_log_rate', type=int)
 
-    # Parse arguments from command line
-    args = parser.parse_args()
+    return parser
 
-    ## Note global and local ranks to allow multi-node training
-    rank       = int(os.environ["SLURM_PROCID"])
-    local_rank = int(os.environ["SLURM_LOCALID"])
-    world_size = int(os.environ["SLURM_NTASKS"])
-    
-    ## Report arguments
+def main(argv=None):
+
+    ## Parse arguments starting from the config
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument('--config', required=True)
+    known, rest = pre.parse_known_args(argv)
+
+    ## Then look on the command line (for overrides and required CLI args )
+    parser = build_parser()
+    apply_config(parser, load_config(known.config))
+    args = parser.parse_args(argv)
+
+    ## Note global and local ranks to allow multi-node training 
+    rank       = int(os.environ.get("SLURM_PROCID", 0))
+    local_rank = int(os.environ.get("SLURM_LOCALID", 0))
+    world_size = int(os.environ.get("SLURM_NTASKS", 1))
+
+    ## Report arguments 
     if rank == 0:
-        for arg in vars(args): print(arg, getattr(args, arg))
+        run_dir = Path(args.run_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        dump_args(args, run_dir / "args.yaml")
+        for k in sorted(vars(args)):
+            print(f"{k}: {getattr(args, k)}")
 
-    ## Removed mp.spawn, now requires srun
-    run_training(rank, local_rank, world_size, args)
+    ## Removed mp.spawn, now requires srun 
+    return run_training(rank, local_rank, world_size, args)
+
+
+if __name__ == "__main__":
+    main()
