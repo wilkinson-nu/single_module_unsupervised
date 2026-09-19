@@ -7,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.sparse import coo_matrix
 from glob import glob
-from truth_labels import (
+from larch.datasets.nularbox.truth_labels import (
     PARTICLE_STACK_DTYPE,
     EVENT_LABEL_DTYPE,
     CCTopology,
