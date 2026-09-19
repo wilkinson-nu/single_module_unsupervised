@@ -42,7 +42,7 @@ from torch.utils.tensorboard import SummaryWriter
 from larch.datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
-from larch.core.supervised import DEFAULT_CLASSIFIER_CONFIG
+from larch.classification import DEFAULT_CLASSIFIER_CONFIG
 from larch.core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training

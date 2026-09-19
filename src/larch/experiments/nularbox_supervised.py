@@ -39,8 +39,8 @@ from larch.datasets.base import solo_labelled_collate_fn
 from larch.datasets.dataloaders import build_supervised_dataloaders
 
 ## Supervised learning specific
-from larch.core.supervised import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG
-from larch.core.supervised import SupervisedHead, supervised_loss, ClassificationMetrics
+from larch.classification import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG
+from larch.classification import SupervisedHead, supervised_loss, ClassificationMetrics
 
 ## Utilities for multi-rank training
 from larch.distributed import setup_distributed_runtime, print0
