@@ -5,7 +5,16 @@ import numpy as np
 import random
 import os
 import subprocess
-from larch.core.utils import print0
+
+def get_rank():
+    if not dist.is_available() or not dist.is_initialized():
+        return 0
+    return dist.get_rank()
+
+def print0(*args, **kwargs):
+    if get_rank() == 0:
+        kwargs.setdefault("flush", True)
+        print(*args, **kwargs)
 
 def setup_distributed_runtime(
     rank,
