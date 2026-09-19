@@ -32,6 +32,11 @@ EXIT_DOWNSTREAM=__EXIT_DOWNSTREAM__
 INPUTS_DIR=${PWD}/MC_inputs
 GENIE_TUNE=G18_10a_00_000
 
+## Where to get the core software for the image conversion
+SOFTWARE_DIR=__SOFTWARE_DIR__
+export PYTHONPATH=${SOFTWARE_DIR}/src
+export PYTHONNOUSERSITE=1
+
 ## Where to do stuff
 tempDir=${SCRATCH}/${OUTFILE_ROOT}_${SEED}
 echo "Moving to SCRATCH: ${tempDir}"
@@ -47,10 +52,6 @@ cp ${INPUTS_DIR}/${GEOM} .
 ## Sort out the decay behaviour
 mkdir xml_override
 cp ${INPUTS_DIR}/CommonDecay.xml xml_override/.
-
-## This is... pretty bad practice. Copy the run script and any library functions in the directory...
-cp ${INPUTS_DIR}/../*.py .
-cp ${INPUTS_DIR}/../../*.py .
 
 echo "Starting gevgen..."
 shifter gevgen -n ${NEVENTS} -t ${TARG} -p ${NU_PDG} \
@@ -80,33 +81,9 @@ shifter edep-sim -o ${OUTFILE_ROOT}_EDEPSIM.root \
 	${EDEP_MAC} \
 	-e ${NEVENTS} &> /dev/null
 
-## Copy back the edep-sim file
-## if [ ! -d "${OUTDIR_ROOT}/EDEPSIM" ]; then
-##     mkdir -p ${OUTDIR_ROOT}/EDEPSIM
-## fi
-## cp ${tempDir}/${OUTFILE_ROOT}_EDEPSIM.root ${OUTDIR_ROOT}/EDEPSIM/.
-
 echo "Prepare images..."
-## Make 2 sets:
-## - One where containment is required in the full image
-## - Another where containment is in a smaller region
-shifter python3 make_nusim_images.py \
-	--input ${OUTFILE_ROOT}_EDEPSIM.root \
-	--output ${OUTFILE_ROOT}_IMAGES_CCCONT512.h5 \
-	--image_size ${IMAGE_SIZE} \
-	--offset 0 0 -128 \
-	--box_size ${IMAGE_SIZE} \
-	--exit_downstream ${EXIT_DOWNSTREAM} \
-	--min_hits ${MIN_HITS} \
-	--threshold ${THRESHOLD}
-
-## Copy back the images
-if [ ! -d "${OUTDIR_ROOT}/IMAGES_CCCONT512" ]; then
-    mkdir -p ${OUTDIR_ROOT}/IMAGES_CCCONT512
-fi
-cp ${tempDir}/${OUTFILE_ROOT}_IMAGES_CCCONT512.h5 ${OUTDIR_ROOT}/IMAGES_CCCONT512/.
-
-shifter python3 make_nusim_images.py \
+## Requires containment in the central region of the image (with caveats)
+shifter python3 ${SOFTWARE_DIR}/make_nusim_images.py \
 	--input ${OUTFILE_ROOT}_EDEPSIM.root \
 	--output ${OUTFILE_ROOT}_IMAGES_CCCONT256.h5 \
 	--image_size ${IMAGE_SIZE} \

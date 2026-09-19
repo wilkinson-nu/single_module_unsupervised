@@ -1,39 +1,79 @@
 #!/bin/bash
 
 ## Control the number of jobs to spawn
-FIRST_JOB=400
-LAST_JOB=999
+FIRST_JOB=0
+LAST_JOB=9
+
+## SBND (SciBooNE) flux
+EXPT_NAME="SBND"
+FLUX_FILE="SciBooNE_numu_flux.root"
+FLUX_HIST="numu"
+E_MIN=0.1
+E_MAX=5.0
 
 ## DUNE FLUX
-#EXPT_NAME="DUNEND"
-#FLUX_FILE="DUNE_OptimizedEngineeredNov2017_REGULAR.root"
-#FLUX_HIST="numu_NDFHC_flux"
+EXPT_NAME="DUNEND"
+FLUX_FILE="DUNE_OptimizedEngineeredNov2017_REGULAR.root"
+FLUX_HIST="numu_NDFHC_flux"
+E_MIN=0.1
+E_MAX=50.0
 
 ## NuMI ME flux
 EXPT_NAME="NuMIME"
 FLUX_FILE="MINERvA_flux_ME1F.root"
 FLUX_HIST="flux_E_cvweighted_CV_WithStatErr"
-
-TARG="1000180400[1.00]"
-NU_PDG=14
 E_MIN=0.1
 E_MAX=50.0
+
+## Common configuration
+TARG="1000180400[1.00]"
+NU_PDG=14
 GEOM=argon_box_3m.gdml
 NEVENTS=25000
 EDEP_MAC=edep.mac
 
-GEN_NAME=GENIE10c
-TUNE=G18_10c_00_000
-TEMPLATE=batch_GENIEv3_${TUNE}_EDEPSIM_2D_TEMPLATE.sh
+## Pick the GENIE version
+GEN_VERSION=10a
+GEN_NAME=GENIE${GEN_VERSION}
+TEMPLATE=batch_${GEN_NAME}_EDEPSIM_TEMPLATE.sh
 
-## image making
+## Image making options
 IMAGE_SIZE=512
 EXIT_DOWNSTREAM=1
 MIN_HITS=10
 THRESHOLD=0
 
 ## Directory to save to
-OUTDIR_ROOT="/global/cfs/cdirs/dune/users/cwilk/nularbox_simulation/GENIEv3_${TUNE}_${EXPT_NAME}"
+OUTNAME=${GEN_NAME}_${TUNE}_${EXPT_NAME}
+OUTDIR_ROOT="${CFS}/users/${USER}/NULARBOX/${OUTNAME}"
+
+## Get the REPO path based on where we are
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+## Use software here (e.g., not in home)
+SOFTWARE_DIR=$PSCRATCH/shared_larch
+
+## Decide where the software lives, and whether we need to populate it
+if [[ -z "${SOFTWARE_DIR:-}" ]]; then
+    SOFTWARE_DIR=$PSCRATCH/shared_larch_$(date +%Y%m%d_%H%M%S)
+fi
+
+if [[ -d "$SOFTWARE_DIR/src" ]]; then
+    echo "Reusing software copy: ${SOFTWARE_DIR}"
+else
+    echo "Creating software copy: ${SOFTWARE_DIR}"
+    mkdir -p "$SOFTWARE_DIR"
+
+    rsync -a --exclude='.git' --exclude='__pycache__' "$REPO/src/" "$SOFTWARE_DIR/src/"
+    cp "$REPO/generation/make_nusim_images.py" "$SOFTWARE_DIR/"
+
+    git -C "$REPO" rev-parse HEAD     > "$SOFTWARE_DIR/git-sha.txt"
+    git -C "$REPO" status --porcelain > "$SOFTWARE_DIR/git-dirty.txt"
+    git -C "$REPO" diff              > "$SOFTWARE_DIR/git-diff.patch"
+    cp "${BASH_SOURCE[0]}"             "$SOFTWARE_DIR/spawner.sh"
+
+    shifter --image=docker:wilkinsonnu/simple_det_sim:latest python3 -m compileall -q "$SOFTWARE_DIR/src"
+fi
 
 ## Loop over jobs
 for N in $(seq ${FIRST_JOB} ${LAST_JOB})
@@ -65,6 +105,7 @@ do
     sed -i "s/__EXIT_DOWNSTREAM__/${EXIT_DOWNSTREAM}/g" ${THIS_TEMP}
     sed -i "s/__MIN_HITS__/${MIN_HITS}/g" ${THIS_TEMP}
     sed -i "s/__THRESHOLD__/${THRESHOLD}/g" ${THIS_TEMP}
+    sed -i "s/__SOFTWARE_DIR__/${SOFTWARE_DIR}/g" ${THIS_TEMP}
     
     echo "Submitting ${THIS_TEMP}"
 
