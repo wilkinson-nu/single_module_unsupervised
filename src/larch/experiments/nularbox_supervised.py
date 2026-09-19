@@ -35,8 +35,8 @@ from torch.utils.tensorboard import SummaryWriter
 from larch.datasets.nularbox.augmentations_2d import get_transform
 
 ## Import dataset
-from larch.core.data.datasets import solo_labelled_collate_fn
-from larch.core.data.dataloaders import build_supervised_dataloaders
+from larch.datasets.base import solo_labelled_collate_fn
+from larch.datasets.dataloaders import build_supervised_dataloaders
 
 ## Supervised learning specific
 from larch.core.supervised import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG

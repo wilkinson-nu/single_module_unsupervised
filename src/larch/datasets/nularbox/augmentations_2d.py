@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import torchvision.transforms.v2 as transforms
-import larch.core.data.augmentations_2d as aug
+import larch.datasets.augmentations_2d as aug
 
 ## Crop an x by y region from the center of the image, with a jitter on the center position
 class RandomCenterCrop:

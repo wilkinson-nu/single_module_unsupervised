@@ -27,10 +27,10 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from larch.core.data.augmentations_2d import CenterCrop, get_transform
+from larch.datasets.augmentations_2d import CenterCrop, get_transform
 
 ## Import dataset
-from larch.core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
+from larch.datasets.base import paired_2d_dataset_ME, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):

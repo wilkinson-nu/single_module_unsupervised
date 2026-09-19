@@ -17,9 +17,9 @@ from torch import nn
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
-from larch.core.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
-from larch.core.losses.vicreg import VICRegLossDistributed
-from larch.core.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
+from larch.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
+from larch.losses.vicreg import VICRegLossDistributed
+from larch.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
 from larch.core.models.resnet_encoder import get_encoder
 from larch.core.models.projection_head import get_projhead
 from larch.core.models.clustering_head import get_clusthead
@@ -29,8 +29,8 @@ from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, 
 from larch.core.training.lars import log_lars_diagnostics
 
 ## Import datasets
-from larch.core.data.datasets import solo_labelled_collate_fn
-from larch.core.data.dataloaders import build_paired_training_data, build_monitoring_data
+from larch.datasets.base import solo_labelled_collate_fn
+from larch.datasets.dataloaders import build_paired_training_data, build_monitoring_data
 
 from larch.core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
 import psutil, os

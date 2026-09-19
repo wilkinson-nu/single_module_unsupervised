@@ -18,8 +18,8 @@ from torch.utils.data import ConcatDataset
 from torch import nn
 
 ## Includes from my libraries for this project
-from larch.core.losses.ntxent import NTXentMerged
-from larch.core.losses.clustering import ClusteringLossMerged
+from larch.losses.ntxent import NTXentMerged
+from larch.losses.clustering import ClusteringLossMerged
 from larch.core.models.encoder import get_encoder
 from larch.core.models.projection_head import get_projhead
 from larch.core.models.clustering_head import get_clusthead
@@ -34,11 +34,11 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from larch.core.data.augmentations_2d import DoNothing
+from larch.datasets.augmentations_2d import DoNothing
 from larch.datasets.fsd.augmentations_2d import get_transform
 
 ## Import dataset
-from larch.core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
+from larch.datasets.base import paired_2d_dataset_ME, cat_ME_collate_fn
 
 ## For parallelising things
 def setup(rank, world_size):
