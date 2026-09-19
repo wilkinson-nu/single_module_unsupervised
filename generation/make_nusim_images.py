@@ -8,7 +8,7 @@ from matplotlib import cm
 from scipy.sparse import coo_matrix
 from collections import defaultdict
 import json
-from truth_labels import PARTICLE_STACK_DTYPE, EVENT_LABEL_DTYPE, CCTopology, Topology, Mode
+from larch.datasets.nularbox.truth_labels import PARTICLE_STACK_DTYPE, EVENT_LABEL_DTYPE, CCTopology, Topology, Mode
 import argparse
 import matplotlib.patches as patches
 from collections import Counter
