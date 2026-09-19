@@ -30,7 +30,7 @@ _=torch.manual_seed(SEED)
 ## Various shared analysis libraries
 from larch.analysis.model_utils import load_checkpoint, get_models_from_checkpoint
 from larch.analysis.dataset_utils import get_dataset, image_loop, reorder_clusters
-from larch.core.data.augmentations_2d import CenterCrop
+from larch.datasets.augmentations_2d import CenterCrop
 from larch.datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
 import torchvision.transforms.v2 as transforms
 

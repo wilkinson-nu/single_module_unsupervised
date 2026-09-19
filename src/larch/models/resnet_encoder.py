@@ -1,8 +1,8 @@
 from torch import nn
 import torch
 import MinkowskiEngine as ME
-from larch.core.models.resnetv2_blocks import PreActBasicBlock, PreActBottleneck
-from larch.core.models.resnetv1_blocks import BasicBlock, Bottleneck
+from larch.models.resnetv2_blocks import PreActBasicBlock, PreActBottleneck
+from larch.models.resnetv1_blocks import BasicBlock, Bottleneck
 from collections import OrderedDict
 
 ## This is taken from the MinkowskiEngine implementation, but modified for v2 blocks

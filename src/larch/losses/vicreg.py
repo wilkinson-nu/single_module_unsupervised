@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from larch.core.losses.gather import GatherLayer
+from larch.distributed import GatherLayer
 
 class VICRegLossDistributed(nn.Module):
     def __init__(

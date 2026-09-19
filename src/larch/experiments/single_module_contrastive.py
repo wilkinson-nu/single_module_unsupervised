@@ -27,10 +27,12 @@ _=np.random.seed(SEED)
 _=torch.manual_seed(SEED)
 
 ## Import transformations
-from larch.core.data.augmentations_2d import CenterCrop, get_transform
+from larch.datasets.augmentations_2d import CenterCrop, get_transform
 
 ## Import dataset
-from larch.core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn
+from larch.datasets.base import paired_2d_dataset_ME, cat_ME_collate_fn
+
+from larch.model.activations import get_act_from_string_ME
 
 ## For parallelising things
 def setup(rank, world_size):
@@ -40,14 +42,6 @@ def setup(rank, world_size):
         world_size=world_size,
         rank=rank
     )
-
-def print_model_summary(model):
-    total_params = 0
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"Layer: {name} | Size: {param.size()} | Number of parameters: {param.numel()}")
-            total_params += param.numel()
-    print("Total parameters =", total_params)
 
 def get_dataloader(rank, world_size, train_dataset, batch_size, num_workers=16):
     sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
@@ -89,29 +83,6 @@ def save_checkpoint(encoder, optimizer, state_file_name, iteration, loss):
         'loss': loss
     }, state_file_name)
 
-def get_act_from_string(act_name):
-
-    ## For the hidden layers
-    if act_name == "relu":
-        return ME.MinkowskiReLU
-    if act_name == "leakyrelu":
-        return ME.MinkowskiLeakyReLU
-    if act_name == "gelu":
-        return ME.MinkowskiGELU
-    if act_name in ["silu", "swish"]:
-        return ME.MinkowskiSiLU
-    if act_name == "selu":
-        return ME.MinkowskiSELU
-
-    ## For the bottleneck
-    if act_name == "tanh":
-        return ME.MinkowskiTanh
-    if act_name == "softsign":
-        return ME.MinkowskiSoftsign
-
-    return None
-
-    
 ## Wrapped training function
 def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name, latent_act_name, \
                  nchan, latent, lr, weight_decay, dropout, cont_loss, ntx_temp, train_dataset, \
@@ -127,8 +98,8 @@ def run_training(rank, world_size, num_iterations, log_dir, enc, hidden_act_name
     device = torch.device(f'cuda:{rank}')
 
     ## Setup the models
-    hidden_act_fn=get_act_from_string(hidden_act_name)
-    latent_act_fn=get_act_from_string(latent_act_name)
+    hidden_act_fn=get_act_from_string_ME(hidden_act_name)
+    latent_act_fn=get_act_from_string_ME(latent_act_name)
 
     encoder = enc(nchan, latent, hidden_act_fn, latent_act_fn, dropout)
     encoder = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(encoder)

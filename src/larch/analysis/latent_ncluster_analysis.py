@@ -29,8 +29,7 @@ from larch.analysis.tsne_utils import compute_tsne_cuml, plot_tsne, plot_particl
 from larch.analysis.model_utils import load_checkpoint, get_models_from_checkpoint
 from larch.analysis.dataset_utils import get_dataset, image_loop
 from larch.analysis.plotting_utils import run_faiss_kmeans
-from larch.core.data.augmentations_2d import CenterCrop
-from larch.core.data.augmentations_2d import FirstRegionCrop
+from larch.datasets.augmentations_2d import CenterCrop, FirstRegionCrop
 from larch.datasets.nularbox.augmentations_2d import get_transform, LogAlphaCharge
 from larch.analysis.geometry_utils import plot_spectrum, pca_spectrum, cosine_spectrum
 from larch.analysis.geometry_utils import plot_similarity_distributions, plot_cumulative_variance

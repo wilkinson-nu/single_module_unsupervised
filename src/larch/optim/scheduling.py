@@ -1,9 +1,9 @@
 import torch
 import math
 from torch import optim
-from larch.core.training.lars import LARS, LARS_LRScheduler
-from larch.core.models.resnetv1_blocks import Bottleneck, BasicBlock
-from larch.core.utils import print0
+from larch.optim.lars import LARS, LARS_LRScheduler
+from larch.models.resnetv1_blocks import Bottleneck, BasicBlock
+from larch.distributed import print0
 
 def get_final_residual_gamma_ids(encoder):
     enc = encoder.module if hasattr(encoder, "module") else encoder

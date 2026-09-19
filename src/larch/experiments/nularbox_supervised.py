@@ -17,14 +17,14 @@ from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
-from larch.core.models.resnet_encoder import get_encoder
-from larch.core.models.projection_head import get_projhead
-from larch.core.models.clustering_head import get_clusthead
-from larch.core.analysis.metrics import uniformity, alignment, basic_geometry_metrics
-from larch.core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
-from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
+from larch.models.resnet_encoder import get_encoder
+from larch.models.projection_head import get_projhead
+from larch.models.clustering_head import get_clusthead
+from larch.metrics import uniformity, alignment, basic_geometry_metrics
+from larch.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
+from larch.optim.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
-from larch.core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+from larch.sysmon import log_memory, log_gpu, log_vmstat
 import psutil, os
 from threadpoolctl import threadpool_limits
 
@@ -35,18 +35,18 @@ from torch.utils.tensorboard import SummaryWriter
 from larch.datasets.nularbox.augmentations_2d import get_transform
 
 ## Import dataset
-from larch.core.data.datasets import solo_labelled_collate_fn
-from larch.core.data.dataloaders import build_supervised_dataloaders
+from larch.datasets.base import solo_labelled_collate_fn
+from larch.datasets.dataloaders import build_supervised_dataloaders
 
 ## Supervised learning specific
-from larch.core.supervised import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG
-from larch.core.supervised import SupervisedHead, supervised_loss, ClassificationMetrics
+from larch.datasets.nularbox import MULTIPLICITY_TARGETS, label_clamp
+from larch.classification import SupervisedHead, supervised_loss, ClassificationMetrics
 
 ## Utilities for multi-rank training
-from larch.core.dist_utils import setup_distributed_runtime, print0
+from larch.distributed import setup_distributed_runtime, print0
 
 ## Checkpointing
-from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
+from larch.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
@@ -84,7 +84,7 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Set up head and loss for projection space
     sup_head = SupervisedHead(encoder_nchan,
-                              classifier_config=DEFAULT_CLASSIFIER_CONFIG)
+                              classifier_config=MULTIPLICITY_TARGETS)
     sup_head .to(device)
     sup_head = DDP(sup_head, device_ids=[local_rank])
     heads["sup"] = sup_head
@@ -105,7 +105,7 @@ def run_training(rank, local_rank, world_size, args):
     
     labelled_collate = partial(
         solo_labelled_collate_fn,
-        label_clamp=LABEL_CLAMP,
+        label_clamp=label_clamp(MULTIPLICITY_TARGETS),
     )
     
     train_dataset, train_loader, val_dataset, val_loader = build_supervised_dataloaders(

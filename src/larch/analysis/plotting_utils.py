@@ -4,13 +4,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib import cm
-from larch.core.analysis.image_utils import make_dense, make_dense_from_tensor
 from larch.datasets.fsd.truth_labels import Label
 from matplotlib.ticker import MaxNLocator
 import faiss
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
 import matplotlib.gridspec as gridspec
 from sklearn.decomposition import PCA as skl_PCA
+
+def make_dense(coords_batch, feats_batch, device, index=0, max_i=256, max_j=128):
+    img = ME.SparseTensor(feats_batch.float(), coords_batch.int(), device=device)
+    coords, feats = img.decomposed_coordinates_and_features
+    batch_size = len(coords)
+    img_dense,_,_ = img.dense(torch.Size([batch_size, 1, max_i, max_j]))
+    return img_dense[index].squeeze().numpy()
+
+def make_dense_from_tensor(sparse_batch, index=0, max_i=256, max_j=128):
+    coords, feats = sparse_batch.decomposed_coordinates_and_features
+    batch_size = len(coords)
+    img_dense,_,_ = sparse_batch.dense(torch.Size([batch_size, 1, max_i, max_j]), min_coordinate=torch.IntTensor([0,0]))
+    return img_dense[index]
+
+def make_dense_array(coords, feats, max_i=256, max_j=128):
+    img_dense = np.zeros((max_i, max_j))
+    i_coords, j_coords = coords[:, 0], coords[:, 1]
+    img_dense[i_coords, j_coords] = feats
+    return img_dense
 
 def compute_cluster_overlap(c_probs, topk=2):
 

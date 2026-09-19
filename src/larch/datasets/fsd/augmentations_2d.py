@@ -1,5 +1,5 @@
 import torchvision.transforms.v2 as transforms
-import larch.core.data.augmentations_2d as augs
+import larch.datasets.augmentations_2d as augs
 
 ## TODO: rationalize this massive list a bit, then copy for single module --- some copy-pasta, but cleaner, I think...
 def get_transform(det="single", aug_type=None, aug_prob=1):
