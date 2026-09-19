@@ -1,40 +1,57 @@
-FROM pytorch/pytorch:2.3.0-cuda11.8-cudnn8-devel
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel
 
-ENV TORCH_CUDA_ARCH_LIST="6.0 6.1 6.2 7.0 7.2 7.5 8.0 8.6 8.7"
+ENV TORCH_CUDA_ARCH_LIST="8.0 9.0"
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
 
-RUN apt-get update
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-## Install emacs to save my sanity
-RUN apt-get install -y emacs
-
-## For MinkowskiEngine
-RUN apt-get install -y git ninja-build cmake build-essential libopenblas-dev \
-    xterm xauth openssh-server tmux wget mate-desktop-environment-core
+## Install system packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        ninja-build \
+        cmake \
+        build-essential \
+        libopenblas-dev \
+        wget \
+        ca-certificates \
+        emacs \
+        xterm xauth openssh-server tmux \
+        mate-desktop-environment-core \
+        libgl1 libxcb-xinerama0 '^libxcb.*-dev' libx11-xcb-dev \
+        libglu1-mesa-dev libxrender-dev libxi-dev \
+        libxkbcommon-dev libxkbcommon-x11-dev \
+        ffmpeg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 ## Update HDF5 libs
-RUN python -m pip install --upgrade pip
+RUN python -m pip install --upgrade pip setuptools wheel
 
 # Install cuML and cuPy
-RUN pip install "cuml-cu11" --extra-index-url=https://pypi.nvidia.com \
-    && pip install "cupy-cuda11x"
+RUN pip install "cuml-cu12" --extra-index-url=https://pypi.nvidia.com && \
+    pip install "cupy-cuda12x"
 
-RUN pip install 'h5py>=3.16' notebook ipykernel tensorboard matplotlib scipy joblib scikit-learn pandas
+RUN pip install 'h5py>=3.16' notebook ipykernel tensorboard matplotlib scipy joblib scikit-learn pandas pyqt5
 
-## A GUI for matplotlib
-RUN pip install pyqt5
-RUN apt-get install -y libgl1 libxcb-xinerama0 '^libxcb.*-dev' libx11-xcb-dev \
-    libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev \
-    ffmpeg
-
-RUN apt-get clean
-
-# Install MinkowskiEngine
+ARG ME_COMMIT=02fc608bea4c0549b0a7b00ca1bf15dee4a0b228
+ARG ME_CUDA12_PR=607
 ENV MAX_JOBS=2
-RUN git clone --recursive "https://github.com/NVIDIA/MinkowskiEngine"
-RUN cd MinkowskiEngine; python setup.py install --force_cuda --blas=openblas
+RUN git clone https://github.com/NVIDIA/MinkowskiEngine.git /tmp/MinkowskiEngine && \
+    cd /tmp/MinkowskiEngine && \
+    git checkout ${ME_COMMIT} && \
+    git fetch origin pull/${ME_CUDA12_PR}/head:cuda12-fix && \
+    git cherry-pick --no-commit cuda12-fix && \
+    python setup.py install --force_cuda --blas=openblas && \
+    cd / && \
+    rm -rf /tmp/MinkowskiEngine
 
-RUN pip install faiss-gpu
+# Use the cu12 wheel for reliability
+RUN pip install faiss-gpu-cu12
 
 ENV XDG_RUNTIME_DIR=${PWD}
 ENV NO_AT_BRIDGE=1
