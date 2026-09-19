@@ -45,18 +45,6 @@ class ResNetBase(nn.Module):
         self.stem_channels = stem_channels
         self.bn_momentum = bn_momentum
         
-        print("Loading an encoder with:",
-              "stem_pool =", stem_pool,
-              "init_stem_stride =", init_stem_stride,
-              "final_stem_stride =", final_stem_stride,
-	      "res_pool =", res_pool,
-              "stem_norm =", stem_norm,
-	      "stem_deep =", stem_deep,
-              "layer1_norm =", layer1_norm,
-              "pool =", pool,
-              "bottleneck_dim =", bottleneck_dim
-              )
-        
         ## Pooling options
         if self.pool == "max":
             self.global_pool = ME.MinkowskiGlobalMaxPooling()
