@@ -1,5 +1,5 @@
 from torch import nn
-from larch.core.models.utils import get_act_from_string
+from larch.models.utils import get_act_from_string
 from collections import OrderedDict
 
 

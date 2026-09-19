@@ -20,9 +20,9 @@ from torch import nn
 ## Includes from my libraries for this project
 from larch.losses.ntxent import NTXentMerged
 from larch.losses.clustering import ClusteringLossMerged
-from larch.core.models.encoder import get_encoder
-from larch.core.models.projection_head import get_projhead
-from larch.core.models.clustering_head import get_clusthead
+from larch.models.encoder import get_encoder
+from larch.models.projection_head import get_projhead
+from larch.models.clustering_head import get_clusthead
 from larch.core.analysis.metrics import argmax_consistency
 
 ## For logging

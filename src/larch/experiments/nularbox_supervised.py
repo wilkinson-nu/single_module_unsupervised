@@ -17,9 +17,9 @@ from torch.nn.utils import clip_grad_norm_
 from torch.profiler import profile, record_function, ProfilerActivity
 
 ## Includes from my libraries for this project
-from larch.core.models.resnet_encoder import get_encoder
-from larch.core.models.projection_head import get_projhead
-from larch.core.models.clustering_head import get_clusthead
+from larch.models.resnet_encoder import get_encoder
+from larch.models.projection_head import get_projhead
+from larch.models.clustering_head import get_clusthead
 from larch.core.analysis.metrics import uniformity, alignment, basic_geometry_metrics
 from larch.core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
 from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay

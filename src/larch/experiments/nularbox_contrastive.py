@@ -20,9 +20,9 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from larch.losses.ntxent import NTXentMerged, NTXentMergedMultiGPU
 from larch.losses.vicreg import VICRegLossDistributed
 from larch.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMultiGPU
-from larch.core.models.resnet_encoder import get_encoder
-from larch.core.models.projection_head import get_projhead
-from larch.core.models.clustering_head import get_clusthead
+from larch.models.resnet_encoder import get_encoder
+from larch.models.projection_head import get_projhead
+from larch.models.clustering_head import get_clusthead
 from larch.core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
 from larch.core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
 from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay

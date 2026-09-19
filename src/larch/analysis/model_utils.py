@@ -1,9 +1,9 @@
 import torch
 import argparse
 
-from larch.core.models.resnet_encoder import get_encoder
-from larch.core.models.projection_head import get_projhead
-from larch.core.models.clustering_head import get_clusthead
+from larch.models.resnet_encoder import get_encoder
+from larch.models.projection_head import get_projhead
+from larch.models.clustering_head import get_clusthead
 
 def load_checkpoint(state_file_name):
     checkpoint = torch.load(state_file_name, map_location='cpu')

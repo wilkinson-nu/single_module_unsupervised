@@ -2,7 +2,7 @@ import torch
 import math
 from torch import optim
 from larch.core.training.lars import LARS, LARS_LRScheduler
-from larch.core.models.resnetv1_blocks import Bottleneck, BasicBlock
+from larch.models.resnetv1_blocks import Bottleneck, BasicBlock
 from larch.distributed import print0
 
 def get_final_residual_gamma_ids(encoder):
