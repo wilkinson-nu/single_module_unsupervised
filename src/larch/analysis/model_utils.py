@@ -40,3 +40,11 @@ def get_encoder_from_checkpoint(state_file_name):
     encoder = get_encoder(args)
     encoder.load_state_dict(checkpoint['encoder_state_dict'])
     return encoder, None, args
+
+def print_model_summary(model):
+    total_params = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Layer: {name} | Size: {param.size()} | Number of parameters: {param.numel()}")
+            total_params += param.numel()
+    print("Total parameters =", total_params)
