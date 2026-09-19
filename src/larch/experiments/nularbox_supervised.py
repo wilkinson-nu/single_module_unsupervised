@@ -20,11 +20,11 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from larch.models.resnet_encoder import get_encoder
 from larch.models.projection_head import get_projhead
 from larch.models.clustering_head import get_clusthead
-from larch.core.analysis.metrics import uniformity, alignment, basic_geometry_metrics
-from larch.core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
-from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
+from larch.metrics import uniformity, alignment, basic_geometry_metrics
+from larch.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt
+from larch.optim.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
 
-from larch.core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+from larch.sysmon import log_memory, log_gpu, log_vmstat
 import psutil, os
 from threadpoolctl import threadpool_limits
 
@@ -46,7 +46,7 @@ from larch.classification import SupervisedHead, supervised_loss, Classification
 from larch.distributed import setup_distributed_runtime, print0
 
 ## Checkpointing
-from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
+from larch.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):

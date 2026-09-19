@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from larch.distributed import GatherLayer
 import torch.distributed as dist
 
 @torch.no_grad()
@@ -118,7 +117,7 @@ def geometry_metrics(buffer, device, normalize=True, sim_stats=True):
     out = {
         "deff": deff.item(),
         "rankme": rankme.item(),
-        "l1_ratio": (eigvals.max() / eigvals.sum()).item(),
+        "l1_ratio": l1_ratio,
         **{
             f"lambda{i}": val.item()
             for i, val in enumerate(eigvals.flip(0)[:10])

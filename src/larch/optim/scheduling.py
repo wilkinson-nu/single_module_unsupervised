@@ -1,7 +1,7 @@
 import torch
 import math
 from torch import optim
-from larch.core.training.lars import LARS, LARS_LRScheduler
+from larch.optim.lars import LARS, LARS_LRScheduler
 from larch.models.resnetv1_blocks import Bottleneck, BasicBlock
 from larch.distributed import print0
 

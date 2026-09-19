@@ -23,7 +23,7 @@ from larch.losses.clustering import ClusteringLossMerged
 from larch.models.encoder import get_encoder
 from larch.models.projection_head import get_projhead
 from larch.models.clustering_head import get_clusthead
-from larch.core.analysis.metrics import argmax_consistency
+from larch.metrics import argmax_consistency
 
 ## For logging
 from torch.utils.tensorboard import SummaryWriter

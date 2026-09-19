@@ -23,16 +23,16 @@ from larch.losses.clustering import ClusteringLossMerged, ClusteringLossMergedMu
 from larch.models.resnet_encoder import get_encoder
 from larch.models.projection_head import get_projhead
 from larch.models.clustering_head import get_clusthead
-from larch.core.analysis.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
-from larch.core.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
-from larch.core.training.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
-from larch.core.training.lars import log_lars_diagnostics
+from larch.metrics import argmax_consistency, uniformity, alignment, simclr_geometry_metrics
+from larch.training.logging import log_scalar, log_grad_norm, log_grad_rms, log_grad_over_wgt, log_weight_norm
+from larch.optim.scheduling import get_opt_and_sched, cosine_scheduler, update_weight_decay
+from larch.optim.lars import log_lars_diagnostics
 
 ## Import datasets
 from larch.datasets.base import solo_labelled_collate_fn
 from larch.datasets.dataloaders import build_paired_training_data, build_monitoring_data
 
-from larch.core.training.system_monitoring_utils import log_memory, log_gpu, log_vmstat
+from larch.sysmon import log_memory, log_gpu, log_vmstat
 import psutil, os
 
 ## For logging
@@ -43,16 +43,16 @@ from larch.datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
 from larch.classification import DEFAULT_CLASSIFIER_CONFIG
-from larch.core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
+from larch.probes import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training
 from larch.distributed import setup_distributed_runtime, print0
 
 ## Checkpointing
-from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
+from larch.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint
 
 ## Config handling
-from larch.core.config import apply_config, load_config, dump_args
+from larch.config import apply_config, load_config, dump_args
 
 ## Wrapped training function
 def run_training(rank, local_rank, world_size, args):
