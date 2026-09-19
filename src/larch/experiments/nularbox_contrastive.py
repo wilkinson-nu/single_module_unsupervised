@@ -42,7 +42,7 @@ from torch.utils.tensorboard import SummaryWriter
 from larch.datasets.nularbox.augmentations_2d import get_transform
 
 ## Supervised for kNN monitoring
-from larch.classification import DEFAULT_CLASSIFIER_CONFIG
+from larch.datasets.nularbox.targets import MULTIPLICITY_TARGETS, label_clamp
 from larch.probes import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training
@@ -143,10 +143,7 @@ def run_training(rank, local_rank, world_size, args):
     nbatches   = len(train_loader)
 
     ## Setup the monitoring dataset
-    monitor_transform = get_transform(
-        args.out_image_size,
-        "no_aug",
-    )
+    monitor_transform = get_transform(args.out_image_size, "no_aug")
 
     ## Which label groups to run monitoring probes on
     MONITOR_LABEL_GROUPS = ("particle_truth", "particle_visible")
@@ -155,22 +152,16 @@ def run_training(rank, local_rank, world_size, args):
     KNN_METRICS = ("cosine", "euclidean")
 
     ## Apply maxima to the N. particle groups of interest
-    MONITOR_CONFIG = DEFAULT_CLASSIFIER_CONFIG
+    MONITOR_CONFIG = MULTIPLICITY_TARGETS
     
-    PARTICLE_LABEL_CLAMP = {
-        name: cfg["cap"]
-        for name, cfg in MONITOR_CONFIG.items()
-        if "cap" in cfg
-    }
-    
-    MONITOR_LABEL_CLAMP = {
-        name: PARTICLE_LABEL_CLAMP
+    MONITOR_CLAMP = {
+        name: label_clamp(MULTIPLICITY_TARGETS)
         for name in MONITOR_LABEL_GROUPS
     }
     
     monitor_collate = partial(
         solo_labelled_collate_fn,
-        label_clamp=MONITOR_LABEL_CLAMP,
+        label_clamp=MONITOR_CLAMP,
     )
     
     bank_loader, query_loader = build_monitoring_data(

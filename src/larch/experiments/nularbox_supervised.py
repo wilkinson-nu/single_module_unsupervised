@@ -39,7 +39,7 @@ from larch.datasets.base import solo_labelled_collate_fn
 from larch.datasets.dataloaders import build_supervised_dataloaders
 
 ## Supervised learning specific
-from larch.classification import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG
+from larch.datasets.nularbox import MULTIPLICITY_TARGETS, label_clamp
 from larch.classification import SupervisedHead, supervised_loss, ClassificationMetrics
 
 ## Utilities for multi-rank training
@@ -84,7 +84,7 @@ def run_training(rank, local_rank, world_size, args):
 
     ## Set up head and loss for projection space
     sup_head = SupervisedHead(encoder_nchan,
-                              classifier_config=DEFAULT_CLASSIFIER_CONFIG)
+                              classifier_config=MULTIPLICITY_TARGETS)
     sup_head .to(device)
     sup_head = DDP(sup_head, device_ids=[local_rank])
     heads["sup"] = sup_head
@@ -105,7 +105,7 @@ def run_training(rank, local_rank, world_size, args):
     
     labelled_collate = partial(
         solo_labelled_collate_fn,
-        label_clamp=LABEL_CLAMP,
+        label_clamp=label_clamp(MULTIPLICITY_TARGETS),
     )
     
     train_dataset, train_loader, val_dataset, val_loader = build_supervised_dataloaders(

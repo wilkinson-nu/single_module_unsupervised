@@ -4,31 +4,6 @@ import torch.nn.functional as F
 import torch.distributed as dist
 import math
 
-## These config options are interrelated, so I'm putting them here for now
-LABEL_CLAMP = {
-    'nproton':   3,
-    'npipm':     2,
-    'npi0':      2,
-    'nem':       2,
-    'ncluster':  3,
-    'ncharged':  5,
-    'nkapm':     1,
-    'nka0':      1,
-    'nlambda0':  1,
-}
-
-DEFAULT_CLASSIFIER_CONFIG = {
-    'nproton':   {'n_classes': 4, 'weight': 1.0, 'cap': 3},
-    'npipm':     {'n_classes': 3, 'weight': 1.0, 'cap': 2},
-    'npi0':      {'n_classes': 3, 'weight': 1.0, 'cap': 2},
-    'nem':       {'n_classes': 3, 'weight': 1.0, 'cap': 2},
-    'ncluster':  {'n_classes': 4, 'weight': 1.0, 'cap': 3},
-    'nlambda0':  {'n_classes': 2, 'weight': 5.0, 'cap': 1},  # upweight rare events
-    'nkapm':     {'n_classes': 2, 'weight': 5.0, 'cap': 1},  # upweight rare events    
-    'nka0':      {'n_classes': 2, 'weight': 5.0, 'cap': 1},  # upweight rare events    
-    'ncharged':  {'n_classes': 6, 'weight': 1.0, 'cap': 5},
-}
-
 class SupervisedHead(nn.Module):
     def __init__(self, encoder_dim, classifier_config):
         super().__init__()
