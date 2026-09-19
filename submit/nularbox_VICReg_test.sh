@@ -2,14 +2,14 @@
 
 ## Get an interactive job to run this with:
 # salloc --nodes 1 --ntasks-per-node=4 --gpus-per-node=4 --cpus-per-task=32 --qos interactive --time 04:00:00 --constraint gpu --account dune
-IMAGE=docker:wilkinsonnu/ml_tools:ME
-REPO=$HOME/single_module_unsupervised
+export IMAGE=docker:wilkinsonnu/ml_tools:ME
+export REPO=$HOME/single_module_unsupervised
 source "$REPO/submit/common.sh"
 
 ## Setup the run directory
 JOBNAME=contrastive_testing_vicreg
-RUN_DIR=$PSCRATCH/larch_test_runs/${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}_${JOBNAME}
-snapshot_repo "$RUN_DIR" "$REPO"
+export RUN_DIR=$PSCRATCH/larch_test_runs/${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}_${JOBNAME}
+snapshot_repo && activate_snapshot
 
 ## Basic inputs and outputs
 DATA_DIR=$PSCRATCH/NULARBOX/GENIE10c_DUNEND_CCCONT256

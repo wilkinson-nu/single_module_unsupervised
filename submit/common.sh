@@ -18,9 +18,7 @@ export MASTER_PORT=$((10000 + SLURM_JOB_ID % 20000))
 
 ## This function is for making a copy of the current repo state into the run directory
 snapshot_repo() {
-    local RUN_DIR=$1
-    local REPO=$2
-    : "${IMAGE:?The $IMAGE needs to be specified}"
+    : "${REPO:?common.sh not sourced}" "${IMAGE:?}" "${RUN_DIR:?}"
 
     mkdir -p "$RUN_DIR"
     echo "Copying ${REPO} into ${RUN_DIR}"
@@ -37,5 +35,8 @@ snapshot_repo() {
 
     ## Compile the package into the RUN_DIR
     shifter --image=$IMAGE python3 -m compileall -q "$RUN_DIR/src"
-    export PYTHONPATH="$RUN_DIR/src"
+}
+
+activate_snapshot() {
+    export PYTHONPATH="${RUN_DIR:?}/src"
 }
