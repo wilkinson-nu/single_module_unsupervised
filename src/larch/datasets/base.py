@@ -19,7 +19,8 @@ class paired_2d_dataset_ME(Dataset):
                  projection="xz",
                  max_open=9999
                  ):
-        self.hdf5_files = sorted(glob(os.path.join(infile_dir, '*.h5')))
+        self.infile_dir = os.path.expandvars(infile_dir)
+        self.hdf5_files = sorted(glob(os.path.join(self.infile_dir, '*.h5')))
         self.file_indices = []
         self.nom_transform = nom_transform
         self.aug_transform = aug_transform
@@ -166,7 +167,7 @@ class single_2d_dataset_ME(Dataset):
                  projection="xz",
                  max_open=9999):
         
-        self.infile_dir = infile_dir
+        self.infile_dir = os.path.expandvars(infile_dir)
         self.hdf5_files = sorted(glob(os.path.join(self.infile_dir, '*.h5')))
         self.file_indices = []
         self.file_schemas = []
