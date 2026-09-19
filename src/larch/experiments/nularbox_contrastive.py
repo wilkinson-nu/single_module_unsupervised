@@ -46,8 +46,7 @@ from larch.core.supervised import DEFAULT_CLASSIFIER_CONFIG
 from larch.core.analysis.monitoring import extract_features, evaluate_knn, fit_linear_probe
 
 ## Utilities for multi-rank training
-from larch.core.dist_utils import setup_distributed_runtime
-from larch.core.utils import print0
+from larch.distributed import setup_distributed_runtime, print0
 
 ## Checkpointing
 from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint

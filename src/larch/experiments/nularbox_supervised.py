@@ -43,7 +43,7 @@ from larch.core.supervised import LABEL_CLAMP, DEFAULT_CLASSIFIER_CONFIG
 from larch.core.supervised import SupervisedHead, supervised_loss, ClassificationMetrics
 
 ## Utilities for multi-rank training
-from larch.core.dist_utils import setup_distributed_runtime, print0
+from larch.distributed import setup_distributed_runtime, print0
 
 ## Checkpointing
 from larch.core.training.checkpointing import load_pretrained, load_checkpoint, save_checkpoint

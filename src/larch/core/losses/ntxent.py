@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.distributed as dist
-from larch.core.losses.gather import GatherLayer
+from larch.distributed import GatherLayer
 import torch.nn.functional as F
 
 class NTXentMerged(nn.Module):

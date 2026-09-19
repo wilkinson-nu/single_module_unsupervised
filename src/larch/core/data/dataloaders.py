@@ -8,8 +8,7 @@ from torch.utils.data import DataLoader, DistributedSampler, Subset
 from larch.core.data.datasets import paired_2d_dataset_ME, cat_ME_collate_fn, single_2d_dataset_ME
 
 ## Basic utils
-from larch.core.utils import print0
-
+from larch.distributed import print0
 
 def worker_init_fn(worker_id):
     threadpool_limits(limits=1)
