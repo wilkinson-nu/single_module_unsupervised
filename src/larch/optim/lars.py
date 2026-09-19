@@ -3,7 +3,7 @@ from math import cos, pi
 
 import math
 import torch
-from larch.core.training.logging import log_scalar
+from larch.training.logging import log_scalar
 
 class LARS(torch.optim.Optimizer):
     def __init__(
