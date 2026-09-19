@@ -3,7 +3,7 @@
 ## Get an interactive job to run this with:
 # salloc --nodes 1 --ntasks-per-node=4 --gpus-per-node=4 --cpus-per-task=32 --qos interactive --time 04:00:00 --constraint gpu --account dune
 export IMAGE=docker:wilkinsonnu/ml_tools:ME
-export REPO=$HOME/single_module_unsupervised
+export REPO=$HOME/larch
 source "$REPO/submit/common.sh"
 
 ## Setup the run directory

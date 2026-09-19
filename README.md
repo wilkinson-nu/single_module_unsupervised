@@ -1,4 +1,4 @@
-# single_module_unsupervised
+# Larch: How to Recognise Different Types of Neutrino Interactions From Quite a Long Way Away
 
 All of the dependencies are compiled into a container using the Dockerfile.MinkowskiEngine script. As a reference to myself, I do this with:
 ```
