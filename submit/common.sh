@@ -13,8 +13,12 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 ## NCCL on Perlmutter
 export NCCL_SOCKET_IFNAME=hsn
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_PORT=$((10000 + SLURM_JOB_ID % 20000))
+
+## Guard against this being run outside a job
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+    export MASTER_PORT=$((10000 + SLURM_JOB_ID % 20000))
+fi
 
 ## This function is for making a copy of the current repo state into the run directory
 snapshot_repo() {
@@ -26,7 +30,8 @@ snapshot_repo() {
     ## Copy the current repo state into the RUN_DIR
     rsync -a --exclude='.git' --exclude='__pycache__' "$REPO/src/" "$RUN_DIR/src/"
     rsync -a "$REPO/configs/" "$RUN_DIR/configs/"
-
+    cp "$REPO/submit/common.sh" "$RUN_DIR/common.sh"
+    
     ## Some documentation to get exactly the code state
     git -C "$REPO" rev-parse HEAD        > "$RUN_DIR/git-sha.txt"
     git -C "$REPO" status --porcelain    > "$RUN_DIR/git-dirty.txt"
